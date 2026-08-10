@@ -1,0 +1,11 @@
+{
+    "python.languageServer": "Pylance",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.autoSearchPaths": true,
+    "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/Scripts/python.exe",
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true
+    },
+    "python.terminal.useEnvFile": true
+}
