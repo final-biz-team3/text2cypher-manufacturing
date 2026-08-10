@@ -1,9 +1,12 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ROOT_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file="../.env",  # 루트 .env 참조
+        env_file=_ROOT_ENV_FILE,
         extra="ignore",
     )
 
