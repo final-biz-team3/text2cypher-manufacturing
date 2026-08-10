@@ -1,0 +1,35 @@
+# ── Python ──
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# ── Node / React (Vite) ──
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+npm-debug.log*
+
+# ── 환경변수 / 비밀값 ──
+.env
+.env.local
+.env.*.local
+
+# ── 에디터 ──
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── 로그 / 임시 파일 ──
+*.log
+*.tmp
