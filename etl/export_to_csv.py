@@ -1,7 +1,7 @@
 """
 AdventureWorks(자전거 공정 데이터) xlsx -> Neo4j LOAD CSV용 노드/관계 CSV 생성 스크립트
 
-기준 문서: docs/adr/0004-etl-batch-loading-pipeline.md (그래프 스키마 v2, 마스터/트랜잭션 분리)
+기준 문서: docs/adr/0004-graph-schema-v2.md (스키마 설계) / docs/adr/0005-etl-batch-loading-pipeline.md (마스터/트랜잭션 분리)
 
 마스터(시간에 안 묶이는) 데이터는 1회만 적재하고, 트랜잭션(월에 묶이는) 데이터는
 매달 반복 적재한다는 팀 방향에 맞춰 export도 두 모드로 나눈다.

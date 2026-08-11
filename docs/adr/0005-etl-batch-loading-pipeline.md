@@ -1,4 +1,4 @@
-# 0004. CSV → Neo4j 배치 적재 파이프라인
+# 0005. CSV → Neo4j 배치 적재 파이프라인
 
 ## 상태
 진행 중 (2026-08-11)
@@ -104,7 +104,7 @@ Neo4j 공식 Docker 문서(Mount points 표)에 컨테이너가 인식하는 표
 
 ## 확실하지 않은 부분
 
-- `schema/graph_schema.yaml`을 자동으로 채우는 스키마 직렬화 스크립트(`schema_serializer.py`)는 이번 작업 범위에 포함하지 않았다. `0001`에서 이 파일을 "8/14 설계서에서 채울 예정"이라고 했으므로, 그 시점에 별도 ADR/PR로 연결하는 게 맞다. 다만 이 ADR 작성 시점 이후, 그 다음 단계(스키마 직렬화) 작업을 위해 `docker-compose.yml`에 APOC 플러그인 설정(`NEO4J_PLUGINS`, `NEO4J_dbms_security_procedures_unrestricted`)이 먼저 추가됐다. 이 설정은 0004의 결정 범위(4번, 볼륨 2개)에는 포함되지 않으며, 별도 ADR(예정)에서 다룰 내용이다.
+- `schema/graph_schema.yaml`을 자동으로 채우는 스키마 직렬화 스크립트(`schema_serializer.py`)는 이번 작업 범위에 포함하지 않았다. `0001`에서 이 파일을 "8/14 설계서에서 채울 예정"이라고 했으므로, 그 시점에 별도 ADR/PR로 연결하는 게 맞다. 다만 이 ADR 작성 시점 이후, 그 다음 단계(스키마 직렬화) 작업을 위해 `docker-compose.yml`에 APOC 플러그인 설정(`NEO4J_PLUGINS`, `NEO4J_dbms_security_procedures_unrestricted`)이 먼저 추가됐다. 이 설정은 0005의 결정 범위(4번, 볼륨 2개)에는 포함되지 않으며, 별도 ADR(예정)에서 다룰 내용이다.
 - 월 기준 컬럼(예: `WorkOrder.startDate`)이 진행 중인 항목의 상태 변경(예: 시작은 이번 달, 종료는 다음 달)을 반영하지 못하는 문제와 `RoutingOperationKey`(합성키)가 공정 순서 재조정 시 안정성이 깨질 수 있는 문제는, 지금 다루는 정적 과거 이력 데이터에는 해당하지 않지만 실제 운영 DB에 연결하는 시점에는 재검토가 필요하다.
 - `load.cypher`를 실제 Neo4j 인스턴스에서 실행해 검증하지는 못했다(작업 환경에 Docker 없음). 다만 실행 절차 자체는 이미 확정돼 있다 — `docker compose up -d`(또는 `--force-recreate`)로 컨테이너를 재생성하면 `/import`·`/etl` 마운트가 자동으로 적용되므로 별도의 파일 복사 단계 없이 곧바로 `docker compose exec neo4j cypher-shell -f /etl/load.cypher`를 실행할 수 있다. CSV 헤더 ↔ Cypher `row.*` 참조 대조까지는 확인했고, 실제 DB 적재·라벨별 카운트 확인은 Docker가 있는 환경(팀원 로컬 또는 Claude Code)에서 이 절차대로 마무리하면 된다.
 - **향후 Neo4j Community -> Enterprise 전환 시 재검토 필요**: 현재 `docker-compose.yml`은 `neo4j:5-community` 이미지를 쓰고, 이 ADR의 모든 결정(APOC은 플러그인 목록 추가만으로 동작, `NEO4J_ACCEPT_LICENSE_AGREEMENT` 불필요 등)은 Community 기준이다. 팀이 이후 본작업 단계에서 Neo4j를 Enterprise로 바꾸면 이미지 태그(`neo4j:5-enterprise`), 라이선스 동의 환경변수(`NEO4J_ACCEPT_LICENSE_AGREEMENT=yes`), Enterprise 전용 기능(예: 역할 기반 접근 제어, 클러스터링) 사용 여부를 다시 검토해야 한다. 지금은 이 사실만 남겨두고, 실제 `docker-compose.yml`/`.env`/이 ADR의 변경은 전환 시점에 별도로 진행한다.
