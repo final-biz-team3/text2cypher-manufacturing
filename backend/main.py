@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from core.neo4j import get_driver, close_driver
+
 from api.health import router as health_router
+from core.neo4j import close_driver, get_driver
 
 
 @asynccontextmanager
