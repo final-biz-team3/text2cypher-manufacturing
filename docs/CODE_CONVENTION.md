@@ -130,10 +130,15 @@ mypy backend
 
 ### 4.1 개발용 가상환경 구성
 
-프로젝트 루트에서 가상환경을 생성한다.
+프로젝트는 Python 3.11을 사용한다. 루트의 `.python-version`에도 같은 버전을 기록하며,
+가상환경을 생성할 때 버전을 명시한다.
 
 ```bash
-python -m venv backend/venv
+# macOS 또는 Linux
+python3.11 -m venv backend/venv
+
+# Windows
+py -3.11 -m venv backend/venv
 ```
 
 macOS 또는 Linux에서는 다음 명령으로 가상환경을 활성화한다.
