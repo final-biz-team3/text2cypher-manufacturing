@@ -215,6 +215,65 @@ text2cypher-manufacturing/
 위 파일은 개인 설정이 아니라 팀 전체가 사용하는 기준이므로 Git에 커밋한다. `backend/venv`와 각 도구가
 생성하는 캐시 파일은 로컬에서만 사용하고 `.gitignore`로 제외한다.
 
+## 5. 프로젝트 CI 기반 코드 품질 검사
+
+> 로컬 pre-commit을 실행하지 않았더라도 원격 저장소에서 같은 코드 품질 기준을 확인하기 위해
+> GitHub Actions를 사용한다.
+
+GitHub Actions 규칙에 따라 루트의 `.github/workflows/code-quality.yml`에 CI 설정을 저장한다.
+`backend`, `pyproject.toml` 또는 Workflow 자체가 변경된 `main` 대상 Push와 Pull Request에서만
+Python 3.11과 개발 의존성을 준비한 뒤 다음 검사를 실행한다.
+
+```text
+Ruff 검사 → Black 포맷 검사 → mypy 타입 검사
+```
+
+자동 수정은 VS Code와 pre-commit에서 처리한다. CI는 저장소 쓰기 권한 없이 검사만 수행하며, 하나라도
+실패하면 개발자가 로컬에서 문제를 수정한 뒤 다시 Push한다.
+
+```yaml
+name: Backend Code Quality
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "pyproject.toml"
+      - ".github/workflows/code-quality.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "pyproject.toml"
+      - ".github/workflows/code-quality.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Run code quality checks
+        run: |
+          ruff check backend
+          black --check backend
+          mypy backend
+```
+
 ## 참고 자료
 
 - [PEP 8](https://peps.python.org/pep-0008/)
