@@ -226,7 +226,7 @@ text2cypher-manufacturing/
 > GitHub Actions를 사용한다.
 
 GitHub Actions 규칙에 따라 루트의 `.github/workflows/code-quality.yml`에 CI 설정을 저장한다.
-`backend`, `pyproject.toml` 또는 Workflow 자체가 변경된 `main` 대상 Push와 Pull Request에서만
+`backend`, `pyproject.toml` 또는 Workflow 자체가 변경된 `dev` 대상 Push와 Pull Request에서만
 Python 3.11과 개발 의존성을 준비한 뒤 다음 검사를 실행한다.
 
 ```text
@@ -241,13 +241,13 @@ name: Backend Code Quality
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
     paths:
       - "backend/**"
       - "pyproject.toml"
       - ".github/workflows/code-quality.yml"
   pull_request:
-    branches: [main]
+    branches: [dev]
     paths:
       - "backend/**"
       - "pyproject.toml"

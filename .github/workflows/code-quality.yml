@@ -2,13 +2,13 @@ name: Backend Code Quality
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
     paths:
       - "backend/**"
       - "pyproject.toml"
       - ".github/workflows/code-quality.yml"
   pull_request:
-    branches: [main]
+    branches: [dev]
     paths:
       - "backend/**"
       - "pyproject.toml"
