@@ -8,6 +8,14 @@ backend/**/__pycache__/
 .mypy_cache/
 *.egg-info/
 
+# ── ETL (etl/) ──
+etl/venv/
+etl/__pycache__/
+etl/**/__pycache__/
+etl/data/*.xlsx
+etl/import/*
+!etl/import/.gitkeep
+
 # ── Node / React (Vite) ──
 frontend/node_modules/
 frontend/dist/
