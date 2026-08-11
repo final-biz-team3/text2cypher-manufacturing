@@ -1,0 +1,397 @@
+# =============================================================================
+# 그래프 스키마 (확정)
+#
+# 이 파일은 Neo4j / backend / frontend / LLM 프롬프트 네 곳이 함께 참조하는
+# "기준 문서"다 (docs/adr/0001-monorepo-structure.md). 스키마가 바뀌면
+# 이 파일부터 고치고, 이 변경을 본 사람이 나머지 세 곳(Pydantic 모델,
+# 프론트 타입, LLM 프롬프트)도 같이 고쳐야 한다는 걸 리뷰에서 체크한다.
+#
+# 근거 자료 (이 파일은 아래 두 소스코드에서 실제로 구현·검증된 내용을
+# 역추출해 정리한 것이다 — arrows.app 원본 다이어그램 파일은 리포에 없음):
+#   - etl/load.cypher        (제약조건, 속성 타입 변환 규칙)
+#   - etl/export_to_csv.py   (원본 한글 컬럼 -> 속성명 매핑, 마스터/트랜잭션 분리)
+#   - docs/adr/0004-graph-schema-v2.md (스키마 설계, 관계 3그룹 분류 근거)
+#   - docs/adr/0005-etl-batch-loading-pipeline.md (마스터/트랜잭션 분리, 적재 구현)
+#
+# 타입 표기는 Neo4j Cypher 타입명을 그대로 쓴다: STRING, INTEGER, FLOAT,
+# BOOLEAN, DATE, LOCAL_DATETIME.
+# =============================================================================
+
+meta:
+  confirmedAt: "2026-08-11"
+  nodeCount: 11
+  relationshipCount: 13
+  sources:
+    - etl/load.cypher
+    - etl/export_to_csv.py
+    - docs/adr/0004-graph-schema-v2.md
+    - docs/adr/0005-etl-batch-loading-pipeline.md
+
+# 노드/관계 공통으로 쓰는 분류 legend. 전체 근거는 0004(스키마 설계)·0005(적재 구현) ADR 참고.
+legend:
+  nodeGroups:
+    master: "1회 적재. 시간에 묶이지 않는 마스터 데이터."
+    transaction: "월별 반복 적재. export_to_csv.py tx --month YYYY-MM 단위로 쌓인다."
+  mergeStrategies:
+    naturalKeyMerge: "그룹 A - 자연키로 MERGE 후 나머지 속성은 SET (재실행 안전, 속성 갱신 가능)"
+    simpleMerge: "그룹 B - 속성 없이 관계만 MERGE (다건 허용, 재실행 안전)"
+    deleteRecreate: "그룹 C 중 마스터-마스터 관계 - 조회 후 기존 관계 DELETE, 새로 CREATE (단일 타깃, 값 변경 가능)"
+    downgradedMerge: "그룹 C 중 트랜잭션-마스터 관계 - 매달 새 ID만 생겨 삭제 대상이 없으므로 단순 MERGE로 다운그레이드"
+
+nodes:
+  Product:
+    group: master
+    sourceSheet: 제품·부품마스터
+    uniqueKey: productId
+    constraintName: product_id
+    properties:
+      productId: {type: INTEGER, sourceColumn: 제품ID}
+      name: {type: STRING, sourceColumn: 명칭}
+      productNumber: {type: STRING, sourceColumn: 제품번호}
+      makeInHouse: {type: BOOLEAN, sourceColumn: 자체제조여부}
+      sellableFinishedGood: {type: BOOLEAN, sourceColumn: 판매완제품여부}
+      color: {type: STRING, sourceColumn: 색상}
+      safetyStockLevel: {type: INTEGER, sourceColumn: 안전재고수준}
+      reorderPoint: {type: INTEGER, sourceColumn: 재주문점}
+      standardCost: {type: FLOAT, sourceColumn: 표준원가}
+      listPrice: {type: FLOAT, sourceColumn: 정가}
+      size: {type: STRING, sourceColumn: 규격}
+      sizeUnit: {type: STRING, sourceColumn: 규격단위}
+      weightUnit: {type: STRING, sourceColumn: 중량단위}
+      weight: {type: FLOAT, nullable: true, sourceColumn: 중량}
+      daysToManufacture: {type: INTEGER, sourceColumn: 제조소요일수}
+      productLine: {type: STRING, sourceColumn: 제품라인}
+      classCode: {type: STRING, sourceColumn: 등급}
+      styleCode: {type: STRING, sourceColumn: 스타일}
+      sellStartDate: {type: DATE, sourceColumn: 판매시작일}
+      sellEndDate: {type: DATE, nullable: true, sourceColumn: 판매종료일}
+      discontinuedDate: {type: DATE, nullable: true, sourceColumn: 단종일}
+      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  Supplier:
+    group: master
+    sourceSheet: 공급업체
+    uniqueKey: supplierId
+    constraintName: supplier_id
+    properties:
+      supplierId: {type: INTEGER, sourceColumn: 주체ID}
+      accountNumber: {type: STRING, sourceColumn: 계정번호}
+      name: {type: STRING, sourceColumn: 명칭}
+      creditRating: {type: INTEGER, sourceColumn: 신용등급}
+      preferred: {type: BOOLEAN, sourceColumn: 우선공급업체여부}
+      active: {type: BOOLEAN, sourceColumn: 활성여부}
+      purchasingWebUrl: {type: STRING, sourceColumn: 구매웹서비스URL}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+    notes: >
+      active=false(비활성 공급업체)는 SUPPLIES 관계 적재 전(export 단계)에
+      제외된다. 노드 자체는 적재된다.
+
+  ProductCategory:
+    group: master
+    sourceSheet: 제품대분류
+    uniqueKey: categoryId
+    constraintName: product_category_id
+    properties:
+      categoryId: {type: INTEGER, sourceColumn: 대분류ID}
+      name: {type: STRING, sourceColumn: 명칭}
+      nameKo: {type: STRING, sourceColumn: 대분류_한글}
+      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  ProductSubcategory:
+    group: master
+    sourceSheet: 제품중분류
+    uniqueKey: subcategoryId
+    constraintName: product_subcategory_id
+    properties:
+      subcategoryId: {type: INTEGER, sourceColumn: 중분류ID}
+      name: {type: STRING, sourceColumn: 명칭}
+      nameKo: {type: STRING, sourceColumn: 중분류_한글}
+      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  Location:
+    group: master
+    sourceSheet: 작업장
+    uniqueKey: locationId
+    constraintName: location_id
+    properties:
+      locationId: {type: INTEGER, sourceColumn: 작업장ID}
+      name: {type: STRING, sourceColumn: 명칭}
+      nameKo: {type: STRING, sourceColumn: 작업장명_한글}
+      costRate: {type: FLOAT, sourceColumn: 시간당비용}
+      availability: {type: FLOAT, sourceColumn: 가용시간}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  ScrapReason:
+    group: master
+    sourceSheet: 폐기사유
+    uniqueKey: scrapReasonId
+    constraintName: scrap_reason_id
+    properties:
+      scrapReasonId: {type: INTEGER, sourceColumn: 폐기사유ID}
+      name: {type: STRING, sourceColumn: 명칭}
+      nameKo: {type: STRING, sourceColumn: 폐기사유_한글}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  PurchaseOrder:
+    group: transaction
+    sourceSheet: 구매주문_헤더
+    uniqueKey: purchaseOrderId
+    constraintName: purchase_order_id
+    monthColumn: orderDate
+    properties:
+      purchaseOrderId: {type: INTEGER, sourceColumn: 구매주문ID}
+      revisionNumber: {type: INTEGER, sourceColumn: 개정번호}
+      statusCode: {type: INTEGER, sourceColumn: 상태}
+      employeeId: {type: INTEGER, sourceColumn: 직원ID}
+      shipMethodId: {type: INTEGER, sourceColumn: 배송방법ID}
+      orderDate: {type: DATE, sourceColumn: 주문일}
+      shipDate: {type: DATE, nullable: true, sourceColumn: 출하일}
+      subTotal: {type: FLOAT, sourceColumn: 소계}
+      taxAmount: {type: FLOAT, sourceColumn: 세액}
+      freight: {type: FLOAT, sourceColumn: 운임}
+      modifiedAt: {type: LOCAL_DATETIME, nullable: true, sourceColumn: 수정일시}
+
+  PurchaseOrderLine:
+    group: transaction
+    sourceSheet: 구매주문_상세
+    uniqueKey: purchaseOrderLineId
+    constraintName: purchase_order_line_id
+    monthColumn: null
+    notes: "월 기준 컬럼 없음 - 부모 PurchaseOrder의 월을 그대로 물려받아 동반 적재된다."
+    properties:
+      purchaseOrderLineId: {type: INTEGER, sourceColumn: 구매주문상세ID}
+      dueDate: {type: DATE, sourceColumn: 납기일}
+      orderQty: {type: INTEGER, sourceColumn: 지시수량}
+      unitPrice: {type: FLOAT, sourceColumn: 단가}
+      receivedQty: {type: FLOAT, sourceColumn: 입고수량}
+      rejectedQty: {type: FLOAT, sourceColumn: 불합격수량}
+      modifiedAt: {type: LOCAL_DATETIME, nullable: true, sourceColumn: 수정일시}
+
+  SalesOrder:
+    group: transaction
+    sourceSheet: 판매주문_헤더
+    uniqueKey: salesOrderId
+    constraintName: sales_order_id
+    monthColumn: orderDate
+    properties:
+      salesOrderId: {type: INTEGER, sourceColumn: 판매주문ID}
+      revisionNumber: {type: INTEGER, sourceColumn: 개정번호}
+      salesOrderNumber: {type: STRING, sourceColumn: 판매주문번호}
+      orderDate: {type: DATE, sourceColumn: 주문일}
+      dueDate: {type: DATE, sourceColumn: 납기일}
+      shipDate: {type: DATE, nullable: true, sourceColumn: 출하일}
+      statusCode: {type: INTEGER, sourceColumn: 상태}
+      onlineOrder: {type: BOOLEAN, sourceColumn: 온라인주문여부}
+      purchaseOrderNumber: {type: STRING, sourceColumn: 구매주문번호}
+      accountNumber: {type: STRING, sourceColumn: 계정번호}
+      customerId: {type: INTEGER, sourceColumn: 고객ID}
+      salesPersonId: {type: INTEGER, nullable: true, sourceColumn: 영업사원ID}
+      salesTerritoryId: {type: INTEGER, nullable: true, sourceColumn: 영업지역ID}
+      shipMethodId: {type: INTEGER, sourceColumn: 배송방법ID}
+      subTotal: {type: FLOAT, sourceColumn: 소계}
+      taxAmount: {type: FLOAT, sourceColumn: 세액}
+      freight: {type: FLOAT, sourceColumn: 운임}
+      totalDue: {type: FLOAT, sourceColumn: 총액}
+      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  WorkOrder:
+    group: transaction
+    sourceSheet: 생산작업지시
+    uniqueKey: workOrderId
+    constraintName: work_order_id
+    monthColumn: startDate
+    properties:
+      workOrderId: {type: INTEGER, sourceColumn: 작업지시ID}
+      orderQty: {type: INTEGER, sourceColumn: 지시수량}
+      stockedQty: {type: INTEGER, sourceColumn: 입고수량}
+      scrappedQty: {type: INTEGER, sourceColumn: 폐기수량}
+      startDate: {type: DATE, sourceColumn: 시작일}
+      endDate: {type: DATE, nullable: true, sourceColumn: 종료일}
+      dueDate: {type: DATE, sourceColumn: 납기일}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+    notes: >
+      진행 중인 작업지시(시작은 이번 달, 종료는 다음 달)의 상태 변경을
+      월별 배치가 반영하지 못하는 한계가 있음 (0005 ADR "확실하지 않은 부분").
+
+  RoutingOperation:
+    group: transaction
+    sourceSheet: 공정순서_라우팅
+    uniqueKey: routingOperationKey
+    constraintName: routing_operation_key
+    monthColumn: null
+    notes: >
+      월 기준 컬럼 없음 - 부모 WorkOrder의 월을 그대로 물려받아 동반 적재된다.
+      routingOperationKey는 합성키(작업지시ID-제품ID-공정순번)이며, 공정 순서가
+      재조정되면 안정성이 깨질 수 있어 실제 운영 DB 연결 시 재검토가 필요하다.
+    properties:
+      routingOperationKey:
+        type: STRING
+        synthetic: "workOrderId + '-' + productId + '-' + sequence"
+      sequence: {type: INTEGER, sourceColumn: 공정순번}
+      plannedStartDate: {type: DATE, sourceColumn: 계획시작일}
+      plannedEndDate: {type: DATE, sourceColumn: 계획종료일}
+      actualStartDate: {type: DATE, nullable: true, sourceColumn: 실제시작일}
+      actualEndDate: {type: DATE, nullable: true, sourceColumn: 실제종료일}
+      actualHours: {type: FLOAT, nullable: true, sourceColumn: 실제소요시간}
+      plannedCost: {type: FLOAT, sourceColumn: 계획원가}
+      actualCost: {type: FLOAT, nullable: true, sourceColumn: 실제원가}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+relationships:
+  SUPPLIES:
+    from: Supplier
+    to: Product
+    group: master
+    sourceSheet: 부품-공급업체
+    cardinality: many_to_many
+    mergeStrategy: naturalKeyMerge
+    naturalKey: supplyKey
+    naturalKeyComposition: "supplierId + '-' + productId"
+    properties:
+      averageLeadTimeDays: {type: INTEGER, sourceColumn: 평균리드타임}
+      standardPrice: {type: FLOAT, sourceColumn: 표준단가}
+      lastReceiptCost: {type: FLOAT, nullable: true, sourceColumn: 최종입고단가}
+      lastReceiptDate: {type: DATE, nullable: true, sourceColumn: 최종입고일}
+      minOrderQty: {type: INTEGER, sourceColumn: 최소주문수량}
+      maxOrderQty: {type: INTEGER, sourceColumn: 최대주문수량}
+      onOrderQty: {type: INTEGER, nullable: true, sourceColumn: 주문진행수량}
+      unitCode: {type: STRING, sourceColumn: 단위}
+      modifiedAt: {type: LOCAL_DATETIME, nullable: true, sourceColumn: 수정일시}
+    notes: "비활성 공급업체(Supplier.active=false)는 적재 전 제외 (팀 결정)."
+
+  REQUIRES_COMPONENT:
+    from: Product   # 상위조립품 (assembly)
+    to: Product     # 하위부품 (component)
+    group: master
+    sourceSheet: 자재명세서BOM
+    cardinality: many_to_many
+    mergeStrategy: naturalKeyMerge
+    naturalKey: bomId
+    properties:
+      bomId: {type: INTEGER, sourceColumn: BOM_ID}
+      startDate: {type: DATE, sourceColumn: 시작일}
+      endDate: {type: DATE, nullable: true, sourceColumn: 종료일}
+      unitCode: {type: STRING, sourceColumn: 단위}
+      bomLevel: {type: INTEGER, sourceColumn: BOM레벨}
+      quantityPerAssembly: {type: FLOAT, sourceColumn: 상위1개당소요수량}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+    notes: >
+      BOM 유효기간은 적재 시 필터링하지 않는다 (팀 결정). 조회 시점에
+      WHERE r.startDate <= date() AND (r.endDate IS NULL OR date() < r.endDate)
+      로 유효한 BOM만 걸러낸다.
+
+  STOCKED_AT:
+    from: Product
+    to: Location
+    group: master
+    sourceSheet: 재고
+    cardinality: many_to_many
+    mergeStrategy: naturalKeyMerge
+    naturalKey: inventoryGuid
+    properties:
+      inventoryGuid: {type: STRING, sourceColumn: 행GUID}
+      shelf: {type: STRING, sourceColumn: 선반}
+      bin: {type: INTEGER, sourceColumn: 구역}
+      quantity: {type: INTEGER, sourceColumn: 수량}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  IN_SUBCATEGORY:
+    from: Product
+    to: ProductSubcategory
+    group: master
+    sourceSheet: 제품·부품마스터
+    cardinality: many_to_one
+    mergeStrategy: deleteRecreate
+    properties: {}
+
+  IN_CATEGORY:
+    from: ProductSubcategory
+    to: ProductCategory
+    group: master
+    sourceSheet: 제품중분류
+    cardinality: many_to_one
+    mergeStrategy: deleteRecreate
+    properties: {}
+
+  HAS_LINE:
+    from: PurchaseOrder
+    to: PurchaseOrderLine
+    group: transaction
+    cardinality: one_to_many
+    mergeStrategy: simpleMerge
+    properties: {}
+
+  PLACED_WITH:
+    from: PurchaseOrder
+    to: Supplier
+    group: transaction
+    cardinality: many_to_one
+    mergeStrategy: downgradedMerge
+    properties: {}
+
+  FOR_PRODUCT:
+    from: PurchaseOrderLine
+    to: Product
+    group: transaction
+    cardinality: many_to_one
+    mergeStrategy: downgradedMerge
+    properties: {}
+
+  CONTAINS_PRODUCT:
+    from: SalesOrder
+    to: Product
+    group: transaction
+    sourceSheet: 판매주문_상세
+    cardinality: many_to_many
+    mergeStrategy: naturalKeyMerge
+    naturalKey: salesOrderLineId
+    properties:
+      salesOrderLineId: {type: INTEGER, sourceColumn: 판매주문상세ID}
+      carrierTrackingNumber: {type: STRING, sourceColumn: 운송장번호}
+      orderQty: {type: INTEGER, sourceColumn: 지시수량}
+      specialOfferId: {type: INTEGER, sourceColumn: 프로모션ID}
+      unitPrice: {type: FLOAT, sourceColumn: 단가}
+      unitPriceDiscount: {type: FLOAT, sourceColumn: 단가할인}
+      lineTotal: {type: FLOAT, sourceColumn: 금액합계}
+      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
+
+  HAS_OPERATION:
+    from: WorkOrder
+    to: RoutingOperation
+    group: transaction
+    cardinality: one_to_many
+    mergeStrategy: simpleMerge
+    properties: {}
+
+  PRODUCES:
+    from: WorkOrder
+    to: Product
+    group: transaction
+    cardinality: many_to_one
+    mergeStrategy: downgradedMerge
+    properties: {}
+
+  PERFORMED_AT:
+    from: RoutingOperation
+    to: Location
+    group: transaction
+    cardinality: many_to_one
+    mergeStrategy: downgradedMerge
+    properties: {}
+
+  SCRAPPED_DUE_TO:
+    from: WorkOrder
+    to: ScrapReason
+    group: transaction
+    cardinality: many_to_one
+    mergeStrategy: downgradedMerge
+    properties: {}
+    notes: >
+      현재 데이터엔 폐기 사유 누락 없음 (export 단계에서 dropna로 자연히
+      제외, 별도 예외 분기 없음). 조회 시점에는 OPTIONAL MATCH로 "해당없음"
+      까지 함께 보여준다 (팀 결정).
