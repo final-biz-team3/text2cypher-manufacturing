@@ -31,3 +31,8 @@ warn_unused_ignores = true
 show_error_codes = true
 namespace_packages = true
 explicit_package_bases = true
+
+[tool.pytest.ini_options]
+addopts = "--verbose"
+pythonpath = ["backend"]
+testpaths = ["backend/tests"]
