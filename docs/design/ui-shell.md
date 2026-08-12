@@ -31,10 +31,10 @@
 단일 화면(`Dashboard`)이 내부 상태로 두 뷰를 전환한다. 상태는 Zustand의 `activeScreen: 'idle' | 'success'`로 관리한다 (`'loading' | 'error'`는 타입에는 남겨두되 이번 범위의 UI는 만들지 않는다).
 
 - **idle** (질문 전): `QueryInputBar` + 예시 질문 카드 2개(`ExampleQuestionCard`, 3열 그리드)
-- **success** (질문 후): `NaturalLanguageAnswerBox` + `PathGraphCanvas`(placeholder 박스) + `ResultsTable`(가변 컬럼) + `EvidencePanel`(접기/펴기, 내부에 `SelfCorrectionTimeline` + `CypherCard`) + `FollowUpChips`
+- **success** (질문 후): `NaturalLanguageAnswerBox` + `PathGraphCanvas`(placeholder 박스) + `ResultsTable`(가변 컬럼) + `EvidencePanel`(접기/펴기, 내부에 `SelfCorrectionTimeline`만) + `FollowUpChips`. 우측에 `CypherSlidePanel`이 별도로 항상 마운트되어(EvidencePanel 열림 여부와 무관) 접기/펴기 가능한 폭-전환 컬럼으로 Cypher 코드를 보여준다.
 
 공통 레이아웃(두 뷰 모두에 존재):
-- `TopBar` — 서비스명, 부제, `ConnectionStatusBadge`, `ReadOnlyBadge`, `ThemeToggle`
+- `TopBar` — 서비스명(클릭 시 idle 화면으로 이동하는 홈 내비게이션 겸용), 부제, 연결 상태 배지(`connected: boolean` prop, 연결 안 됐을 때는 회색/빨간 dot + "Neo4j 연결 안됨"만 표시하고 READ 전용 배지는 아예 숨김 — 백엔드가 없는 지금은 항상 `connected=false`), READ 전용 배지(연결됐을 때만 표시, `readOnly: boolean` prop), `ThemeToggle`
 - `SchemaSidebar` — 240px 고정폭, "스키마" / "질문 이력" 탭 전환(`Tabs`). 스키마 탭: 노드 라벨 아코디언 + 관계 타입 목록(둘 다 mock 데이터, 실데이터 없어도 UI 자체는 실제로 펼침/접힘 동작). 이력 탭: 빈 리스트 placeholder.
 
 ## 이번 범위에서 제외
@@ -50,7 +50,7 @@
 
 | 컴포넌트 | 위치 | 책임 |
 |---|---|---|
-| `TopBar` | `components/layout` | 서비스명, 배지 2개, 테마 토글 |
+| `TopBar` | `components/layout` | 서비스명(홈 이동 버튼 겸용), 연결/READ전용 배지(연결 상태에 따라 조건부), 테마 토글 |
 | `SchemaSidebar` | `components/layout` | 스키마/이력 탭 전환, 노드 아코디언, 관계 목록 |
 | `QueryInputBar` | `components/query` | 입력창 + 질문하기 버튼(클릭 가능하나 요청 미전송) |
 | `ExampleQuestionCard` | `components/query` | 예시 질문 카드, 클릭 시 입력창에 텍스트만 채움 |
@@ -58,9 +58,9 @@
 | `FollowUpChips` | `components/query` | 후속 질문 pill 버튼 |
 | `PathGraphCanvas` | `components/graph` | 그래프 시각화 placeholder 박스 + 줌 컨트롤 버튼(비활성) |
 | `ResultsTable` | `components/result` | 가변 컬럼 테이블(`columns: {key,label}[]`, `rows: Record<string,string>[]` props) |
-| `EvidencePanel` | `components/result` | 접기/펴기 컨테이너 |
+| `EvidencePanel` | `components/result` | 접기/펴기 컨테이너, 내부에 `SelfCorrectionTimeline`만 담음 |
 | `SelfCorrectionTimeline` | `components/result` | 단계별 dot(success/fail/warn) + 제목 + 소요시간 |
-| `CypherCard` | `components/result` | 코드블록(다크 고정 배경) + 복사 버튼 + 접기 토글 |
+| `CypherSlidePanel` | `components/result` | 화면 우측에 항상 마운트되는 폭-전환 슬라이드 패널. 코드블록(다크 고정 배경) + 복사 버튼 + 패널 전체 접기/펴기 토글 |
 
 ## 상태 관리
 
@@ -120,7 +120,7 @@ src/
       ResultsTable.tsx
       EvidencePanel.tsx
       SelfCorrectionTimeline.tsx
-      CypherCard.tsx
+      CypherSlidePanel.tsx
   screens/
     Dashboard.tsx      # idle/success 조합 + mock 데이터 주입
   App.tsx
@@ -132,6 +132,8 @@ src/
 - shadcn/ui 초기화, 사용 컴포넌트만 추가: Button, Input, Card, Badge, Table, Tabs
 - Zustand 설치
 - Pretendard 폰트 CDN 링크(`index.html`)
+
+**버그로 확인된 것**: `src/index.css`는 shadcn init이 원래 넣어주는 `@import "shadcn/tailwind.css";`(`node_modules/shadcn/dist/tailwind.css` — `data-active`/`data-horizontal`/`data-vertical` 등 shadcn 컴포넌트가 의존하는 커스텀 Tailwind variant 정의)도 반드시 포함해야 한다. 디자인 토큰 적용 단계에서 이 import를 빠뜨리면 `Tabs` 같은 컴포넌트의 `flex-direction: column`이 조용히 무시되어 좁은 사이드바에서 레이아웃이 깨진다(실사용 중 발견, `index.css`에 복구 완료).
 
 ## 디자인 토큰
 
