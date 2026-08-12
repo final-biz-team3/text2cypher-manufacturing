@@ -12,12 +12,23 @@
 ## 목표
 
 - 실제 API 연동 없이, 이후 백엔드가 붙었을 때 데이터만 주입하면 되는 순수 프레젠테이션 컴포넌트 골격을 만든다.
-- 디자인 핸드오프 문서가 지정한 스택(React+Vite+TS, Zustand, Tailwind+shadcn/ui, react-force-graph-2d, Axios, React Query, zod, Vitest)을 프로젝트에 세팅한다.
-- 실제 그래프 시각화(react-force-graph-2d 연동), 실제 API 호출, 에러/평가 대시보드 화면은 이번 범위에서 제외한다.
+- 디자인 핸드오프 문서가 지정한 스택 중 **지금 실제로 쓰이는 것만** 세팅한다: React+Vite+TS, Zustand, Tailwind+shadcn/ui.
+- 실제 그래프 시각화, 실제 API 호출, 에러/평가 대시보드 화면은 이번 범위에서 제외한다.
+
+## 스코프 트리밍 원칙
+
+설치·설정만 해두고 실제로 쓰는 코드가 없는 배관(plumbing)은 만들지 않는다. 백엔드 계약이 없는 지금 시점에 Axios·React Query·zod·react-force-graph-2d·테스트 인프라를 미리 세팅해도 검증할 동작이 없다 — 실제로 쓸 시점에 필요한 패키지를 그때 추가하는 편이 낫다(YAGNI). 이 원칙에 따라 최초 설계에서 아래를 뺐다:
+
+- **Axios / React Query** — 호출 코드가 없는 상태로 설치만 해두면 의존성 관리 비용만 늘어난다. API contract가 확정되는 시점에 추가한다.
+- **react-force-graph-2d** — 그래프 자리는 이번 범위에서 placeholder 박스이므로 설치할 이유가 없다. 실제 그래프를 붙이는 시점에 설치한다.
+- **Vitest + RTL** — 정적 뼈대가 크래시 없이 마운트되는지만 확인하는 테스트는 설정 비용 대비 검증 가치가 낮다. 실제 로직(상태 전환, 데이터 가공)이 생기는 시점에 테스트 인프라를 넣는다.
+- **`MetricCard` 컴포넌트** — 이번 idle/success 어느 화면에도 쓰이지 않는다. 집계형 응답을 실제로 다루는 시점에 추가한다.
+- **zod → 순수 TS interface** — zod는 타입 선언과 런타임 파싱 두 가지를 하지만, TS interface는 타입 선언만 한다(컴파일 타임에만 존재). 런타임 파싱이 필요한 이유는 신뢰할 수 없는 외부 데이터가 들어올 때뿐인데, 지금은 mock 데이터를 직접 만들어 쓰므로 타입이 항상 보장된다. zod가 실제로 필요해지는 시점은 FastAPI 응답을 실제로 받는 순간이다 — 그때 `types/query.ts`의 interface를 zod schema로 옮기면 된다(구조가 동일해서 변환 비용이 낮다). 즉 지금 interface로 시작하는 것이 나중 zod 도입을 막지 않는, 순서가 맞는 선택이다.
+- **Pretendard npm self-host** — 서브셋팅/번들 설정까지는 이번 범위에서 불필요. CDN 링크로 대체하고, 프로덕션 폴리싱 단계에서 self-host로 전환한다.
 
 ## 화면 구조
 
-단일 화면(`Dashboard`)이 내부 상태로 두 뷰를 전환한다. 상태는 Zustand의 `activeScreen: 'idle' | 'success'`로 관리한다 (`'loading' | 'error'`는 타입에는 남겨두되 이번 범위의 UI는 만들지 않는다 — 아래 "이번 범위에서 제외" 참고).
+단일 화면(`Dashboard`)이 내부 상태로 두 뷰를 전환한다. 상태는 Zustand의 `activeScreen: 'idle' | 'success'`로 관리한다 (`'loading' | 'error'`는 타입에는 남겨두되 이번 범위의 UI는 만들지 않는다).
 
 - **idle** (질문 전): `QueryInputBar` + 예시 질문 카드 3x2 그리드(`ExampleQuestionCard`) + 스키마 미리보기 SVG(`SchemaGraphDiagram`, placeholder)
 - **success** (질문 후): `NaturalLanguageAnswerBox` + `PathGraphCanvas`(placeholder 박스) + `ResultsTable`(가변 컬럼) + `EvidencePanel`(접기/펴기, 내부에 `SelfCorrectionTimeline` + `CypherCard`) + `FollowUpChips`
@@ -28,14 +39,14 @@
 
 ## 이번 범위에서 제외
 
-- 실제 `react-force-graph-2d` 렌더링 — 라이브러리는 설치하되 `PathGraphCanvas`는 "그래프 시각화 영역" 텍스트가 있는 placeholder 박스로 둔다. 데이터가 붙는 시점에 `dagMode="lr"` 옵션으로 실제 구현한다.
-- 실제 axios/React Query API 호출 — `QueryClientProvider`와 axios 인스턴스만 세팅, 실제 `useQuery`/`useMutation` 훅은 백엔드 계약 확정 후 다음 단계에서 작성한다.
+- 실제 그래프 렌더링 — `PathGraphCanvas`는 "그래프 시각화 영역" 텍스트가 있는 placeholder 박스로 둔다. 실제 데이터가 붙는 시점에 react-force-graph-2d를 설치하고 `dagMode="lr"` 옵션으로 구현한다.
+- 실제 API 호출 — 백엔드 계약 확정 후 Axios 인스턴스와 React Query 훅을 추가한다.
 - 에러 상태 화면(자기수정 3회 실패), 평가 대시보드 화면(`Dashboard.dc.html` 화면 2, 4) — 이번 "틀" 범위 밖.
 - 사용자/개발자 모드 토글 — 채택하지 않음(위 "배경" 참고).
 
 ## 컴포넌트 목록과 책임
 
-모든 컴포넌트는 props로 데이터를 받는 순수 프레젠테이션 컴포넌트로 작성한다. 목데이터는 스토리북 없이 `screens/Dashboard.tsx`에서 로컬 상수로 주입한다.
+모든 컴포넌트는 props로 데이터를 받는 순수 프레젠테이션 컴포넌트로 작성한다. 목데이터는 `screens/Dashboard.tsx`에서 로컬 상수로 주입한다.
 
 | 컴포넌트 | 위치 | 책임 |
 |---|---|---|
@@ -50,11 +61,10 @@
 | `EvidencePanel` | `components/result` | 접기/펴기 컨테이너 |
 | `SelfCorrectionTimeline` | `components/result` | 단계별 dot(success/fail/warn) + 제목 + 소요시간 |
 | `CypherCard` | `components/result` | 코드블록(다크 고정 배경) + 복사 버튼 + 접기 토글 |
-| `MetricCard` | `components/result` | 라벨 + 큰 수치 + 보조설명 (집계형 응답 대비 준비, idle/success 어느 쪽에도 아직 안 쓰이지만 타입/컴포넌트는 미리 만들어 둠) |
 
 ## 상태 관리
 
-`store/useUiStore.ts` (Zustand, UI 전용 상태만 — 서버 상태는 React Query 몫):
+`store/useUiStore.ts` (Zustand, UI 전용 상태만):
 
 ```ts
 interface UiStore {
@@ -75,22 +85,23 @@ interface UiStore {
 
 `activeScreen`은 이번 범위에서 `'idle'`↔`'success'`만 실제로 전환된다(질문하기 버튼 클릭 시 mock 성공 결과로 전환). `'loading'`/`'error'`는 타입에 존재하되 대응 UI는 다음 단계 작업.
 
-## 데이터 타입 (zod)
+## 데이터 타입
 
-`src/types/query.ts`에 아래 스키마와 추론 타입만 정의한다(실제 API 응답 파싱에는 아직 사용하지 않음, 다음 단계에서 axios 응답에 `.parse()` 적용):
+`src/types/query.ts`에 순수 TS interface로 정의한다(런타임 파싱 없음 — 이유는 위 "스코프 트리밍 원칙" 참고):
 
-- `SelfCorrectionStepSchema` — `status: 'success'|'fail'|'warn'`, `title`, `detail`, `elapsedMs`
-- `QueryResultSchema` — `answer`, `cypher`, `columns`, `rows`, `timeline: SelfCorrectionStepSchema[]`
+- `SelfCorrectionStep` — `status: 'success'|'fail'|'warn'`, `title`, `detail`, `elapsedMs`
+- `QueryResult` — `answer`, `cypher`, `columns`, `rows`, `timeline: SelfCorrectionStep[]`
+
+실제 API 연동 시 이 interface들을 동일한 필드 구조의 zod schema로 옮기고 `schema.parse(response.data)`로 런타임 검증을 추가한다.
 
 ## 폴더 구조
 
 ```
 src/
   types/
-    query.ts        # zod 스키마 + 추론 타입
+    query.ts        # TS interface (SelfCorrectionStep, QueryResult)
   lib/
-    api.ts           # axios 인스턴스 (baseURL만, 실제 호출 없음)
-    utils.ts          # cn() (shadcn 컨벤션)
+    utils.ts         # cn() (shadcn 컨벤션)
   store/
     useUiStore.ts
   components/
@@ -110,7 +121,6 @@ src/
       EvidencePanel.tsx
       SelfCorrectionTimeline.tsx
       CypherCard.tsx
-      MetricCard.tsx
   screens/
     Dashboard.tsx      # idle/success 조합 + mock 데이터 주입
   App.tsx
@@ -121,12 +131,7 @@ src/
 - Tailwind CSS 설치 및 `tailwind.config` — `theme.extend.colors`에 디자인 토큰(Okabe-Ito 노드 5색 + 뉴트럴 라이트/다크) 등록, `darkMode: 'class'`
 - shadcn/ui 초기화, 사용 컴포넌트만 추가: Button, Input, Card, Badge, Table, Tabs
 - Zustand 설치
-- Axios 설치 + `src/lib/api.ts` 인스턴스(baseURL은 `.env`의 `VITE_API_BASE_URL` 참조, 실제 요청 함수는 아직 작성 안 함)
-- React Query 설치 + `QueryClientProvider`를 `App.tsx`에 세팅
-- zod 설치
-- Vitest + React Testing Library 설치, `App.tsx` 렌더 스모크 테스트 1개
-- Pretendard 폰트(npm 패키지) 설치, self-host
-- react-force-graph-2d 설치만 (사용은 다음 단계)
+- Pretendard 폰트 CDN 링크(`index.html`)
 
 ## 디자인 토큰
 
@@ -163,11 +168,6 @@ Cypher 코드블록은 테마 무관 고정: 배경 `#1c1f24`, 텍스트 `#e7eae
 - 스케일: 9.5px~26px (마이크로 라벨 → 타이틀/수치 강조)
 - 사이드바 고정폭: 240px(스키마/이력 탭)
 - 카드 radius 9~10px, pill 20~24px, 원형 배지 50%
-
-## 테스트
-
-- Vitest + RTL 세팅
-- `Dashboard.tsx` 스모크 테스트: idle 상태 렌더 확인, "질문하기" 클릭 시 success 상태로 전환되고 `NaturalLanguageAnswerBox`가 나타나는지 확인
 
 ## 브랜치
 
