@@ -259,13 +259,34 @@ def read_rows(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def run_step(session, label: str, path: Path, cypher_body: str) -> None:
+def count_entity(session, label: str, element_type: str) -> int:
+    if element_type == "node":
+        query = f"MATCH (n:{label}) RETURN count(n) AS c"
+    else:
+        query = f"MATCH ()-[r:{label}]->() RETURN count(r) AS c"
+    return session.run(query).single()["c"]
+
+
+def run_step(session, label: str, path: Path, cypher_body: str, element_type: str, strict: bool) -> bool:
+    """element_type: 'node' 또는 'rel'. strict=True면 적재 후 DB 카운트가
+    CSV 행 수와 정확히 같아야 한다(마스터: 1회 적재라 항상 1:1이어야 함).
+    strict=False면 트랜잭션처럼 매달 누적되는 라벨이라, DB 카운트가 줄지 않고
+    늘어난 양이 이번 CSV 행 수를 넘지 않는지만 확인한다(정보성 경고)."""
     rows = read_rows(path)
+    before = count_entity(session, label, element_type)
     query = "UNWIND $rows AS row\n" + cypher_body
     for i in range(0, len(rows), BATCH_SIZE):
         batch = rows[i:i + BATCH_SIZE]
         session.execute_write(lambda tx, b=batch, q=query: tx.run(q, rows=b).consume())
-    print(f"  {label}: {len(rows)} rows")
+    after = count_entity(session, label, element_type)
+    delta = after - before
+    if strict:
+        ok = after == len(rows)
+        print(f"  {label}: {len(rows)} rows -> DB {after}건 [{'OK' if ok else '불일치'}]")
+    else:
+        ok = 0 <= delta <= len(rows)
+        print(f"  {label}: {len(rows)} rows (DB {before} -> {after}, +{delta}) [{'OK' if ok else '경고'}]")
+    return ok
 
 
 def main() -> None:
@@ -281,6 +302,7 @@ def main() -> None:
     print(f"연결: {uri}")
 
     driver = GraphDatabase.driver(uri, auth=(user, password))
+    checks: list[tuple[str, bool]] = []
     try:
         driver.verify_connectivity()
         with driver.session() as session:
@@ -290,19 +312,19 @@ def main() -> None:
 
             print("2. 마스터 노드")
             for label, filename, body in MASTER_NODE_STEPS:
-                run_step(session, label, master_dir / filename, body)
+                checks.append((label, run_step(session, label, master_dir / filename, body, "node", strict=True)))
 
             print("2. 마스터 관계")
             for label, filename, body in MASTER_REL_STEPS:
-                run_step(session, label, master_dir / filename, body)
+                checks.append((label, run_step(session, label, master_dir / filename, body, "rel", strict=True)))
 
             print(f"3. 트랜잭션 노드 ({args.month})")
             for label, filename, body in TX_NODE_STEPS:
-                run_step(session, label, tx_dir / filename, body)
+                checks.append((label, run_step(session, label, tx_dir / filename, body, "node", strict=False)))
 
             print(f"3. 트랜잭션 관계 ({args.month})")
             for label, filename, body in TX_REL_STEPS:
-                run_step(session, label, tx_dir / filename, body)
+                checks.append((label, run_step(session, label, tx_dir / filename, body, "rel", strict=False)))
 
             print("4. 검증 (노드)")
             for lbl in NODE_LABELS:
@@ -314,6 +336,12 @@ def main() -> None:
                 print(f"  {row['type']}: {row['count']}")
     finally:
         driver.close()
+
+    failed = [label for label, ok in checks if not ok]
+    if failed:
+        print(f"\n검증 실패: {failed}")
+        raise SystemExit(1)
+    print("\n적재 검증: 전체 OK")
 
 
 if __name__ == "__main__":
