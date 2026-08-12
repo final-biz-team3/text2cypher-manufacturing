@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-from core.neo4j import get_driver
+
 from core.config import settings
+from core.neo4j import get_driver
 
 router = APIRouter()
 

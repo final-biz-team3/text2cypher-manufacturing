@@ -1,4 +1,5 @@
-from neo4j import GraphDatabase, Driver
+from neo4j import Driver, GraphDatabase
+
 from core.config import settings
 
 _driver: Driver | None = None
