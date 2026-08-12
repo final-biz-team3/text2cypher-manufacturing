@@ -11,7 +11,22 @@ import { EvidencePanel } from '@/components/result/EvidencePanel'
 import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { CypherCard } from '@/components/result/CypherCard'
 import { useUiStore } from '@/store/useUiStore'
-import type { QueryResult } from '@/types/query'
+import type { NodeLabel, QueryResult, SchemaNode, SchemaRelationship } from '@/types/query'
+
+const SCHEMA_NODES: SchemaNode[] = [
+  { label: 'Lot', glyph: 'L', description: '생산 배치 단위', properties: ['lot_id', 'product_code', 'created_at'] },
+  { label: 'Process', glyph: 'P', description: '공정 단계', properties: ['process_name', 'sequence'] },
+  { label: 'Equipment', glyph: 'EQ', description: '설비', properties: ['equipment_id', 'line'] },
+  { label: 'Material', glyph: 'M', description: '투입 자재', properties: ['material_code', 'lot_no'] },
+  { label: 'Defect', glyph: 'D', description: '불량 기록', properties: ['defect_code', 'severity', 'detected_at'] },
+]
+
+const RELATIONSHIPS: SchemaRelationship[] = [
+  { name: 'FOLLOWS', description: '공정 순서' },
+  { name: 'PROCESSED_AT', description: '설비 투입' },
+  { name: 'HAS_DEFECT', description: '불량 발생' },
+  { name: 'CONSUMES', description: '자재 소모' },
+]
 
 const MOCK_RESULT: QueryResult = {
   answer:
@@ -53,23 +68,23 @@ RETURN l, p1, p2, eq, d`,
 const EXAMPLE_QUESTIONS: {
   kind: '경로추적' | '집계'
   question: string
-  path: { glyph: string; label: string }[]
+  path: { glyph: string; label: string; nodeLabel: NodeLabel }[]
 }[] = [
   {
     kind: '경로추적',
     question: 'LOT-2041에서 발생한 불량의 원인 경로를 찾아줘',
     path: [
-      { glyph: 'L', label: 'LOT-2041' },
-      { glyph: 'P', label: '식각' },
-      { glyph: 'D', label: 'D-114' },
+      { glyph: 'L', label: 'LOT-2041', nodeLabel: 'Lot' },
+      { glyph: 'P', label: '식각', nodeLabel: 'Process' },
+      { glyph: 'D', label: 'D-114', nodeLabel: 'Defect' },
     ],
   },
   {
     kind: '집계',
     question: '지난 분기 작업장별 폐기 수량과 주요 폐기 사유를 알려줘',
     path: [
-      { glyph: 'EQ', label: '작업장' },
-      { glyph: 'D', label: '폐기 사유' },
+      { glyph: 'EQ', label: '작업장', nodeLabel: 'Equipment' },
+      { glyph: 'D', label: '폐기 사유', nodeLabel: 'Defect' },
     ],
   },
 ]
@@ -92,9 +107,9 @@ export function Dashboard() {
 
   return (
     <div className="flex h-screen flex-col bg-bg">
-      <TopBar />
+      <TopBar connectionLabel="Neo4j 연결됨 · bolt://prod-kg-01" readOnlyLabel="READ 전용 · 쓰기 작업 차단됨" />
       <div className="flex flex-1 overflow-hidden">
-        <SchemaSidebar />
+        <SchemaSidebar nodes={SCHEMA_NODES} relationships={RELATIONSHIPS} />
         <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
           <QueryInputBar value={queryText} onChange={setQueryText} onSubmit={handleSubmit} />
           {activeScreen === 'idle' ? (

@@ -46,6 +46,11 @@
   --color-node-equipment: var(--node-equipment);
   --color-node-material: var(--node-material);
   --color-node-defect: var(--node-defect);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
 }
 
 :root {

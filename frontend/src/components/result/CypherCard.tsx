@@ -17,7 +17,7 @@ export function CypherCard({ cypher, collapsed, onToggleCollapsed }: CypherCardP
   }
 
   return (
-    <div className="rounded-[10px] border border-border">
+    <div className="rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-[11px] font-semibold uppercase text-text-faint">생성된 Cypher</span>
         <div className="flex gap-1">

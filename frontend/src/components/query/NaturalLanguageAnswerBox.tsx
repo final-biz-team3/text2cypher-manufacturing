@@ -4,7 +4,7 @@ interface NaturalLanguageAnswerBoxProps {
 
 export function NaturalLanguageAnswerBox({ answer }: NaturalLanguageAnswerBoxProps) {
   return (
-    <div className="rounded-[10px] border border-info bg-accent-bg p-4 text-[13.5px] leading-relaxed text-text">
+    <div className="rounded-lg border border-info bg-accent-bg p-4 text-[13.5px] leading-relaxed text-text">
       {answer}
     </div>
   )

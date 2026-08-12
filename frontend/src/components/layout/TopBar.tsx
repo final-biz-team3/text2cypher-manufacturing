@@ -2,7 +2,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/store/useUiStore'
 
-export function TopBar() {
+interface TopBarProps {
+  connectionLabel: string
+  readOnlyLabel: string
+}
+
+export function TopBar({ connectionLabel, readOnlyLabel }: TopBarProps) {
   const theme = useUiStore((s) => s.theme)
   const setTheme = useUiStore((s) => s.setTheme)
 
@@ -18,13 +23,13 @@ export function TopBar() {
           className="gap-1.5 rounded-full border-border-strong px-3 py-1 text-[11.5px] font-normal text-text"
         >
           <span className="size-1.5 rounded-full bg-success" />
-          Neo4j 연결됨 · bolt://prod-kg-01
+          {connectionLabel}
         </Badge>
         <Badge
           variant="outline"
           className="rounded-full border-border-strong px-3 py-1 text-[11.5px] font-normal text-text"
         >
-          READ 전용 · 쓰기 작업 차단됨
+          {readOnlyLabel}
         </Badge>
         <Button
           type="button"

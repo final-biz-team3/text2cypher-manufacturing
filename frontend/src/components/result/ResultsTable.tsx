@@ -8,7 +8,7 @@ interface ResultsTableProps {
 
 export function ResultsTable({ columns, rows }: ResultsTableProps) {
   return (
-    <div className="overflow-x-auto rounded-[10px] border border-border">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <Table>
         <TableHeader>
           <TableRow>

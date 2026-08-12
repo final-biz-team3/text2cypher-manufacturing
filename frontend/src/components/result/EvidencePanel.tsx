@@ -8,7 +8,7 @@ interface EvidencePanelProps {
 
 export function EvidencePanel({ open, onToggle, children }: EvidencePanelProps) {
   return (
-    <div className="rounded-[10px] border border-border bg-panel">
+    <div className="rounded-lg border border-border bg-panel">
       <button type="button" onClick={onToggle} className="flex w-full items-center justify-between px-4 py-2.5 text-left">
         <span className="text-[12.5px] font-semibold text-text">어떻게 나온 답인지 보기</span>
         <span className="text-text-faint">{open ? '▾' : '▸'}</span>

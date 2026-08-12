@@ -30,7 +30,7 @@
 
 단일 화면(`Dashboard`)이 내부 상태로 두 뷰를 전환한다. 상태는 Zustand의 `activeScreen: 'idle' | 'success'`로 관리한다 (`'loading' | 'error'`는 타입에는 남겨두되 이번 범위의 UI는 만들지 않는다).
 
-- **idle** (질문 전): `QueryInputBar` + 예시 질문 카드 3x2 그리드(`ExampleQuestionCard`) + 스키마 미리보기 SVG(`SchemaGraphDiagram`, placeholder)
+- **idle** (질문 전): `QueryInputBar` + 예시 질문 카드 2개(`ExampleQuestionCard`, 3열 그리드)
 - **success** (질문 후): `NaturalLanguageAnswerBox` + `PathGraphCanvas`(placeholder 박스) + `ResultsTable`(가변 컬럼) + `EvidencePanel`(접기/펴기, 내부에 `SelfCorrectionTimeline` + `CypherCard`) + `FollowUpChips`
 
 공통 레이아웃(두 뷰 모두에 존재):
