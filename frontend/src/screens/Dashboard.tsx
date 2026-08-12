@@ -9,7 +9,7 @@ import { PathGraphCanvas } from '@/components/graph/PathGraphCanvas'
 import { ResultsTable } from '@/components/result/ResultsTable'
 import { EvidencePanel } from '@/components/result/EvidencePanel'
 import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
-import { CypherCard } from '@/components/result/CypherCard'
+import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
 import { useUiStore } from '@/store/useUiStore'
 import type { NodeLabel, QueryResult, SchemaNode, SchemaRelationship } from '@/types/query'
 
@@ -91,6 +91,10 @@ const EXAMPLE_QUESTIONS: {
 
 const FOLLOW_UP_QUESTIONS = ['이 답의 근거를 더 자세히', 'EQ-07의 최근 불량 이력은?', '같은 유형의 다른 Lot도 있어?']
 
+const CONNECTED = false
+const CONNECTION_ENDPOINT = 'bolt://prod-kg-01'
+const READ_ONLY = true
+
 export function Dashboard() {
   const [queryText, setQueryText] = useState('')
   const activeScreen = useUiStore((s) => s.activeScreen)
@@ -105,9 +109,19 @@ export function Dashboard() {
     setActiveScreen('success')
   }
 
+  const handleNavigateHome = () => {
+    setActiveScreen('idle')
+    setQueryText('')
+  }
+
   return (
     <div className="flex h-screen flex-col bg-bg">
-      <TopBar connectionLabel="Neo4j 연결됨 · bolt://prod-kg-01" readOnlyLabel="READ 전용 · 쓰기 작업 차단됨" />
+      <TopBar
+        connected={CONNECTED}
+        connectionEndpoint={CONNECTION_ENDPOINT}
+        readOnly={READ_ONLY}
+        onNavigateHome={handleNavigateHome}
+      />
       <div className="flex flex-1 overflow-hidden">
         <SchemaSidebar nodes={SCHEMA_NODES} relationships={RELATIONSHIPS} />
         <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
@@ -131,16 +145,18 @@ export function Dashboard() {
               <ResultsTable columns={MOCK_RESULT.columns} rows={MOCK_RESULT.rows} />
               <EvidencePanel open={evidencePanelOpen} onToggle={toggleEvidencePanel}>
                 <SelfCorrectionTimeline steps={MOCK_RESULT.timeline} />
-                <CypherCard
-                  cypher={MOCK_RESULT.cypher}
-                  collapsed={cypherCollapsed}
-                  onToggleCollapsed={toggleCypherCollapsed}
-                />
               </EvidencePanel>
               <FollowUpChips questions={FOLLOW_UP_QUESTIONS} onSelect={setQueryText} />
             </div>
           )}
         </main>
+        {activeScreen === 'success' ? (
+          <CypherSlidePanel
+            cypher={MOCK_RESULT.cypher}
+            collapsed={cypherCollapsed}
+            onToggleCollapsed={toggleCypherCollapsed}
+          />
+        ) : null}
       </div>
     </div>
   )

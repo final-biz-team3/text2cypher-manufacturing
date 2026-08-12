@@ -13,7 +13,7 @@ export function EvidencePanel({ open, onToggle, children }: EvidencePanelProps) 
         <span className="text-[12.5px] font-semibold text-text">어떻게 나온 답인지 보기</span>
         <span className="text-text-faint">{open ? '▾' : '▸'}</span>
       </button>
-      {open ? <div className="grid grid-cols-2 gap-4 border-t border-border p-4">{children}</div> : null}
+      {open ? <div className="flex flex-col gap-3 border-t border-border p-4">{children}</div> : null}
     </div>
   )
 }
