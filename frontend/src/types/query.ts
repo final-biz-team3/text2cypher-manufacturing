@@ -32,3 +32,9 @@ export interface SchemaRelationship {
   name: string
   description: string
 }
+
+export interface HistoryItem {
+  id: string
+  question: string
+  submittedAt: number
+}

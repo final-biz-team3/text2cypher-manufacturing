@@ -3,14 +3,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useUiStore } from '@/store/useUiStore'
 import type { SidebarTab } from '@/store/useUiStore'
 import { NODE_COLOR_CLASS } from '@/lib/nodeColors'
-import type { SchemaNode, SchemaRelationship } from '@/types/query'
+import type { HistoryItem, SchemaNode, SchemaRelationship } from '@/types/query'
 
 interface SchemaSidebarProps {
   nodes: SchemaNode[]
   relationships: SchemaRelationship[]
+  history: HistoryItem[]
+  onSelectHistoryItem: (question: string) => void
 }
 
-export function SchemaSidebar({ nodes, relationships }: SchemaSidebarProps) {
+export function SchemaSidebar({ nodes, relationships, history, onSelectHistoryItem }: SchemaSidebarProps) {
   const historyTab = useUiStore((s) => s.historyTab)
   const setHistoryTab = useUiStore((s) => s.setHistoryTab)
   const [openNode, setOpenNode] = useState<string | null>(null)
@@ -66,8 +68,24 @@ export function SchemaSidebar({ nodes, relationships }: SchemaSidebarProps) {
             ))}
           </div>
         </TabsContent>
-        <TabsContent value="history" className="p-3">
-          <p className="px-1 text-[12px] text-text-faint">아직 질문 이력이 없습니다.</p>
+        <TabsContent value="history" className="flex flex-col gap-1 p-3">
+          {history.length === 0 ? (
+            <p className="px-1 text-[12px] text-text-faint">아직 질문 이력이 없습니다.</p>
+          ) : (
+            history.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onSelectHistoryItem(item.question)}
+                className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-panel-2"
+              >
+                <p className="line-clamp-2 text-[12px] text-text">{item.question}</p>
+                <p className="text-[10px] text-text-faint">
+                  {new Date(item.submittedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </button>
+            ))
+          )}
         </TabsContent>
       </Tabs>
     </aside>

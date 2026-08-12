@@ -11,7 +11,7 @@ import { EvidencePanel } from '@/components/result/EvidencePanel'
 import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
 import { useUiStore } from '@/store/useUiStore'
-import type { NodeLabel, QueryResult, SchemaNode, SchemaRelationship } from '@/types/query'
+import type { HistoryItem, NodeLabel, QueryResult, SchemaNode, SchemaRelationship } from '@/types/query'
 
 const SCHEMA_NODES: SchemaNode[] = [
   { label: 'Lot', glyph: 'L', description: '생산 배치 단위', properties: ['lot_id', 'product_code', 'created_at'] },
@@ -97,6 +97,7 @@ const READ_ONLY = true
 
 export function Dashboard() {
   const [queryText, setQueryText] = useState('')
+  const [history, setHistory] = useState<HistoryItem[]>([])
   const activeScreen = useUiStore((s) => s.activeScreen)
   const setActiveScreen = useUiStore((s) => s.setActiveScreen)
   const evidencePanelOpen = useUiStore((s) => s.evidencePanelOpen)
@@ -105,7 +106,9 @@ export function Dashboard() {
   const toggleCypherCollapsed = useUiStore((s) => s.toggleCypherCollapsed)
 
   const handleSubmit = () => {
-    if (!queryText.trim()) return
+    const question = queryText.trim()
+    if (!question) return
+    setHistory((prev) => [{ id: crypto.randomUUID(), question, submittedAt: Date.now() }, ...prev])
     setActiveScreen('success')
   }
 
@@ -113,6 +116,8 @@ export function Dashboard() {
     setActiveScreen('idle')
     setQueryText('')
   }
+
+  const queryInputBar = <QueryInputBar value={queryText} onChange={setQueryText} onSubmit={handleSubmit} />
 
   return (
     <div className="flex h-screen flex-col bg-bg">
@@ -123,23 +128,39 @@ export function Dashboard() {
         onNavigateHome={handleNavigateHome}
       />
       <div className="flex flex-1 overflow-hidden">
-        <SchemaSidebar nodes={SCHEMA_NODES} relationships={RELATIONSHIPS} />
-        <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-          <QueryInputBar value={queryText} onChange={setQueryText} onSubmit={handleSubmit} />
+        <SchemaSidebar
+          nodes={SCHEMA_NODES}
+          relationships={RELATIONSHIPS}
+          history={history}
+          onSelectHistoryItem={setQueryText}
+        />
+        <main className="flex flex-1 flex-col overflow-y-auto p-6">
           {activeScreen === 'idle' ? (
-            <div className="grid grid-cols-3 gap-3">
-              {EXAMPLE_QUESTIONS.map((example) => (
-                <ExampleQuestionCard
-                  key={example.question}
-                  kind={example.kind}
-                  question={example.question}
-                  path={example.path}
-                  onClick={() => setQueryText(example.question)}
-                />
-              ))}
+            <div className="flex flex-1 flex-col items-center justify-center gap-6">
+              <div className="flex flex-col items-center gap-1 text-center">
+                <h1 className="text-lg font-semibold text-text">공정 데이터에 대해 무엇이든 물어보세요</h1>
+                <p className="text-[13px] text-text-muted">
+                  Neo4j 지식그래프 기반으로 공정·품질 데이터를 자연어로 질의할 수 있습니다
+                </p>
+              </div>
+              <div className="w-full max-w-2xl">{queryInputBar}</div>
+              {history.length === 0 ? (
+                <div className="grid w-full max-w-2xl grid-cols-2 gap-3">
+                  {EXAMPLE_QUESTIONS.map((example) => (
+                    <ExampleQuestionCard
+                      key={example.question}
+                      kind={example.kind}
+                      question={example.question}
+                      path={example.path}
+                      onClick={() => setQueryText(example.question)}
+                    />
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="flex flex-col gap-4">
+              {queryInputBar}
               <NaturalLanguageAnswerBox answer={MOCK_RESULT.answer} />
               <PathGraphCanvas />
               <ResultsTable columns={MOCK_RESULT.columns} rows={MOCK_RESULT.rows} />
