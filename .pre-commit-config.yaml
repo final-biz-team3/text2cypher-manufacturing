@@ -26,3 +26,17 @@ repos:
           - pytest==9.1.1
           - types-PyYAML==6.0.12.20260518
           - uvicorn==0.52.1
+
+  - repo: local
+    hooks:
+      - id: frontend-eslint
+        name: eslint --fix (frontend)
+        entry: node frontend/node_modules/eslint/bin/eslint.js --config frontend/eslint.config.js --fix
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+
+      - id: frontend-prettier
+        name: prettier --write (frontend)
+        entry: node frontend/node_modules/prettier/bin/prettier.cjs --write
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js|jsx|css|html|json|md)$
