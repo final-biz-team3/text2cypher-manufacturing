@@ -1,11 +1,11 @@
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+target-version = ["py312"]
 include = "\\.pyi?$"
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 src = ["backend"]
 
 [tool.ruff.lint]
@@ -21,7 +21,7 @@ select = [
 ]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 files = ["backend"]
 mypy_path = "backend"
 check_untyped_defs = true

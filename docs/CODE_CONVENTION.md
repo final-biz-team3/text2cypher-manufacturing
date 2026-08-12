@@ -130,15 +130,15 @@ mypy backend
 
 ### 4.1 개발용 가상환경 구성
 
-프로젝트는 Python 3.11을 사용한다. 루트의 `.python-version`에도 같은 버전을 기록하며,
+프로젝트는 Python 3.12를 사용한다. 루트의 `.python-version`에도 같은 버전을 기록하며,
 가상환경을 생성할 때 버전을 명시한다.
 
 ```bash
 # macOS 또는 Linux
-python3.11 -m venv backend/venv
+python3.12 -m venv backend/venv
 
 # Windows
-py -3.11 -m venv backend/venv
+py -3.12 -m venv backend/venv
 ```
 
 macOS 또는 Linux에서는 다음 명령으로 가상환경을 활성화한다.
@@ -227,7 +227,7 @@ text2cypher-manufacturing/
 
 GitHub Actions 규칙에 따라 루트의 `.github/workflows/code-quality.yml`에 CI 설정을 저장한다.
 `backend`, `pyproject.toml` 또는 Workflow 자체가 변경된 `dev` 또는 `main` 대상 Push와 Pull Request에서만
-Python 3.11과 개발 의존성을 준비한 뒤 다음 검사를 실행한다.
+Python 3.12와 개발 의존성을 준비한 뒤 다음 검사를 실행한다.
 
 ```text
 Ruff 검사 → Black 포맷 검사 → mypy 타입 검사
@@ -265,7 +265,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
