@@ -30,12 +30,14 @@
 
 단일 화면(`Dashboard`)이 내부 상태로 두 뷰를 전환한다. 상태는 Zustand의 `activeScreen: 'idle' | 'success'`로 관리한다 (`'loading' | 'error'`는 타입에는 남겨두되 이번 범위의 UI는 만들지 않는다).
 
-- **idle** (질문 전): `QueryInputBar` + 예시 질문 카드 2개(`ExampleQuestionCard`, 3열 그리드)
-- **success** (질문 후): `NaturalLanguageAnswerBox` + `PathGraphCanvas`(placeholder 박스) + `ResultsTable`(가변 컬럼) + `EvidencePanel`(접기/펴기, 내부에 `SelfCorrectionTimeline`만) + `FollowUpChips`. 우측에 `CypherSlidePanel`이 별도로 항상 마운트되어(EvidencePanel 열림 여부와 무관) 접기/펴기 가능한 폭-전환 컬럼으로 Cypher 코드를 보여준다.
+- **idle** (질문 전): 중앙 정렬된 안내 문구("공정 데이터에 대해 무엇이든 물어보세요") + `QueryInputBar`. 세션 `history`가 비어있으면(첫 방문) 그 아래에 예시 질문 카드 2개(`ExampleQuestionCard`, 2열 그리드)로 온보딩하고, `history`가 하나라도 있으면(재방문) 예시 카드를 숨긴다 — empty-state는 "가르치는 순간"이라는 NN/g 가이드라인과 예시/이력을 분리하는 ChatGPT·Gemini류 패턴을 따름.
+- **success** (질문 후): `QueryInputBar`(상단 고정) + `NaturalLanguageAnswerBox` + `PathGraphCanvas`(placeholder 박스) + `ResultsTable`(가변 컬럼) + `EvidencePanel`(접기/펴기, 내부에 `SelfCorrectionTimeline`만) + `FollowUpChips`. 우측에 `CypherSlidePanel`이 별도로 항상 마운트되어(EvidencePanel 열림 여부와 무관) 접기/펴기 가능한 폭-전환 컬럼으로 Cypher 코드를 보여준다.
+
+세션 질문 이력(`history: HistoryItem[]`)은 `Dashboard`의 로컬 `useState`로 관리한다(백엔드가 없어 새로고침하면 초기화됨 — 영속화는 API 연동 시점의 과제). 질문 제출마다 항목을 앞에 추가하고, `SchemaSidebar`의 "질문 이력" 탭과 idle 화면의 예시 카드 노출 여부가 이 하나의 배열을 함께 참조한다.
 
 공통 레이아웃(두 뷰 모두에 존재):
 - `TopBar` — 서비스명(클릭 시 idle 화면으로 이동하는 홈 내비게이션 겸용), 부제, 연결 상태 배지(`connected: boolean` prop, 연결 안 됐을 때는 회색/빨간 dot + "Neo4j 연결 안됨"만 표시하고 READ 전용 배지는 아예 숨김 — 백엔드가 없는 지금은 항상 `connected=false`), READ 전용 배지(연결됐을 때만 표시, `readOnly: boolean` prop), `ThemeToggle`
-- `SchemaSidebar` — 240px 고정폭, "스키마" / "질문 이력" 탭 전환(`Tabs`). 스키마 탭: 노드 라벨 아코디언 + 관계 타입 목록(둘 다 mock 데이터, 실데이터 없어도 UI 자체는 실제로 펼침/접힘 동작). 이력 탭: 빈 리스트 placeholder.
+- `SchemaSidebar` — 240px 고정폭, "스키마" / "질문 이력" 탭 전환(`Tabs`). 스키마 탭: 노드 라벨 아코디언 + 관계 타입 목록(mock 데이터, 실데이터 없어도 UI 자체는 실제로 펼침/접힘 동작). 이력 탭: `history`가 비어있으면 placeholder 문구, 있으면 실제 질문 목록(클릭 시 입력창에 채움).
 
 ## 이번 범위에서 제외
 
@@ -51,7 +53,7 @@
 | 컴포넌트 | 위치 | 책임 |
 |---|---|---|
 | `TopBar` | `components/layout` | 서비스명(홈 이동 버튼 겸용), 연결/READ전용 배지(연결 상태에 따라 조건부), 테마 토글 |
-| `SchemaSidebar` | `components/layout` | 스키마/이력 탭 전환, 노드 아코디언, 관계 목록 |
+| `SchemaSidebar` | `components/layout` | 스키마/이력 탭 전환, 노드 아코디언, 관계 목록, 실제 세션 질문 이력 표시 |
 | `QueryInputBar` | `components/query` | 입력창 + 질문하기 버튼(클릭 가능하나 요청 미전송) |
 | `ExampleQuestionCard` | `components/query` | 예시 질문 카드, 클릭 시 입력창에 텍스트만 채움 |
 | `NaturalLanguageAnswerBox` | `components/query` | 자연어 답변 텍스트, 엔티티 강조 스타일 |
@@ -91,6 +93,7 @@ interface UiStore {
 
 - `SelfCorrectionStep` — `status: 'success'|'fail'|'warn'`, `title`, `detail`, `elapsedMs`
 - `QueryResult` — `answer`, `cypher`, `columns`, `rows`, `timeline: SelfCorrectionStep[]`
+- `HistoryItem` — `id`, `question`, `submittedAt`(timestamp)
 
 실제 API 연동 시 이 interface들을 동일한 필드 구조의 zod schema로 옮기고 `schema.parse(response.data)`로 런타임 검증을 추가한다.
 
