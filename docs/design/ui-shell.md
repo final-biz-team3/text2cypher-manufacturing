@@ -70,18 +70,18 @@
 interface UiStore {
   theme: 'light' | 'dark';
   activeScreen: 'idle' | 'loading' | 'success' | 'error';
-  selectedNodeId: string | null;
   evidencePanelOpen: boolean;
   cypherCollapsed: boolean;
   historyTab: 'schema' | 'history';
   setTheme: (t: 'light' | 'dark') => void;
   setActiveScreen: (s: UiStore['activeScreen']) => void;
-  setSelectedNodeId: (id: string | null) => void;
   toggleEvidencePanel: () => void;
   toggleCypherCollapsed: () => void;
   setHistoryTab: (tab: 'schema' | 'history') => void;
 }
 ```
+
+(`selectedNodeId`/`setSelectedNodeId`는 최종 리뷰에서 미사용 상태로 확인되어 제거했다 — 실제 그래프 캔버스가 노드 선택을 필요로 하는 시점에 다시 추가한다.)
 
 `activeScreen`은 이번 범위에서 `'idle'`↔`'success'`만 실제로 전환된다(질문하기 버튼 클릭 시 mock 성공 결과로 전환). `'loading'`/`'error'`는 타입에 존재하되 대응 UI는 다음 단계 작업.
 
