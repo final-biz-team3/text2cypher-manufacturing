@@ -129,7 +129,7 @@ export default defineConfig({
 npx shadcn@latest init -t vite -b radix -p nova -y
 ```
 
-이 명령은 `components.json`을 만들고, `src/lib/utils.ts`(`cn()`)와 `src/components/ui/button.tsx`를 생성하고, `src/index.css`를 shadcn 기본 디자인 토큰(OKLCH)으로 갱신하고, `class-variance-authority`/`clsx`/`tailwind-merge`/`lucide-react`/`radix-ui`/`tw-animate-css`/`@fontsource-variable/geist`를 `package.json`에 추가한다. (색상 토큰은 Task 3에서 우리 팔레트로 교체하고, Geist 폰트는 이번 태스크 Step 7에서 제거한다.)
+이 명령은 `components.json`을 만들고, `src/lib/utils.ts`(`cn()`)와 `src/components/ui/button.tsx`를 생성하고, `src/index.css`를 shadcn 기본 디자인 토큰(OKLCH)과 `@import "@fontsource-variable/geist";`로 갱신하고, `class-variance-authority`/`clsx`/`tailwind-merge`/`lucide-react`/`radix-ui`/`tw-animate-css`/`@fontsource-variable/geist`를 `package.json`에 추가한다. (색상 토큰과 Geist 폰트는 이번 태스크에서 그대로 둔다 — Task 3에서 `src/index.css` 전체를 우리 팔레트+Pretendard로 교체하면서 `@fontsource-variable/geist` 패키지도 함께 제거한다. 이번 태스크에서 미리 패키지만 지우면 `src/index.css`의 `@import "@fontsource-variable/geist";`가 깨진 채로 남아 `npm run build`가 실패한다 — 반드시 Task 3에서 CSS 교체와 패키지 제거를 같은 스텝에서 함께 한다.)
 
 - [ ] **Step 6: 나머지 shadcn 프리미티브 추가**
 
@@ -139,15 +139,7 @@ npx shadcn@latest add input card badge table tabs -y
 
 Expected: `src/components/ui/input.tsx`, `card.tsx`, `badge.tsx`, `table.tsx`, `tabs.tsx` 생성됨.
 
-- [ ] **Step 7: 사용하지 않는 Geist 폰트 패키지 제거**
-
-```bash
-npm uninstall @fontsource-variable/geist
-```
-
-(Task 3에서 Pretendard CDN 링크로 교체한다.)
-
-- [ ] **Step 8: eslint가 shadcn 생성 파일을 오탐하지 않도록 예외 추가**
+- [ ] **Step 7: eslint가 shadcn 생성 파일을 오탐하지 않도록 예외 추가**
 
 shadcn이 생성한 `src/components/ui/*.tsx` 파일들은 컴포넌트와 `cva` variant 함수를 한 파일에서 함께 export하는데, 이는 `eslint-plugin-react-refresh`의 `only-export-components` 규칙과 충돌한다. `frontend/eslint.config.js`의 `export default defineConfig([...])` 배열 마지막에 항목 추가:
 
@@ -160,7 +152,7 @@ shadcn이 생성한 `src/components/ui/*.tsx` 파일들은 컴포넌트와 `cva`
   },
 ```
 
-- [ ] **Step 9: Vite 데모 보일러플레이트 제거**
+- [ ] **Step 8: Vite 데모 보일러플레이트 제거**
 
 ```bash
 cd frontend
@@ -183,7 +175,7 @@ function App() {
 export default App
 ```
 
-- [ ] **Step 10: 빌드로 전체 파이프라인 검증**
+- [ ] **Step 9: 빌드로 전체 파이프라인 검증**
 
 ```bash
 cd frontend
@@ -192,9 +184,9 @@ npm run lint
 npm run build
 ```
 
-Expected: 세 명령 모두 에러 없이 종료. `dist/` 산출물에 `index.html`, css, js 번들 생성.
+Expected: 세 명령 모두 에러 없이 종료. `dist/` 산출물에 `index.html`, css, js 번들 생성. (이 시점에는 Geist 폰트 파일이 `dist/assets/`에 그대로 포함된다 — Task 3에서 Pretendard로 교체되며 사라진다.)
 
-- [ ] **Step 11: 커밋**
+- [ ] **Step 10: 커밋**
 
 ```bash
 cd frontend
@@ -214,7 +206,16 @@ git commit -m "Chore: Tailwind v4 + shadcn/ui 기반 설치, Vite 데모 보일�
 - Consumes: Task 2의 shadcn `@theme` 구조(`src/index.css`의 `@theme inline` 블록)
 - Produces: Tailwind 유틸리티 클래스 `bg-bg`, `bg-panel`, `bg-panel-2`, `border-border-strong`, `text-text`, `text-text-muted`, `text-text-faint`, `bg-accent-bg`, `bg-info`/`text-info`, `bg-success`, `bg-fail`, `bg-warn`, `bg-code`/`text-code-text`, `bg-node-lot`/`bg-node-process`/`bg-node-equipment`/`bg-node-material`/`bg-node-defect` — 이후 모든 컴포넌트 태스크가 이 클래스들을 사용한다. shadcn 시맨틱 토큰(`background`, `foreground`, `card`, `primary` 등)도 같은 팔레트로 매핑되어 shadcn 프리미티브가 자동으로 새 색상을 반영한다.
 
-- [ ] **Step 1: `src/index.css`를 디자인 토큰으로 교체**
+- [ ] **Step 1: 사용하지 않는 Geist 폰트 패키지 제거**
+
+```bash
+cd frontend
+npm uninstall @fontsource-variable/geist
+```
+
+Task 2에서 shadcn init이 설치한 Geist 폰트 패키지다. 이 스텝 직후 Step 2에서 `src/index.css`를 통째로 교체하면서 `@import "@fontsource-variable/geist";`도 함께 사라지므로, 이 순서(패키지 제거 → CSS 교체)를 반드시 지킨다. 순서를 바꾸면(CSS를 먼저 바꾸지 않고 패키지만 지우면) `@tailwindcss/vite`가 남아있는 `@import`를 해석하지 못해 `npm run build`가 실패한다.
+
+- [ ] **Step 2: `src/index.css`를 디자인 토큰으로 교체**
 
 `frontend/src/index.css` 전체를 다음으로 교체:
 
@@ -362,7 +363,7 @@ git commit -m "Chore: Tailwind v4 + shadcn/ui 기반 설치, Vite 데모 보일�
 
 주의: `--code`/`--code-text`는 `.dark`에서 재정의하지 않는다(Cypher 코드블록은 테마 무관 고정 배경). `--node-*`도 Okabe-Ito 팔레트로 테마 무관 고정이라 `.dark`에서 재정의하지 않는다.
 
-- [ ] **Step 2: Pretendard 폰트 CDN 링크 추가, 타이틀 변경**
+- [ ] **Step 3: Pretendard 폰트 CDN 링크 추가, 타이틀 변경**
 
 `frontend/index.html` 전체를 다음으로 교체:
 
@@ -388,7 +389,7 @@ git commit -m "Chore: Tailwind v4 + shadcn/ui 기반 설치, Vite 데모 보일�
 </html>
 ```
 
-- [ ] **Step 3: 검증**
+- [ ] **Step 4: 검증**
 
 ```bash
 cd frontend
@@ -397,9 +398,9 @@ npm run lint
 npm run build
 ```
 
-Expected: 세 명령 모두 에러 없이 종료.
+Expected: 세 명령 모두 에러 없이 종료. (`dist/assets/`에서 Geist 폰트 파일이 사라지고 Task 2에서 확인했던 빌드 산출물 크기가 줄어드는지 눈으로 한 번 확인한다.)
 
-- [ ] **Step 4: 커밋**
+- [ ] **Step 5: 커밋**
 
 ```bash
 cd frontend
