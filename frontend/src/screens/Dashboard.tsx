@@ -11,14 +11,40 @@ import { EvidencePanel } from '@/components/result/EvidencePanel'
 import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
 import { useUiStore } from '@/store/useUiStore'
-import type { HistoryItem, NodeLabel, QueryResult, SchemaNode, SchemaRelationship } from '@/types/query'
+import type {
+  HistoryItem,
+  NodeLabel,
+  QueryResult,
+  SchemaNode,
+  SchemaRelationship,
+} from '@/types/query'
 
 const SCHEMA_NODES: SchemaNode[] = [
-  { label: 'Lot', glyph: 'L', description: '생산 배치 단위', properties: ['lot_id', 'product_code', 'created_at'] },
-  { label: 'Process', glyph: 'P', description: '공정 단계', properties: ['process_name', 'sequence'] },
+  {
+    label: 'Lot',
+    glyph: 'L',
+    description: '생산 배치 단위',
+    properties: ['lot_id', 'product_code', 'created_at'],
+  },
+  {
+    label: 'Process',
+    glyph: 'P',
+    description: '공정 단계',
+    properties: ['process_name', 'sequence'],
+  },
   { label: 'Equipment', glyph: 'EQ', description: '설비', properties: ['equipment_id', 'line'] },
-  { label: 'Material', glyph: 'M', description: '투입 자재', properties: ['material_code', 'lot_no'] },
-  { label: 'Defect', glyph: 'D', description: '불량 기록', properties: ['defect_code', 'severity', 'detected_at'] },
+  {
+    label: 'Material',
+    glyph: 'M',
+    description: '투입 자재',
+    properties: ['material_code', 'lot_no'],
+  },
+  {
+    label: 'Defect',
+    glyph: 'D',
+    description: '불량 기록',
+    properties: ['defect_code', 'severity', 'detected_at'],
+  },
 ]
 
 const RELATIONSHIPS: SchemaRelationship[] = [
@@ -46,7 +72,13 @@ RETURN l, p1, p2, eq, d`,
     { lot: 'LOT-2041', process: '식각', equipment: 'EQ-07', defect: 'D-114 (Major)' },
   ],
   timeline: [
-    { id: '1', status: 'success', title: 'Cypher 생성 (시도 1)', detail: '스키마 기반 쿼리 생성 완료', elapsedMs: 700 },
+    {
+      id: '1',
+      status: 'success',
+      title: 'Cypher 생성 (시도 1)',
+      detail: '스키마 기반 쿼리 생성 완료',
+      elapsedMs: 700,
+    },
     {
       id: '2',
       status: 'fail',
@@ -61,7 +93,13 @@ RETURN l, p1, p2, eq, d`,
       detail: '관계 타입 목록을 컨텍스트에 포함',
       elapsedMs: 600,
     },
-    { id: '4', status: 'success', title: '실행 (시도 2) — 성공', detail: '1.4초 · 3행 반환', elapsedMs: 1400 },
+    {
+      id: '4',
+      status: 'success',
+      title: '실행 (시도 2) — 성공',
+      detail: '1.4초 · 3행 반환',
+      elapsedMs: 1400,
+    },
   ],
 }
 
@@ -89,7 +127,11 @@ const EXAMPLE_QUESTIONS: {
   },
 ]
 
-const FOLLOW_UP_QUESTIONS = ['이 답의 근거를 더 자세히', 'EQ-07의 최근 불량 이력은?', '같은 유형의 다른 Lot도 있어?']
+const FOLLOW_UP_QUESTIONS = [
+  '이 답의 근거를 더 자세히',
+  'EQ-07의 최근 불량 이력은?',
+  '같은 유형의 다른 Lot도 있어?',
+]
 
 const CONNECTED = false
 const CONNECTION_ENDPOINT = 'bolt://prod-kg-01'
@@ -117,7 +159,9 @@ export function Dashboard() {
     setQueryText('')
   }
 
-  const queryInputBar = <QueryInputBar value={queryText} onChange={setQueryText} onSubmit={handleSubmit} />
+  const queryInputBar = (
+    <QueryInputBar value={queryText} onChange={setQueryText} onSubmit={handleSubmit} />
+  )
 
   return (
     <div className="flex h-screen flex-col bg-bg">
@@ -138,7 +182,9 @@ export function Dashboard() {
           {activeScreen === 'idle' ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-6">
               <div className="flex flex-col items-center gap-1 text-center">
-                <h1 className="text-lg font-semibold text-text">공정 데이터에 대해 무엇이든 물어보세요</h1>
+                <h1 className="text-lg font-semibold text-text">
+                  공정 데이터에 대해 무엇이든 물어보세요
+                </h1>
                 <p className="text-[13px] text-text-muted">
                   Neo4j 지식그래프 기반으로 공정·품질 데이터를 자연어로 질의할 수 있습니다
                 </p>

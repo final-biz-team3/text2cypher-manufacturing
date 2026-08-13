@@ -20,7 +20,6 @@ export function TopBar({ connected, connectionEndpoint, readOnly, onNavigateHome
         onClick={onNavigateHome}
         className="flex cursor-pointer items-baseline gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-panel-2 active:bg-border"
       >
-
         <span className="text-[15px] font-bold text-text">공정 지식그래프 어시스턴트</span>
         <span className="text-xs text-text-muted">품질 분석 · Neo4j 지식그래프</span>
       </button>

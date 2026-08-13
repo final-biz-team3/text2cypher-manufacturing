@@ -12,7 +12,12 @@ interface SchemaSidebarProps {
   onSelectHistoryItem: (question: string) => void
 }
 
-export function SchemaSidebar({ nodes, relationships, history, onSelectHistoryItem }: SchemaSidebarProps) {
+export function SchemaSidebar({
+  nodes,
+  relationships,
+  history,
+  onSelectHistoryItem,
+}: SchemaSidebarProps) {
   const historyTab = useUiStore((s) => s.historyTab)
   const setHistoryTab = useUiStore((s) => s.setHistoryTab)
   const [openNode, setOpenNode] = useState<string | null>(null)
@@ -45,8 +50,14 @@ export function SchemaSidebar({ nodes, relationships, history, onSelectHistoryIt
                     >
                       {node.glyph}
                     </span>
-                    <span className="flex-1 text-[12.5px] font-semibold text-text">{node.label}</span>
-                    <span className={`text-text-faint transition-transform ${isOpen ? 'rotate-180' : ''}`}>▾</span>
+                    <span className="flex-1 text-[12.5px] font-semibold text-text">
+                      {node.label}
+                    </span>
+                    <span
+                      className={`text-text-faint transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                    >
+                      ▾
+                    </span>
                   </button>
                   {isOpen ? (
                     <div className="ml-7 flex flex-col gap-0.5 pb-1.5 text-[11px] text-text-faint">
@@ -81,7 +92,10 @@ export function SchemaSidebar({ nodes, relationships, history, onSelectHistoryIt
               >
                 <p className="line-clamp-2 text-[12px] text-text">{item.question}</p>
                 <p className="text-[10px] text-text-faint">
-                  {new Date(item.submittedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(item.submittedAt).toLocaleTimeString('ko-KR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
                 </p>
               </button>
             ))
