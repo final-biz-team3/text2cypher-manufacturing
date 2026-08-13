@@ -1,27 +1,36 @@
 """
-AdventureWorks(자전거 공정 데이터) xlsx -> Neo4j LOAD CSV용 노드/관계 CSV 생성 스크립트
+AdventureWorks(자전거 공정 데이터) xlsx -> Neo4j Bolt 적재용 노드/관계 CSV 생성 스크립트
 
-기준 문서: docs/adr/0004-graph-schema-v2.md (스키마 설계) / docs/adr/0005-etl-batch-loading-pipeline.md (마스터/트랜잭션 분리)
+기준 문서: docs/adr/0004-graph-schema-v2.md (스키마 설계) / docs/adr/0005-etl-batch-loading-pipeline.md (마스터/트랜잭션 분리, 배치·워터마크 적재)
 
-마스터(시간에 안 묶이는) 데이터는 1회만 적재하고, 트랜잭션(월에 묶이는) 데이터는
-매달 반복 적재한다는 팀 방향에 맞춰 export도 두 모드로 나눈다.
+마스터(시간에 안 묶이는) 데이터는 1회만 적재하고, 트랜잭션(배치에 묶이는) 데이터는
+세 가지 모드로 나눠 export한다.
 
 사용법 (리포 루트 기준으로 실행):
     python etl/export_to_csv.py master
         -> etl/import/master/ 아래에 마스터 노드 6종 + 관계 5종 CSV 생성 (1회 실행)
 
+    python etl/export_to_csv.py tx --before 2026-09-11
+        -> etl/import/tx_backfill/ 아래에 2026-09-11 이전 전체 이력 CSV 생성 (초기 백필)
+
+    python etl/export_to_csv.py tx --since-last [--as-of 2026-09-11]
+        -> etl/import/tx_incremental/ 아래에 (Neo4j에서 조회한 워터마크, as-of] 구간 CSV 생성
+           (--as-of 생략 시 오늘 날짜. 실시간 증분의 기본 실행 형태)
+
     python etl/export_to_csv.py tx --month 2014-05
-        -> etl/import/tx_2014-05/ 아래에 그 달에 속한 트랜잭션 노드 5종 + 관계 8종 CSV 생성
-        -> 월 기준 컬럼: PurchaseOrder.orderDate, SalesOrder.orderDate, WorkOrder.startDate
-           (PurchaseOrderLine/RoutingOperation은 각자 부모의 월을 그대로 물려받아 동반 적재됨 —
-            부모와 자식이 서로 다른 달로 갈라지는 것을 방지하기 위함)
+        -> etl/import/tx_2014-05/ 아래에 그 달에 속한 트랜잭션 CSV 생성
+           (강제 재적재 — 삭제 후 재적재 시연, 데이터 정정·재처리(backfill/reprocessing)용)
+
+세 모드 모두 월 기준 컬럼(PurchaseOrder.orderDate, SalesOrder.orderDate, WorkOrder.startDate)
+으로 대상 행을 고른다. PurchaseOrderLine/RoutingOperation은 각자 부모의 마스크를 그대로
+물려받아 동반 적재된다(부모와 자식이 서로 다른 배치로 갈라지는 것을 방지하기 위함).
 
 입력 파일 위치: etl/data/AdventureWorks_전체사슬_32시트_한글.xlsx
     이 파일은 용량이 커서(약 32MB) git에 커밋하지 않는다(.gitignore 처리됨).
     팀 공유 드라이브 등에서 받아 이 경로에 직접 두면 된다.
 
-출력 위치: etl/import/ (docker-compose.yml에서 Neo4j 컨테이너의 /import에 마운트됨.
-    export 결과가 여기 쓰이는 즉시 컨테이너 안에서도 파일:///로 바로 읽을 수 있다)
+출력 위치: etl/import/ (Bolt 드라이버(load_to_neo4j.py)가 로컬에서 직접 읽어 전송하므로
+    Neo4j 컨테이너에 마운트할 필요가 없다)
 
 날짜 변환은 그래프 스키마 v2에 명시된 속성 타입을 그대로 따른다.
   - DATE 타입 속성(sellStartDate, orderDate, startDate 등) -> 'YYYY-MM-DD' (Cypher date() 파싱용)
@@ -41,8 +50,15 @@ from pathlib import Path
 import pandas as pd
 
 ETL_DIR = Path(__file__).resolve().parent
+ROOT_DIR = ETL_DIR.parent
 SRC = ETL_DIR / "data" / "AdventureWorks_전체사슬_32시트_한글.xlsx"
 IMPORT_DIR = ETL_DIR / "import"
+
+TRANSACTION_WATERMARK_COLUMNS = {
+    "PurchaseOrder": "orderDate",
+    "SalesOrder": "orderDate",
+    "WorkOrder": "startDate",
+}
 
 
 def to_date(series):
@@ -76,6 +92,35 @@ def save(df, out_dir: Path, name):
     path = out_dir / name
     df.to_csv(path, index=False)
     print(f"{name}: {len(df)} rows -> {path}")
+
+
+def load_env() -> dict:
+    env_path = ROOT_DIR / ".env"
+    env = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        env[key.strip()] = value.strip()
+    return env
+
+
+def get_watermarks() -> dict[str, str | None]:
+    """Bolt로 라벨별 MAX(날짜 컬럼)을 조회한다. 그래프에 아직 해당 라벨이 없으면 None."""
+    from neo4j import GraphDatabase
+
+    env = load_env()
+    driver = GraphDatabase.driver(env["NEO4J_URI"], auth=(env["NEO4J_USER"], env["NEO4J_PASSWORD"]))
+    watermarks: dict[str, str | None] = {}
+    try:
+        with driver.session() as session:
+            for label, column in TRANSACTION_WATERMARK_COLUMNS.items():
+                value = session.run(f"MATCH (n:{label}) RETURN max(n.{column}) AS wm").single()["wm"]
+                watermarks[label] = str(value) if value is not None else None
+    finally:
+        driver.close()
+    return watermarks
 
 
 # =============================================================================
@@ -223,17 +268,38 @@ def export_master(out_dir: Path = IMPORT_DIR / "master"):
 
 
 # =============================================================================
-# 트랜잭션 데이터 (월별 반복 적재) — PurchaseOrder, PurchaseOrderLine, SalesOrder,
-#                                    WorkOrder, RoutingOperation 노드 5종 +
-#                                    HAS_LINE, PLACED_WITH, FOR_PRODUCT, CONTAINS_PRODUCT,
-#                                    HAS_OPERATION, PERFORMED_AT, PRODUCES, SCRAPPED_DUE_TO
-#                                    관계 8종
+# 트랜잭션 데이터 (배치 단위로 지속 적재) — PurchaseOrder, PurchaseOrderLine, SalesOrder,
+#                                          WorkOrder, RoutingOperation 노드 5종 +
+#                                          HAS_LINE, PLACED_WITH, FOR_PRODUCT, CONTAINS_PRODUCT,
+#                                          HAS_OPERATION, PERFORMED_AT, PRODUCES, SCRAPPED_DUE_TO
+#                                          관계 8종
+#
+# 세 가지 모드(0005 ADR "결정 3" 참고) — 모두 아래 _export_transactional_rows()를
+# 공유한다. "어느 행을 뽑을지"만 다르고 CSV를 만드는 로직 자체는 동일하기 때문이다.
+#   - export_transactional(month)            : 강제 재적재(backfill/reprocessing)
+#   - export_transactional_before(as_of)     : 초기 백필
+#   - export_transactional_since_last(as_of) : 워터마크 증분(기본 동작)
 # =============================================================================
 
-def export_transactional(month: str, import_dir: Path = IMPORT_DIR):
-    """month: 'YYYY-MM' 형식. 해당 월에 속하는 트랜잭션만 CSV로 뽑는다."""
-    out_dir = import_dir / f"tx_{month}"
+def month_mask(month: str):
+    def _mask(date_series):
+        return pd.to_datetime(date_series).dt.strftime("%Y-%m") == month
+    return _mask
 
+
+def range_mask(lower: str | None, upper: str):
+    def _mask(date_series):
+        d = pd.to_datetime(date_series).dt.strftime("%Y-%m-%d")
+        result = d <= upper
+        if lower is not None:
+            result = result & (d > lower)
+        return result
+    return _mask
+
+
+def _export_transactional_rows(select_po, select_so, select_wo, out_dir: Path) -> tuple[int, int, int]:
+    """select_po/select_so/select_wo: 날짜 컬럼(Series)을 받아 boolean Series를
+    반환하는 함수. 이 마스크로 걸러낸 행만 CSV로 뽑는다."""
     df_po_header = read("구매주문_헤더")
     df_po_detail = read("구매주문_상세")
     df_so_header = read("판매주문_헤더")
@@ -241,11 +307,8 @@ def export_transactional(month: str, import_dir: Path = IMPORT_DIR):
     df_workorder = read("생산작업지시")
     df_routing = read("공정순서_라우팅")
 
-    def month_mask(date_series):
-        return pd.to_datetime(date_series).dt.strftime("%Y-%m") == month
-
     # ---------------- PurchaseOrder / PurchaseOrderLine ----------------
-    po_mask = month_mask(df_po_header["주문일"])
+    po_mask = select_po(df_po_header["주문일"])
     po = df_po_header[po_mask]
     po_ids = set(po["구매주문ID"])
 
@@ -290,7 +353,7 @@ def export_transactional(month: str, import_dir: Path = IMPORT_DIR):
     }), out_dir, "rels_for_product.csv")
 
     # ---------------- SalesOrder ----------------
-    so_mask = month_mask(df_so_header["주문일"])
+    so_mask = select_so(df_so_header["주문일"])
     so = df_so_header[so_mask]
     so_ids = set(so["판매주문ID"])
 
@@ -333,7 +396,7 @@ def export_transactional(month: str, import_dir: Path = IMPORT_DIR):
     }), out_dir, "rels_contains_product.csv")
 
     # ---------------- WorkOrder / RoutingOperation ----------------
-    wo_mask = month_mask(df_workorder["시작일"])
+    wo_mask = select_wo(df_workorder["시작일"])
     wo = df_workorder[wo_mask]
     wo_ids = set(wo["작업지시ID"])
 
@@ -386,20 +449,64 @@ def export_transactional(month: str, import_dir: Path = IMPORT_DIR):
         "locationId": routing["작업장ID"],
     }), out_dir, "rels_performed_at.csv")
 
+    return len(po), len(so), len(wo)
+
+
+def export_transactional(month: str, import_dir: Path = IMPORT_DIR) -> None:
+    """month: 'YYYY-MM' 형식. 강제 재적재(backfill/reprocessing)용 —
+    해당 월에 속하는 트랜잭션만 CSV로 뽑는다."""
+    out_dir = import_dir / f"tx_{month}"
+    mask = month_mask(month)
+    po_n, so_n, wo_n = _export_transactional_rows(mask, mask, mask, out_dir)
     print(f"\n완료: {out_dir} 아래 {month} 트랜잭션 CSV 생성됨 "
-          f"(PurchaseOrder {len(po)}건, SalesOrder {len(so)}건, WorkOrder {len(wo)}건)")
+          f"(PurchaseOrder {po_n}건, SalesOrder {so_n}건, WorkOrder {wo_n}건)")
+
+
+def export_transactional_before(as_of: str, import_dir: Path = IMPORT_DIR) -> None:
+    """as_of: 'YYYY-MM-DD' 형식. 초기 백필 — as_of 이전 전체 이력을 한 번에 CSV로 뽑는다."""
+    out_dir = import_dir / "tx_backfill"
+    mask = range_mask(None, as_of)
+    po_n, so_n, wo_n = _export_transactional_rows(mask, mask, mask, out_dir)
+    print(f"\n완료: {out_dir} 아래 {as_of} 이전 전체 트랜잭션 CSV 생성됨 "
+          f"(PurchaseOrder {po_n}건, SalesOrder {so_n}건, WorkOrder {wo_n}건)")
+
+
+def export_transactional_since_last(as_of: str, import_dir: Path = IMPORT_DIR) -> None:
+    """as_of: 'YYYY-MM-DD' 형식. 워터마크 증분 — Neo4j에서 라벨별 MAX(날짜)를
+    조회해 하한으로 쓰고, watermark < date <= as_of 범위만 CSV로 뽑는다."""
+    out_dir = import_dir / "tx_incremental"
+    watermarks = get_watermarks()
+    print(f"워터마크: {watermarks}")
+    po_mask = range_mask(watermarks["PurchaseOrder"], as_of)
+    so_mask = range_mask(watermarks["SalesOrder"], as_of)
+    wo_mask = range_mask(watermarks["WorkOrder"], as_of)
+    po_n, so_n, wo_n = _export_transactional_rows(po_mask, so_mask, wo_mask, out_dir)
+    print(f"\n완료: {out_dir} 아래 워터마크~{as_of} 트랜잭션 CSV 생성됨 "
+          f"(PurchaseOrder {po_n}건, SalesOrder {so_n}건, WorkOrder {wo_n}건)")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["master", "tx"])
-    parser.add_argument("--month", help="YYYY-MM, tx 모드에서 필수")
+    tx_group = parser.add_mutually_exclusive_group()
+    tx_group.add_argument("--month", help="YYYY-MM. 강제 재적재(backfill/reprocessing)")
+    tx_group.add_argument("--before", metavar="AS_OF", help="YYYY-MM-DD. 초기 백필(이 날짜 이전 전체 이력)")
+    tx_group.add_argument("--since-last", action="store_true", help="워터마크 증분(기본 동작)")
+    parser.add_argument("--as-of", help="YYYY-MM-DD. --since-last의 상한(생략 시 오늘 날짜)")
     args = parser.parse_args()
 
     if args.mode == "master":
         export_master()
         print(f"\n완료: {IMPORT_DIR / 'master'} 아래 마스터 노드/관계 CSV 생성됨 (1회 실행)")
     else:
-        if not args.month:
-            parser.error("tx 모드는 --month YYYY-MM 이 필요합니다")
-        export_transactional(args.month)
+        if not (args.month or args.before or args.since_last):
+            parser.error("tx 모드는 --month / --before / --since-last 중 하나가 필요합니다")
+        if args.month:
+            export_transactional(args.month)
+        elif args.before:
+            export_transactional_before(args.before)
+        else:
+            from datetime import date
+
+            as_of = args.as_of or date.today().strftime("%Y-%m-%d")
+            export_transactional_since_last(as_of)

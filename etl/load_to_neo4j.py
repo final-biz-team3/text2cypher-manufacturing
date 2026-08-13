@@ -1,19 +1,24 @@
 """
-CSV -> Neo4j 원격 서버 적재 스크립트 (Bolt 드라이버 기반)
+CSV -> Neo4j 원격 서버 적재 스크립트 (Bolt 드라이버 기반, 유일한 적재 경로)
 
-배경: load.cypher는 LOAD CSV file:///로 적재하도록 작성됐으나, 이는 Neo4j 서버가
-실행 중인 머신의 /import 디렉터리에 CSV가 있어야 동작한다. 실제 운영 Neo4j는 .env의
-NEO4J_URI(원격 공유 서버)이고 그 서버 파일시스템에 CSV를 둘 방법이 없으므로, 같은
-MERGE/SET 로직을 Bolt 드라이버로 UNWIND 배치 전송해 적재한다. load.cypher와 동일한
-순서·로직을 유지한다(제약조건 -> 마스터 -> 트랜잭션($month) -> 검증).
+배경: 팀이 운영하는 Neo4j는 .env의 NEO4J_URI(원격 공유 서버)이고 그 서버
+파일시스템에 접근할 수 없으므로, 로컬에서 CSV를 읽어 Bolt 드라이버로 UNWIND
+배치 전송해 적재한다. 실행 순서는 제약조건 -> 마스터 -> (마스터 관계 prune) ->
+트랜잭션 -> 검증이다(0005 ADR 참고).
 
 사용법 (리포 루트 기준으로 실행):
     python etl/export_to_csv.py master
-    python etl/export_to_csv.py tx --month 2014-05
+    python etl/export_to_csv.py tx --before 2026-09-11   # 초기 백필
+    python etl/load_to_neo4j.py --dir tx_backfill
+
+    python etl/export_to_csv.py tx --since-last          # 워터마크 증분(기본 동작)
+    python etl/load_to_neo4j.py --dir tx_incremental
+
+    python etl/export_to_csv.py tx --month 2014-05        # 강제 재적재(backfill/reprocessing)
     python etl/load_to_neo4j.py --month 2014-05
 
-매달 반복 적재 시에도 동일하게 --month만 바꿔서 실행한다(제약조건·마스터는 MERGE
-기반이라 재실행해도 안전하고, 새 달 트랜잭션만 실질적으로 추가된다).
+제약조건·마스터는 MERGE 기반이라 재실행해도 안전하다. 마스터 관계 중 그룹 A는
+prune까지 포함해서, 원본에서 사라진 자연키를 가진 기존 관계를 정리한다.
 """
 
 import argparse
@@ -41,7 +46,7 @@ CONSTRAINTS = [
     "CREATE CONSTRAINT routing_operation_key IF NOT EXISTS FOR (n:RoutingOperation) REQUIRE n.routingOperationKey IS UNIQUE",
 ]
 
-# (라벨/타입, CSV 파일명, load.cypher의 CALL { WITH row ... } 본문과 동일한 Cypher)
+# (라벨/타입, CSV 파일명, UNWIND $rows AS row 뒤에 붙는 Cypher 본문)
 MASTER_NODE_STEPS = [
     ("Product", "nodes_product.csv", """
 MERGE (n:Product {productId: toInteger(row.productId)})
@@ -239,6 +244,17 @@ NODE_LABELS = [
     "PurchaseOrder", "PurchaseOrderLine", "SalesOrder", "WorkOrder", "RoutingOperation",
 ]
 
+# 그룹 A 중 마스터 관계 전용 prune 대상 (라벨, CSV 파일명, 자연키 속성명, 파이썬 타입).
+# 마스터 export는 매번 그 시점의 전체 현황이므로, 이번 CSV에 없는 자연키를 가진
+# 기존 관계는 원본에서 사라진 것으로 보고 지운다(0005 ADR "결정 2" 참고). 트랜잭션
+# 쪽 naturalKeyMerge 관계(CONTAINS_PRODUCT)는 워터마크 기반 부분 export라 여기
+# 포함하지 않는다 — 적용하면 다른 시점의 정상 데이터를 지우게 된다.
+MASTER_REL_PRUNE_STEPS = [
+    ("SUPPLIES", "rels_supplies.csv", "supplyKey", str),
+    ("REQUIRES_COMPONENT", "rels_requires_component.csv", "bomId", int),
+    ("STOCKED_AT", "rels_stocked_at.csv", "inventoryGuid", str),
+]
+
 
 def load_env() -> dict:
     env_path = ROOT_DIR / ".env"
@@ -268,12 +284,30 @@ def run_step(session, label: str, path: Path, cypher_body: str) -> None:
     print(f"  {label}: {len(rows)} rows")
 
 
+def prune_master_relationship(session, rel_type: str, path: Path, natural_key: str, key_type: type) -> None:
+    """이번 export(CSV)에 없는 자연키를 가진 기존 rel_type 관계를 삭제한다."""
+    rows = read_rows(path)
+    keys = [key_type(row[natural_key]) for row in rows]
+    query = f"""
+MATCH ()-[r:{rel_type}]->()
+WHERE NOT r.{natural_key} IN $keys
+DELETE r
+"""
+    before = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS c").single()["c"]
+    session.execute_write(lambda tx: tx.run(query, keys=keys).consume())
+    after = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS c").single()["c"]
+    print(f"  {rel_type} prune: {before} -> {after} (-{before - after})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--month", required=True, help="YYYY-MM (etl/import/tx_<month>/ 를 적재)")
+    tx_group = parser.add_mutually_exclusive_group(required=True)
+    tx_group.add_argument("--month", help="YYYY-MM (etl/import/tx_<month>/ 를 적재. 강제 재적재)")
+    tx_group.add_argument("--dir", help="etl/import/ 아래 트랜잭션 폴더명 (예: tx_backfill, tx_incremental)")
     args = parser.parse_args()
 
-    tx_dir = IMPORT_DIR / f"tx_{args.month}"
+    tx_dir_name = f"tx_{args.month}" if args.month else args.dir
+    tx_dir = IMPORT_DIR / tx_dir_name
     master_dir = IMPORT_DIR / "master"
 
     env = load_env()
@@ -296,11 +330,15 @@ def main() -> None:
             for label, filename, body in MASTER_REL_STEPS:
                 run_step(session, label, master_dir / filename, body)
 
-            print(f"3. 트랜잭션 노드 ({args.month})")
+            print("2. 마스터 관계 prune (원본에서 사라진 자연키 정리)")
+            for rel_type, filename, natural_key, key_type in MASTER_REL_PRUNE_STEPS:
+                prune_master_relationship(session, rel_type, master_dir / filename, natural_key, key_type)
+
+            print(f"3. 트랜잭션 노드 ({tx_dir_name})")
             for label, filename, body in TX_NODE_STEPS:
                 run_step(session, label, tx_dir / filename, body)
 
-            print(f"3. 트랜잭션 관계 ({args.month})")
+            print(f"3. 트랜잭션 관계 ({tx_dir_name})")
             for label, filename, body in TX_REL_STEPS:
                 run_step(session, label, tx_dir / filename, body)
 
