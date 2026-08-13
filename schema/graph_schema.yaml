@@ -9,13 +9,19 @@
 # 근거 자료 (이 파일은 아래 소스코드·원본 다이어그램에서 실제로 구현·검증된
 # 내용을 역추출해 정리한 것이다):
 #   - etl/data/ITDA-neo4j2   (arrows.app 원본 다이어그램 export, JSON — git 추적 제외, 로컬에만 있음)
-#   - etl/load.cypher        (제약조건, 속성 타입 변환 규칙)
 #   - etl/export_to_csv.py   (원본 한글 컬럼 -> 속성명 매핑, 마스터/트랜잭션 분리)
+#   - etl/load_to_neo4j.py   (제약조건, MERGE 전략, 속성 타입 변환 규칙)
 #   - docs/adr/0004-graph-schema-v2.md (스키마 설계, 관계 3그룹 분류 근거)
 #   - docs/adr/0005-etl-batch-loading-pipeline.md (마스터/트랜잭션 분리, 적재 구현)
 #
 # 타입 표기는 Neo4j Cypher 타입명을 그대로 쓴다: STRING, INTEGER, FLOAT,
 # BOOLEAN, DATE, LOCAL_DATETIME.
+#
+# 참고: meta/legend/group/mergeStrategy/monthColumn/notes 필드는 사람이 읽는
+# 설명용이다. backend/graph_schema의 로더(models.py, extra="ignore")는
+# nodes.*.properties.*.type과 relationships.*.{from,to,properties.*.type}만
+# 읽고 나머지는 전부 무시하므로, 이 필드들을 바꿔도 백엔드/프론트엔드/LLM
+# 프롬프트 동작에는 영향이 없다(backend/tests/graph_schema/로 확인됨).
 # =============================================================================
 
 meta:
@@ -24,8 +30,8 @@ meta:
   relationshipCount: 13
   sources:
     - etl/data/ITDA-neo4j2
-    - etl/load.cypher
     - etl/export_to_csv.py
+    - etl/load_to_neo4j.py
     - docs/adr/0004-graph-schema-v2.md
     - docs/adr/0005-etl-batch-loading-pipeline.md
 
@@ -33,12 +39,13 @@ meta:
 legend:
   nodeGroups:
     master: "1회 적재. 시간에 묶이지 않는 마스터 데이터."
-    transaction: "월별 반복 적재. export_to_csv.py tx --month YYYY-MM 단위로 쌓인다."
+    transaction: "배치 단위로 지속 적재. export_to_csv.py tx --since-last(워터마크 증분) / --before(초기 백필) / --month(강제 재적재, backfill·reprocessing) 세 모드로 쌓인다."
   mergeStrategies:
     naturalKeyMerge: "그룹 A - 자연키로 MERGE 후 나머지 속성은 SET (재실행 안전, 속성 갱신 가능)"
+    naturalKeyMergePrune: "그룹 A 중 마스터 관계 전용 - naturalKeyMerge에 더해, 이번 export에 없는 자연키를 가진 기존 관계를 삭제(prune)한다. 마스터 export는 매번 그 시점의 전체 현황이라 안전하다. 트랜잭션 쪽(워터마크 기반 부분 export)에는 적용하지 않는다."
     simpleMerge: "그룹 B - 속성 없이 관계만 MERGE (다건 허용, 재실행 안전)"
     deleteRecreate: "그룹 C 중 마스터-마스터 관계 - 조회 후 기존 관계 DELETE, 새로 CREATE (단일 타깃, 값 변경 가능)"
-    downgradedMerge: "그룹 C 중 트랜잭션-마스터 관계 - 매달 새 ID만 생겨 삭제 대상이 없으므로 단순 MERGE로 다운그레이드"
+    downgradedMerge: "그룹 C 중 트랜잭션-마스터 관계 - 생성 시점에 새 ID만 부여되고 재배정되지 않아 삭제 대상이 없으므로 단순 MERGE로 다운그레이드"
 
 nodes:
   Product:
@@ -216,8 +223,8 @@ nodes:
       dueDate: {type: DATE, sourceColumn: 납기일}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
     notes: >
-      진행 중인 작업지시(시작은 이번 달, 종료는 다음 달)의 상태 변경을
-      월별 배치가 반영하지 못하는 한계가 있음 (0005 ADR "확실하지 않은 부분").
+      진행 중인 작업지시(예: 시작은 이전 배치, 완료 처리는 이후)의 상태 변경을
+      워터마크(startDate 기준)가 재수집하지 못하는 한계가 있음 (0005 ADR "확실하지 않은 부분").
 
   RoutingOperation:
     group: transaction
@@ -250,7 +257,7 @@ relationships:
     group: master
     sourceSheet: 부품-공급업체
     cardinality: many_to_many
-    mergeStrategy: naturalKeyMerge
+    mergeStrategy: naturalKeyMergePrune
     naturalKey: supplyKey
     naturalKeyComposition: "supplierId + '-' + productId"
     properties:
@@ -271,7 +278,7 @@ relationships:
     group: master
     sourceSheet: 자재명세서BOM
     cardinality: many_to_many
-    mergeStrategy: naturalKeyMerge
+    mergeStrategy: naturalKeyMergePrune
     naturalKey: bomId
     properties:
       bomId: {type: INTEGER, sourceColumn: BOM_ID}
@@ -292,7 +299,7 @@ relationships:
     group: master
     sourceSheet: 재고
     cardinality: many_to_many
-    mergeStrategy: naturalKeyMerge
+    mergeStrategy: naturalKeyMergePrune
     naturalKey: inventoryGuid
     properties:
       inventoryGuid: {type: STRING, sourceColumn: 행GUID}

@@ -5,7 +5,7 @@
 
 ## 한 줄 요약
 
-> 팀이 확정한 스키마 다이어그램 v2(arrows.app, "ITDA-neo4j2")를 그래프 스키마로 채택한다. 노드 11개·관계 13개이며 원본 DDL과 1:1 대조 검증을 마쳤다. 노드는 "마스터(1회 적재)"와 "트랜잭션(월별 적재)"으로 나누고, 관계는 자연키 유무·다건 허용 여부에 따라 그룹 A/B/C로 분류해 재적재해도 안전하게 만든다.
+> 팀이 확정한 스키마 다이어그램 v2(arrows.app, "ITDA-neo4j2")를 그래프 스키마로 채택한다. 노드 11개·관계 13개이며 원본 DDL과 1:1 대조 검증을 마쳤다. 노드는 "마스터(1회 적재)"와 "트랜잭션(배치 적재)"으로 나누고, 관계는 자연키 유무·다건 허용 여부에 따라 그룹 A/B/C로 분류해 재적재해도 안전하게 만든다.
 
 ---
 
@@ -29,7 +29,7 @@ Neo4j 공식 가이드([Modeling: relational to graph](https://neo4j.com/docs/ge
 
 ### 2. 마스터 / 트랜잭션 분리
 
-11개 노드를 "시간에 묶이지 않는 마스터"와 "월에 묶이는 트랜잭션"으로 나눈다. 마스터는 1회 적재하고, 트랜잭션만 매달 반복 적재한다.
+11개 노드를 "시간에 묶이지 않는 마스터"와 "월에 묶이는 트랜잭션"으로 나눈다. 마스터는 1회 적재하고, 트랜잭션은 배치 단위로 지속 적재한다(구체적인 적재 주기·방식은 0005 참고).
 
 | 노드 | 레이블 | 고유 키 | 원본 테이블 | 월 기준 컬럼 |
 | --- | --- | --- | --- | --- |
@@ -65,19 +65,19 @@ Neo4j 공식 가이드([Modeling: relational to graph](https://neo4j.com/docs/ge
 
 ### 4. 관계 13개 — 적재 전략 그룹 A/B/C
 
-주기적(월별) 적재를 반복 실행해도 안전하도록, 관계를 "자연키 유무"와 "한 노드가 여러 개 가질 수 있는지"로 나눠 그룹별로 다른 MERGE 방식을 쓴다. (실제 Cypher 구현은 `docs/adr/0005-etl-batch-loading-pipeline.md` 참고.)
+주기적(배치) 적재를 반복 실행해도 안전하도록, 관계를 "자연키 유무"와 "한 노드가 여러 개 가질 수 있는지"로 나눠 그룹별로 다른 MERGE 방식을 쓴다. (실제 Cypher 구현은 0005 참고.)
 
 | 그룹 | 관계 | 방향 | 자연키/속성 | 원본 | 비고 |
 | --- | --- | --- | --- | --- | --- |
 | A(자연키 MERGE) | `SUPPLIES` | Supplier → Product | supplyKey(합성), averageLeadTimeDays, standardPrice, lastReceiptCost, lastReceiptDate, minOrderQty, maxOrderQty, onOrderQty, unitCode, modifiedAt | 부품-공급업체 | 비활성 공급업체(active=false)는 적재 전 제외 |
 | A | `REQUIRES_COMPONENT` | Product → Product(자기참조) | bomId, startDate, endDate, unitCode, bomLevel, quantityPerAssembly, modifiedAt | 자재명세서BOM | 유효기간 필터는 조회 시점에 적용 |
 | A | `STOCKED_AT` | Product → Location | inventoryGuid, shelf, bin, quantity, modifiedAt | 재고 | 현재 재고 스냅샷(마스터와 함께 갱신) |
-| A | `CONTAINS_PRODUCT` | SalesOrder → Product | salesOrderLineId, carrierTrackingNumber, orderQty, specialOfferId, unitPrice, unitPriceDiscount, lineTotal, rowGuid, modifiedAt | 판매주문_상세 | 트랜잭션(월별) |
-| B(단순 MERGE, 다건 허용) | `HAS_LINE` | PurchaseOrder → PurchaseOrderLine | 속성 없음 | 구매주문_상세.구매주문ID | 트랜잭션(월별) |
-| B | `HAS_OPERATION` | WorkOrder → RoutingOperation | 속성 없음 | 공정순서_라우팅.작업지시ID | 트랜잭션(월별) |
+| A | `CONTAINS_PRODUCT` | SalesOrder → Product | salesOrderLineId, carrierTrackingNumber, orderQty, specialOfferId, unitPrice, unitPriceDiscount, lineTotal, rowGuid, modifiedAt | 판매주문_상세 | 트랜잭션(배치) |
+| B(단순 MERGE, 다건 허용) | `HAS_LINE` | PurchaseOrder → PurchaseOrderLine | 속성 없음 | 구매주문_상세.구매주문ID | 트랜잭션(배치) |
+| B | `HAS_OPERATION` | WorkOrder → RoutingOperation | 속성 없음 | 공정순서_라우팅.작업지시ID | 트랜잭션(배치) |
 | C(단일 타깃, 마스터↔마스터 — 진짜 delete-then-create 필요) | `IN_SUBCATEGORY` | Product → ProductSubcategory | 속성 없음 | product.중분류ID | 값이 바뀔 수 있는 마스터 속성 |
 | C | `IN_CATEGORY` | ProductSubcategory → ProductCategory | 속성 없음 | productsubcategory.대분류ID | 값이 바뀔 수 있는 마스터 속성 |
-| C(단일 타깃, 트랜잭션→마스터 — 월별 배치에서는 단순 MERGE로 다운그레이드) | `PLACED_WITH` | PurchaseOrder → Supplier | 속성 없음 | 구매주문_헤더.공급업체ID | 생성 시 FK 고정, 재변경 없음 |
+| C(단일 타깃, 트랜잭션→마스터 — 배치 적재에서는 단순 MERGE로 다운그레이드) | `PLACED_WITH` | PurchaseOrder → Supplier | 속성 없음 | 구매주문_헤더.공급업체ID | 생성 시 FK 고정, 재변경 없음 |
 | C | `FOR_PRODUCT` | PurchaseOrderLine → Product | 속성 없음 | 구매주문_상세.제품ID | 생성 시 FK 고정 |
 | C | `PRODUCES` | WorkOrder → Product | 속성 없음 | 생산작업지시.제품ID | 생성 시 FK 고정 |
 | C | `PERFORMED_AT` | RoutingOperation → Location | 속성 없음 | 공정순서_라우팅.작업장ID | 생성 시 FK 고정 |
@@ -92,11 +92,11 @@ Neo4j 공식 가이드([Modeling: relational to graph](https://neo4j.com/docs/ge
 | BOM 유효기간은 조회 시점 필터 | `REQUIRES_COMPONENT.startDate <= date() AND (endDate IS NULL OR date() < endDate)` 필터를 조회 쿼리에 적용, 적재 시점엔 필터링하지 않음 |
 | 비활성 공급업체는 적재 전 제외 | `Supplier.active = false`인 공급업체는 `SUPPLIES` 관계를 export 단계에서 제외(조회 시점 필터가 아니라 적재 시점 필터) |
 
-### 6. 월별 일괄적재 대응
+### 6. 배치 적재 대응
 
 - 마스터 6종 + 관계 5종(`SUPPLIES`, `REQUIRES_COMPONENT`, `STOCKED_AT`, `IN_SUBCATEGORY`, `IN_CATEGORY`)은 1회 적재로 분리.
-- 트랜잭션 5종(`PurchaseOrder`, `PurchaseOrderLine`, `SalesOrder`, `WorkOrder`, `RoutingOperation`) + 관계 8종(`HAS_LINE`, `PLACED_WITH`, `FOR_PRODUCT`, `CONTAINS_PRODUCT`, `HAS_OPERATION`, `PERFORMED_AT`, `PRODUCES`, `SCRAPPED_DUE_TO`)은 월 파라미터를 받는 반복 적재로 분리.
-- 발표 시연 시나리오(적재된 데이터 중 한 달치를 삭제 → UI 질의 → 월별 적재 스크립트 실행 → 재질의)를 위한 별도 삭제 스크립트를 둔다.
+- 트랜잭션 5종(`PurchaseOrder`, `PurchaseOrderLine`, `SalesOrder`, `WorkOrder`, `RoutingOperation`) + 관계 8종(`HAS_LINE`, `PLACED_WITH`, `FOR_PRODUCT`, `CONTAINS_PRODUCT`, `HAS_OPERATION`, `PERFORMED_AT`, `PRODUCES`, `SCRAPPED_DUE_TO`)은 배치 단위로 지속 적재하는 쪽으로 분리.
+- 실제 적재 실행 방식(초기 백필·실시간 증분·강제 재적재 구분, 삭제 후 재적재 시연 스크립트 등)은 이 스키마 분리를 그대로 전제로 하며, 세부 내용은 0005를 참고한다.
 
 ### 7. 스키마 다이어그램 자동 생성
 
@@ -118,8 +118,8 @@ arrows.app은 자동 레이아웃/DB 연결/JSON 임포트 UI를 지원하지 �
 ## 결과 및 트레이드오프
 
 - 그룹 A/B 관계는 전부 `MERGE` 기반이라 재실행에 안전하고, 그룹 C 중 진짜 delete-then-create가 필요한 건 마스터-마스터 관계 2개뿐이라 반복 부하와 무관하다.
-- 반면 그룹 C의 트랜잭션 쪽 5개(`PLACED_WITH` 등)는 "매달 새 ID만 생성되고 FK가 재배정되지 않는다"는 전제에 의존한 다운그레이드다. 이 전제가 깨지는 시나리오(예: 이미 적재된 PurchaseOrder의 공급업체가 사후 정정되는 경우)가 생기면 재검토가 필요하다.
-- 이 스키마 설계를 실제 코드로 구현한 것은 `etl/export_to_csv.py`·`etl/load.cypher`이며, "왜 이렇게 구현했는가"의 배경·대안 검토는 `docs/adr/0005-etl-batch-loading-pipeline.md`에 별도로 정리돼 있다.
+- 반면 그룹 C의 트랜잭션 쪽 5개(`PLACED_WITH` 등)는 "생성 시점에 새 ID만 부여되고 FK가 재배정되지 않는다"는 전제에 의존한 다운그레이드다. 이 전제가 깨지는 시나리오(예: 이미 적재된 PurchaseOrder의 공급업체가 사후 정정되는 경우)가 생기면 재검토가 필요하다.
+- 이 스키마 설계를 실제 코드로 구현한 것은 `etl/export_to_csv.py`·`etl/load_to_neo4j.py`이며, "왜 이렇게 구현했는가"의 배경·대안 검토는 0005에 별도로 정리돼 있다.
 - `schema/graph_schema.yaml`(백엔드·프론트엔드·LLM 프롬프트가 공유하는 기준 스키마 문서, `docs/adr/0001` 근거)에 이 표의 내용을 그대로 옮기는 작업은 이 ADR의 결정 범위 밖이며, 별도로 진행됐다.
 
 ## 확실하지 않은 부분
