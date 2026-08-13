@@ -55,6 +55,8 @@
 }
 
 :root {
+  color-scheme: light;
+
   --background: #f4f5f6;
   --foreground: #1a1d21;
   --card: #ffffff;
@@ -74,12 +76,14 @@
   --input: #e1e4e8;
   --ring: #2f6fb0;
 
-  --bg: #f4f5f6;
-  --panel: #ffffff;
-  --panel-2: #fafbfc;
+  /* 아래는 shadcn 시맨틱 토큰과 값이 같은 앱 전용 별칭이다 - 한 군데만 바꾸면 되도록 var()로 연결한다 */
+  --bg: var(--background);
+  --panel: var(--card);
+  --panel-2: var(--muted);
+  --text: var(--foreground);
+  --text-muted: var(--muted-foreground);
+
   --border-strong: #c7cbd1;
-  --text: #1a1d21;
-  --text-muted: #6b7280;
   --text-faint: #9aa1ab;
   --accent-bg: #eef2fb;
   --info: #2f6fb0;
@@ -99,6 +103,8 @@
 }
 
 .dark {
+  color-scheme: dark;
+
   --background: #15181b;
   --foreground: #e7eaed;
   --card: #1d2126;
@@ -118,12 +124,13 @@
   --input: #2b3036;
   --ring: #5b9bd9;
 
-  --bg: #15181b;
-  --panel: #1d2126;
-  --panel-2: #20242a;
+  --bg: var(--background);
+  --panel: var(--card);
+  --panel-2: var(--muted);
+  --text: var(--foreground);
+  --text-muted: var(--muted-foreground);
+
   --border-strong: #3a4048;
-  --text: #e7eaed;
-  --text-muted: #9aa3ad;
   --text-faint: #6b727b;
   --accent-bg: #232a3a;
   --info: #5b9bd9;

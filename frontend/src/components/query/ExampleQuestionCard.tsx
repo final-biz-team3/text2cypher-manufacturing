@@ -1,4 +1,4 @@
-import { NODE_COLOR_CLASS } from '@/lib/nodeColors'
+import { NodeGlyphBadge } from '@/components/common/NodeGlyphBadge'
 import type { NodeLabel } from '@/types/query'
 
 interface ExampleQuestionCardProps {
@@ -23,11 +23,7 @@ export function ExampleQuestionCard({ kind, question, path, onClick }: ExampleQu
             key={node.label}
             className="flex items-center gap-1 rounded-full bg-panel-2 px-2 py-0.5 text-[10px] text-text-muted"
           >
-            <span
-              className={`flex size-[11px] items-center justify-center rounded-full text-[7px] font-bold text-white ${NODE_COLOR_CLASS[node.nodeLabel]}`}
-            >
-              {node.glyph}
-            </span>
+            <NodeGlyphBadge nodeLabel={node.nodeLabel} glyph={node.glyph} size={11} />
             {node.label}
           </span>
         ))}

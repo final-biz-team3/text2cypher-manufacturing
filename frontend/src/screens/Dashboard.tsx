@@ -137,6 +137,14 @@ const CONNECTED = false
 const CONNECTION_ENDPOINT = 'bolt://prod-kg-01'
 const READ_ONLY = true
 
+function generateHistoryId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // crypto.randomUUID는 보안 컨텍스트(HTTPS/localhost)에서만 존재한다.
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 export function Dashboard() {
   const [queryText, setQueryText] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
@@ -150,7 +158,7 @@ export function Dashboard() {
   const handleSubmit = () => {
     const question = queryText.trim()
     if (!question) return
-    setHistory((prev) => [{ id: crypto.randomUUID(), question, submittedAt: Date.now() }, ...prev])
+    setHistory((prev) => [{ id: generateHistoryId(), question, submittedAt: Date.now() }, ...prev])
     setActiveScreen('success')
   }
 
@@ -179,7 +187,7 @@ export function Dashboard() {
           onSelectHistoryItem={setQueryText}
         />
         <main className="flex flex-1 flex-col overflow-y-auto p-6">
-          {activeScreen === 'idle' ? (
+          {activeScreen === 'idle' && (
             <div className="flex flex-1 flex-col items-center justify-center gap-6">
               <div className="flex flex-col items-center gap-1 text-center">
                 <h1 className="text-lg font-semibold text-text">
@@ -204,7 +212,8 @@ export function Dashboard() {
                 </div>
               ) : null}
             </div>
-          ) : (
+          )}
+          {activeScreen === 'success' && (
             <div className="flex flex-col gap-4">
               {queryInputBar}
               <NaturalLanguageAnswerBox answer={MOCK_RESULT.answer} />

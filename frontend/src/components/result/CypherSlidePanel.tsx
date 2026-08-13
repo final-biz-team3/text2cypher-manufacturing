@@ -11,9 +11,15 @@ export function CypherSlidePanel({ cypher, collapsed, onToggleCollapsed }: Cyphe
   const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(cypher)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1400)
+    navigator.clipboard.writeText(cypher).then(
+      () => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1400)
+      },
+      () => {
+        // 클립보드 쓰기 실패(권한 거부, 비보안 컨텍스트 등) - 성공 표시를 띄우지 않는다
+      },
+    )
   }
 
   return (

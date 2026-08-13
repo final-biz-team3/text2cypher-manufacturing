@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { NodeGlyphBadge } from '@/components/common/NodeGlyphBadge'
 import { useUiStore } from '@/store/useUiStore'
 import type { SidebarTab } from '@/store/useUiStore'
-import { NODE_COLOR_CLASS } from '@/lib/nodeColors'
 import type { HistoryItem, SchemaNode, SchemaRelationship } from '@/types/query'
 
 interface SchemaSidebarProps {
@@ -44,12 +44,10 @@ export function SchemaSidebar({
                     type="button"
                     onClick={() => setOpenNode(isOpen ? null : node.label)}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-panel-2"
+                    aria-expanded={isOpen}
+                    aria-label={`${node.label} 속성 ${isOpen ? '접기' : '펼치기'}`}
                   >
-                    <span
-                      className={`flex size-[18px] shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white ${NODE_COLOR_CLASS[node.label]}`}
-                    >
-                      {node.glyph}
-                    </span>
+                    <NodeGlyphBadge nodeLabel={node.label} glyph={node.glyph} size={18} />
                     <span className="flex-1 text-[12.5px] font-semibold text-text">
                       {node.label}
                     </span>

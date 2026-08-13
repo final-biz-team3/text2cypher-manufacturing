@@ -31,7 +31,7 @@ repos:
     hooks:
       - id: frontend-eslint
         name: eslint --fix (frontend)
-        entry: node frontend/scripts/eslint-precommit.mjs
+        entry: node frontend/node_modules/eslint/bin/eslint.js --config frontend/eslint.config.js --fix
         language: system
         files: ^frontend/.*\.(ts|tsx)$
 
