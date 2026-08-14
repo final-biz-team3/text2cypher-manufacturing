@@ -10,9 +10,11 @@
 # 내용을 역추출해 정리한 것이다):
 #   - etl/data/ITDA-neo4j2   (arrows.app 원본 다이어그램 export, JSON — git 추적 제외, 로컬에만 있음)
 #   - etl/export_to_csv.py   (원본 한글 컬럼 -> 속성명 매핑, 마스터/트랜잭션 분리)
-#   - etl/load_to_neo4j.py   (제약조건, MERGE 전략, 속성 타입 변환 규칙)
+#   - etl/load_to_neo4j.py   (MERGE 전략, 속성 타입 변환 규칙)
+#   - etl/graph_constraints.py (제약조건 생성 — yaml -> CREATE CONSTRAINT)
 #   - docs/adr/0004-graph-schema-v2.md (스키마 설계, 관계 3그룹 분류 근거)
 #   - docs/adr/0005-etl-batch-loading-pipeline.md (마스터/트랜잭션 분리, 적재 구현)
+#   - docs/adr/0007-graph-schema-constraints.md (제약조건 4종, Enterprise 전환 근거)
 #
 # 타입 표기는 Neo4j Cypher 타입명을 그대로 쓴다: STRING, INTEGER, FLOAT,
 # BOOLEAN, DATE, LOCAL_DATETIME.
@@ -22,6 +24,25 @@
 # nodes.*.properties.*.type과 relationships.*.{from,to,properties.*.type}만
 # 읽고 나머지는 전부 무시하므로, 이 필드들을 바꿔도 백엔드/프론트엔드/LLM
 # 프롬프트 동작에는 영향이 없다(backend/tests/graph_schema/로 확인됨).
+#
+# 제약조건 4종 — arrows.app 다이어그램(ITDA-neo4j2)의 KEY/REQUIRED/UNIQUE 표시를
+# 아래 필드로 옮겨 담았다. 실제 CREATE CONSTRAINT 생성은 etl/graph_constraints.py
+# (yaml -> Cypher)가 담당한다.
+#   - 노드 키(NODE KEY):    노드의 uniqueKey/constraintName (다이어그램의 KEY 표시)
+#   - 관계 키(RELATIONSHIP KEY): 관계의 naturalKey (다이어그램의 KEY 표시, 그룹 A만 존재)
+#   - 존재(existence):     속성에 nullable:true가 "없으면" 존재 제약 대상 (다이어그램의 REQUIRED)
+#   - 유일성(uniqueness):  속성에 unique:true가 있으면 유일성 제약 대상 (다이어그램의 UNIQUE,
+#                          KEY 표시된 속성은 이미 노드/관계 키가 유일성을 포함하므로 중복 표시 안 함)
+#   - 속성 타입(property type): 모든 속성의 기존 type 필드를 그대로 사용
+#
+# 알려진 예외 4곳 — 다이어그램은 REQUIRED로 표시했지만, 실제 백필 데이터(etl/import/
+# tx_backfill, etl/import/master)에 빈 값이 확인되어 존재 제약을 걸지 않고
+# nullable:true로 남긴다(2026-08-14 CSV 감사 기준):
+#   - PurchaseOrder.modifiedAt   12/4012 blank
+#   - PurchaseOrderLine.modifiedAt 57/8845 blank
+#   - SUPPLIES.modifiedAt        54/443 blank
+#   - STOCKED_AT.shelf           290/1069 blank (다이어그램 REQUIRED, 종전 yaml엔 nullable
+#                                표시가 빠져 있었음 — 이번에 바로잡음)
 # =============================================================================
 
 meta:
@@ -32,8 +53,10 @@ meta:
     - etl/data/ITDA-neo4j2
     - etl/export_to_csv.py
     - etl/load_to_neo4j.py
+    - etl/graph_constraints.py
     - docs/adr/0004-graph-schema-v2.md
     - docs/adr/0005-etl-batch-loading-pipeline.md
+    - docs/adr/0007-graph-schema-constraints.md
 
 # 노드/관계 공통으로 쓰는 분류 legend. 전체 근거는 0004(스키마 설계)·0005(적재 구현) ADR 참고.
 legend:
@@ -56,26 +79,26 @@ nodes:
     properties:
       productId: {type: INTEGER, sourceColumn: 제품ID}
       name: {type: STRING, sourceColumn: 명칭}
-      productNumber: {type: STRING, sourceColumn: 제품번호}
+      productNumber: {type: STRING, unique: true, sourceColumn: 제품번호}
       makeInHouse: {type: BOOLEAN, sourceColumn: 자체제조여부}
       sellableFinishedGood: {type: BOOLEAN, sourceColumn: 판매완제품여부}
-      color: {type: STRING, sourceColumn: 색상}
+      color: {type: STRING, nullable: true, sourceColumn: 색상}
       safetyStockLevel: {type: INTEGER, sourceColumn: 안전재고수준}
       reorderPoint: {type: INTEGER, sourceColumn: 재주문점}
       standardCost: {type: FLOAT, sourceColumn: 표준원가}
       listPrice: {type: FLOAT, sourceColumn: 정가}
-      size: {type: STRING, sourceColumn: 규격}
-      sizeUnit: {type: STRING, sourceColumn: 규격단위}
-      weightUnit: {type: STRING, sourceColumn: 중량단위}
+      size: {type: STRING, nullable: true, sourceColumn: 규격}
+      sizeUnit: {type: STRING, nullable: true, sourceColumn: 규격단위}
+      weightUnit: {type: STRING, nullable: true, sourceColumn: 중량단위}
       weight: {type: FLOAT, nullable: true, sourceColumn: 중량}
       daysToManufacture: {type: INTEGER, sourceColumn: 제조소요일수}
-      productLine: {type: STRING, sourceColumn: 제품라인}
-      classCode: {type: STRING, sourceColumn: 등급}
-      styleCode: {type: STRING, sourceColumn: 스타일}
+      productLine: {type: STRING, nullable: true, sourceColumn: 제품라인}
+      classCode: {type: STRING, nullable: true, sourceColumn: 등급}
+      styleCode: {type: STRING, nullable: true, sourceColumn: 스타일}
       sellStartDate: {type: DATE, sourceColumn: 판매시작일}
       sellEndDate: {type: DATE, nullable: true, sourceColumn: 판매종료일}
       discontinuedDate: {type: DATE, nullable: true, sourceColumn: 단종일}
-      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      rowGuid: {type: STRING, unique: true, sourceColumn: 행GUID}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
 
   Supplier:
@@ -85,12 +108,12 @@ nodes:
     constraintName: supplier_id
     properties:
       supplierId: {type: INTEGER, sourceColumn: 주체ID}
-      accountNumber: {type: STRING, sourceColumn: 계정번호}
+      accountNumber: {type: STRING, unique: true, sourceColumn: 계정번호}
       name: {type: STRING, sourceColumn: 명칭}
       creditRating: {type: INTEGER, sourceColumn: 신용등급}
       preferred: {type: BOOLEAN, sourceColumn: 우선공급업체여부}
       active: {type: BOOLEAN, sourceColumn: 활성여부}
-      purchasingWebUrl: {type: STRING, sourceColumn: 구매웹서비스URL}
+      purchasingWebUrl: {type: STRING, nullable: true, sourceColumn: 구매웹서비스URL}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
     notes: >
       active=false(비활성 공급업체)는 SUPPLIES 관계 적재 전(export 단계)에
@@ -105,7 +128,7 @@ nodes:
       categoryId: {type: INTEGER, sourceColumn: 대분류ID}
       name: {type: STRING, sourceColumn: 명칭}
       nameKo: {type: STRING, sourceColumn: 대분류_한글}
-      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      rowGuid: {type: STRING, unique: true, sourceColumn: 행GUID}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
 
   ProductSubcategory:
@@ -117,7 +140,7 @@ nodes:
       subcategoryId: {type: INTEGER, sourceColumn: 중분류ID}
       name: {type: STRING, sourceColumn: 명칭}
       nameKo: {type: STRING, sourceColumn: 중분류_한글}
-      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      rowGuid: {type: STRING, unique: true, sourceColumn: 행GUID}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
 
   Location:
@@ -150,6 +173,7 @@ nodes:
     uniqueKey: purchaseOrderId
     constraintName: purchase_order_id
     monthColumn: orderDate
+    notes: "modifiedAt은 다이어그램상 REQUIRED지만 백필 데이터 12/4012건이 빈 값이라 존재 제약 제외(nullable 유지)."
     properties:
       purchaseOrderId: {type: INTEGER, sourceColumn: 구매주문ID}
       revisionNumber: {type: INTEGER, sourceColumn: 개정번호}
@@ -169,7 +193,10 @@ nodes:
     uniqueKey: purchaseOrderLineId
     constraintName: purchase_order_line_id
     monthColumn: null
-    notes: "월 기준 컬럼 없음 - 부모 PurchaseOrder의 월을 그대로 물려받아 동반 적재된다."
+    notes: >
+      월 기준 컬럼 없음 - 부모 PurchaseOrder의 월을 그대로 물려받아 동반 적재된다.
+      modifiedAt은 다이어그램상 REQUIRED지만 백필 데이터 57/8845건이 빈 값이라
+      존재 제약 제외(nullable 유지).
     properties:
       purchaseOrderLineId: {type: INTEGER, sourceColumn: 구매주문상세ID}
       dueDate: {type: DATE, sourceColumn: 납기일}
@@ -188,14 +215,14 @@ nodes:
     properties:
       salesOrderId: {type: INTEGER, sourceColumn: 판매주문ID}
       revisionNumber: {type: INTEGER, sourceColumn: 개정번호}
-      salesOrderNumber: {type: STRING, sourceColumn: 판매주문번호}
+      salesOrderNumber: {type: STRING, unique: true, sourceColumn: 판매주문번호}
       orderDate: {type: DATE, sourceColumn: 주문일}
       dueDate: {type: DATE, sourceColumn: 납기일}
       shipDate: {type: DATE, nullable: true, sourceColumn: 출하일}
       statusCode: {type: INTEGER, sourceColumn: 상태}
       onlineOrder: {type: BOOLEAN, sourceColumn: 온라인주문여부}
-      purchaseOrderNumber: {type: STRING, sourceColumn: 구매주문번호}
-      accountNumber: {type: STRING, sourceColumn: 계정번호}
+      purchaseOrderNumber: {type: STRING, nullable: true, sourceColumn: 구매주문번호}
+      accountNumber: {type: STRING, nullable: true, sourceColumn: 계정번호}
       customerId: {type: INTEGER, sourceColumn: 고객ID}
       salesPersonId: {type: INTEGER, nullable: true, sourceColumn: 영업사원ID}
       salesTerritoryId: {type: INTEGER, nullable: true, sourceColumn: 영업지역ID}
@@ -204,7 +231,7 @@ nodes:
       taxAmount: {type: FLOAT, sourceColumn: 세액}
       freight: {type: FLOAT, sourceColumn: 운임}
       totalDue: {type: FLOAT, sourceColumn: 총액}
-      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      rowGuid: {type: STRING, unique: true, sourceColumn: 행GUID}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
 
   WorkOrder:
@@ -270,7 +297,10 @@ relationships:
       onOrderQty: {type: INTEGER, nullable: true, sourceColumn: 주문진행수량}
       unitCode: {type: STRING, sourceColumn: 단위}
       modifiedAt: {type: LOCAL_DATETIME, nullable: true, sourceColumn: 수정일시}
-    notes: "비활성 공급업체(Supplier.active=false)는 적재 전 제외 (팀 결정)."
+    notes: >
+      비활성 공급업체(Supplier.active=false)는 적재 전 제외 (팀 결정).
+      modifiedAt은 다이어그램상 REQUIRED지만 백필 데이터 54/443건이 빈 값이라
+      존재 제약 제외(nullable 유지).
 
   REQUIRES_COMPONENT:
     from: Product   # 상위조립품 (assembly)
@@ -301,9 +331,12 @@ relationships:
     cardinality: many_to_many
     mergeStrategy: naturalKeyMergePrune
     naturalKey: inventoryGuid
+    notes: >
+      shelf는 다이어그램상 REQUIRED지만 마스터 데이터 290/1069건이 빈 값이라
+      존재 제약 제외(nullable 유지) - 종전 yaml엔 이 nullable 표시가 빠져 있었음.
     properties:
       inventoryGuid: {type: STRING, sourceColumn: 행GUID}
-      shelf: {type: STRING, sourceColumn: 선반}
+      shelf: {type: STRING, nullable: true, sourceColumn: 선반}
       bin: {type: INTEGER, sourceColumn: 구역}
       quantity: {type: INTEGER, sourceColumn: 수량}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
@@ -360,13 +393,13 @@ relationships:
     naturalKey: salesOrderLineId
     properties:
       salesOrderLineId: {type: INTEGER, sourceColumn: 판매주문상세ID}
-      carrierTrackingNumber: {type: STRING, sourceColumn: 운송장번호}
+      carrierTrackingNumber: {type: STRING, nullable: true, sourceColumn: 운송장번호}
       orderQty: {type: INTEGER, sourceColumn: 지시수량}
       specialOfferId: {type: INTEGER, sourceColumn: 프로모션ID}
       unitPrice: {type: FLOAT, sourceColumn: 단가}
       unitPriceDiscount: {type: FLOAT, sourceColumn: 단가할인}
       lineTotal: {type: FLOAT, sourceColumn: 금액합계}
-      rowGuid: {type: STRING, sourceColumn: 행GUID}
+      rowGuid: {type: STRING, unique: true, sourceColumn: 행GUID}
       modifiedAt: {type: LOCAL_DATETIME, sourceColumn: 수정일시}
 
   HAS_OPERATION:
