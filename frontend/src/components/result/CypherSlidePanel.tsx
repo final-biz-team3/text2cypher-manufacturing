@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 
 interface CypherSlidePanelProps {
@@ -7,17 +7,27 @@ interface CypherSlidePanelProps {
   onToggleCollapsed: () => void
 }
 
+// 생성된 Cypher 쿼리를 보여주고 복사할 수 있는 우측 슬라이드 패널
 export function CypherSlidePanel({ cypher, collapsed, onToggleCollapsed }: CypherSlidePanelProps) {
   const [copied, setCopied] = useState(false)
 
+  // "복사됨" 표시는 일정 시간 뒤 자동으로 사라진다. 컴포넌트가 언마운트된 뒤
+  // 타이머가 실행되지 않도록 useEffect의 cleanup으로 정리한다.
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1400)
+    return () => clearTimeout(timer)
+  }, [copied])
+
   const handleCopy = () => {
+    if (!navigator.clipboard?.writeText) {
+      // 비보안 컨텍스트(HTTP)나 미지원 브라우저에서는 clipboard API 자체가 없다
+      return
+    }
     navigator.clipboard.writeText(cypher).then(
+      () => setCopied(true),
       () => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1400)
-      },
-      () => {
-        // 클립보드 쓰기 실패(권한 거부, 비보안 컨텍스트 등) - 성공 표시를 띄우지 않는다
+        // 클립보드 쓰기 실패(권한 거부 등) - 성공 표시를 띄우지 않는다
       },
     )
   }
