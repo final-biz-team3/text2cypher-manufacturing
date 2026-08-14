@@ -12,6 +12,7 @@ const SIZE_CLASS: Record<NodeGlyphBadgeProps['size'], string> = {
   18: 'size-[18px] text-[9px]',
 }
 
+// 노드 타입을 나타내는 원형 글리프 배지(스키마 사이드바, 예시 질문 카드 등에서 공통 사용)
 export function NodeGlyphBadge({ nodeLabel, glyph, size }: NodeGlyphBadgeProps) {
   return (
     <span

@@ -7,6 +7,7 @@ interface QueryInputBarProps {
   onSubmit: () => void
 }
 
+// 자연어 질문 입력창 + 제출 버튼. idle/success 화면에서 공통으로 재사용된다
 export function QueryInputBar({ value, onChange, onSubmit }: QueryInputBarProps) {
   return (
     <form

@@ -10,6 +10,7 @@ interface SelfCorrectionTimelineProps {
   steps: SelfCorrectionStep[]
 }
 
+// Cypher 생성/실행을 반복 시도한 과정(성공/실패/재시도)을 시간순 타임라인으로 보여준다
 export function SelfCorrectionTimeline({ steps }: SelfCorrectionTimelineProps) {
   return (
     <ol className="flex flex-col gap-3">

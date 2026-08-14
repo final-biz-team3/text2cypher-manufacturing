@@ -12,6 +12,7 @@ interface SchemaSidebarProps {
   onSelectHistoryItem: (question: string) => void
 }
 
+// 좌측 사이드바: "스키마"(노드/관계 타입 설명)와 "질문 이력" 두 탭을 전환하며 보여준다
 export function SchemaSidebar({
   nodes,
   relationships,
@@ -20,6 +21,7 @@ export function SchemaSidebar({
 }: SchemaSidebarProps) {
   const historyTab = useUiStore((s) => s.historyTab)
   const setHistoryTab = useUiStore((s) => s.setHistoryTab)
+  // 스키마 탭에서 펼쳐진 노드 아코디언은 이 컴포넌트 로컬 상태로만 관리한다(다른 컴포넌트와 공유 불필요)
   const [openNode, setOpenNode] = useState<string | null>(null)
 
   return (

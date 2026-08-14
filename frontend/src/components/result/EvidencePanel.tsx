@@ -6,6 +6,7 @@ interface EvidencePanelProps {
   children: ReactNode
 }
 
+// "어떻게 나온 답인지 보기" 아코디언. 자가수정 타임라인 등 근거 콘텐츠를 접었다 펼 수 있게 감싼다
 export function EvidencePanel({ open, onToggle, children }: EvidencePanelProps) {
   return (
     <div className="rounded-lg border border-border bg-panel">

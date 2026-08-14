@@ -9,6 +9,7 @@ interface TopBarProps {
   onNavigateHome: () => void
 }
 
+// 상단 헤더: 서비스명(홈 이동 버튼), Neo4j 연결/읽기전용 상태 배지, 다크모드 토글을 담당한다
 export function TopBar({ connected, connectionEndpoint, readOnly, onNavigateHome }: TopBarProps) {
   const theme = useUiStore((s) => s.theme)
   const setTheme = useUiStore((s) => s.setTheme)

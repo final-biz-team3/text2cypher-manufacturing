@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 
+// 경로 그래프 시각화 자리 표시용 컴포넌트. 실제 그래프 렌더링(react-force-graph-2d)은 아직 미연동 상태다.
 export function PathGraphCanvas() {
   return (
     <div className="relative flex h-[240px] items-center justify-center rounded-lg border border-border bg-panel-2">

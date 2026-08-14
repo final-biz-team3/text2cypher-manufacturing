@@ -8,6 +8,7 @@ interface ExampleQuestionCardProps {
   onClick: () => void
 }
 
+// idle 화면에 노출되는 예시 질문 카드. 클릭하면 해당 질문을 입력창에 채워준다
 export function ExampleQuestionCard({ kind, question, path, onClick }: ExampleQuestionCardProps) {
   return (
     <button

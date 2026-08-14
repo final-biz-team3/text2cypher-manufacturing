@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 
+// 여러 컴포넌트가 공유하는 전역 UI 상태(테마, 화면 단계, 패널 열림/접힘 등)
 export type Theme = 'light' | 'dark'
 export type ActiveScreen = 'idle' | 'loading' | 'success' | 'error'
 export type SidebarTab = 'schema' | 'history'
