@@ -3,8 +3,13 @@ CSV -> Neo4j 원격 서버 적재 스크립트 (Bolt 드라이버 기반, 유일
 
 배경: 팀이 운영하는 Neo4j는 .env의 NEO4J_URI(원격 공유 서버)이고 그 서버
 파일시스템에 접근할 수 없으므로, 로컬에서 CSV를 읽어 Bolt 드라이버로 UNWIND
-배치 전송해 적재한다. 실행 순서는 제약조건 -> 마스터 -> (마스터 관계 prune) ->
-트랜잭션 -> 검증이다(0005 ADR 참고).
+배치 전송해 적재한다. 실행 순서는 적재 전 검사 -> 제약조건 -> 마스터 ->
+(마스터 관계 prune) -> 트랜잭션 -> 검증이다(0005 ADR 참고).
+
+적재 전 검사(DB 접속 전, CSV·yaml만으로 확인): CSV 헤더에 Cypher가 참조하는
+row.* 컬럼이 다 있는지, graph_schema.yaml의 존재/유일성/키 제약과 실제 CSV
+데이터가 충돌하지 않는지 확인한다(0005/0007 ADR 참고). 문제가 있으면 DB에
+연결하지 않고 바로 중단한다.
 
 사용법 (리포 루트 기준으로 실행):
     python etl/export_to_csv.py master
@@ -19,32 +24,35 @@ CSV -> Neo4j 원격 서버 적재 스크립트 (Bolt 드라이버 기반, 유일
 
 제약조건·마스터는 MERGE 기반이라 재실행해도 안전하다. 마스터 관계 중 그룹 A는
 prune까지 포함해서, 원본에서 사라진 자연키를 가진 기존 관계를 정리한다.
+
+제약조건(노드 키·관계 키·존재·유일성·속성 타입)은 schema/graph_schema.yaml이
+유일한 소스다 - graph_constraints.py가 이 파일을 읽어 CREATE CONSTRAINT 문을
+생성한다. 제약조건을 바꾸려면 이 파일이 아니라 graph_schema.yaml을 고친다.
 """
 
 import argparse
 import csv
+import re
 from pathlib import Path
 
+import yaml
 from neo4j import GraphDatabase
+
+from graph_constraints import _snake, build_constraint_statements
+
+ROW_REF = re.compile(r"row\.(\w+)")
 
 ETL_DIR = Path(__file__).resolve().parent
 ROOT_DIR = ETL_DIR.parent
 IMPORT_DIR = ETL_DIR / "import"
+SCHEMA_PATH = ROOT_DIR / "schema" / "graph_schema.yaml"
 BATCH_SIZE = 1000
 
-CONSTRAINTS = [
-    "CREATE CONSTRAINT product_id IF NOT EXISTS FOR (n:Product) REQUIRE n.productId IS UNIQUE",
-    "CREATE CONSTRAINT supplier_id IF NOT EXISTS FOR (n:Supplier) REQUIRE n.supplierId IS UNIQUE",
-    "CREATE CONSTRAINT product_category_id IF NOT EXISTS FOR (n:ProductCategory) REQUIRE n.categoryId IS UNIQUE",
-    "CREATE CONSTRAINT product_subcategory_id IF NOT EXISTS FOR (n:ProductSubcategory) REQUIRE n.subcategoryId IS UNIQUE",
-    "CREATE CONSTRAINT location_id IF NOT EXISTS FOR (n:Location) REQUIRE n.locationId IS UNIQUE",
-    "CREATE CONSTRAINT scrap_reason_id IF NOT EXISTS FOR (n:ScrapReason) REQUIRE n.scrapReasonId IS UNIQUE",
-    "CREATE CONSTRAINT purchase_order_id IF NOT EXISTS FOR (n:PurchaseOrder) REQUIRE n.purchaseOrderId IS UNIQUE",
-    "CREATE CONSTRAINT purchase_order_line_id IF NOT EXISTS FOR (n:PurchaseOrderLine) REQUIRE n.purchaseOrderLineId IS UNIQUE",
-    "CREATE CONSTRAINT sales_order_id IF NOT EXISTS FOR (n:SalesOrder) REQUIRE n.salesOrderId IS UNIQUE",
-    "CREATE CONSTRAINT work_order_id IF NOT EXISTS FOR (n:WorkOrder) REQUIRE n.workOrderId IS UNIQUE",
-    "CREATE CONSTRAINT routing_operation_key IF NOT EXISTS FOR (n:RoutingOperation) REQUIRE n.routingOperationKey IS UNIQUE",
-]
+
+def load_constraint_statements() -> list[str]:
+    with SCHEMA_PATH.open(encoding="utf-8") as f:
+        schema = yaml.safe_load(f)
+    return build_constraint_statements(schema)
 
 # (라벨/타입, CSV 파일명, UNWIND $rows AS row 뒤에 붙는 Cypher 본문)
 MASTER_NODE_STEPS = [
@@ -299,6 +307,74 @@ DELETE r
     print(f"  {rel_type} prune: {before} -> {after} (-{before - after})")
 
 
+def check_csv_columns(tx_dir_name: str) -> list[str]:
+    """Cypher가 참조하는 row.* 컬럼이 실제 CSV 헤더에 다 있는지 확인한다(DB 접속 불필요)."""
+    problems: list[str] = []
+    master_dir = IMPORT_DIR / "master"
+    tx_dir = IMPORT_DIR / tx_dir_name
+
+    def _check(label: str, path: Path, body: str) -> None:
+        if not path.exists():
+            print(f"  [스킵] {label}: {path} 없음")
+            return
+        with path.open(encoding="utf-8", newline="") as f:
+            header = set(f.readline().strip().split(","))
+        missing = set(ROW_REF.findall(body)) - header
+        if missing:
+            problems.append(f"[컬럼 누락] {label} ({path}): CSV 헤더에 없음 -> {sorted(missing)}")
+
+    for label, filename, body in MASTER_NODE_STEPS + MASTER_REL_STEPS:
+        _check(label, master_dir / filename, body)
+    for label, filename, body in TX_NODE_STEPS + TX_REL_STEPS:
+        _check(label, tx_dir / filename, body)
+
+    return problems
+
+
+def check_constraint_violations(tx_dir_name: str) -> list[str]:
+    """graph_schema.yaml의 존재·유일성·키 제약이 실제 CSV 데이터와 충돌하는지 확인한다
+    (DB 접속 불필요, 0007 ADR "확실하지 않은 부분" 대응)."""
+    problems: list[str] = []
+    with SCHEMA_PATH.open(encoding="utf-8") as f:
+        schema = yaml.safe_load(f)
+
+    master_dir = IMPORT_DIR / "master"
+    tx_dir = IMPORT_DIR / tx_dir_name
+
+    def _check(kind: str, name: str, properties: dict, key_prop: str | None, path: Path) -> None:
+        if not path.exists():
+            print(f"  [스킵] {kind} {name}: {path} 없음")
+            return
+        rows = read_rows(path)
+        if not rows:
+            return
+        total = len(rows)
+        for prop, spec in properties.items():
+            if prop not in rows[0]:
+                continue
+            blanks = sum(1 for r in rows if r[prop] == "")
+            if prop != key_prop and not spec.get("nullable") and blanks > 0:
+                problems.append(f"[존재 위반 가능] {kind} {name}.{prop} ({path}): {blanks}/{total}건 빈 값")
+            if prop == key_prop or spec.get("unique"):
+                values = [r[prop] for r in rows if r[prop] != ""]
+                dupes = len(values) - len(set(values))
+                if dupes > 0:
+                    problems.append(f"[유일성 위반 가능] {kind} {name}.{prop} ({path}): 중복 {dupes}건")
+
+    for label, node in schema["nodes"].items():
+        target_dir = master_dir if node["group"] == "master" else tx_dir
+        _check("노드", label, node["properties"], node.get("uniqueKey"), target_dir / f"nodes_{_snake(label)}.csv")
+
+    for rel_type, rel in schema["relationships"].items():
+        properties = rel.get("properties") or {}
+        if not properties:
+            continue
+        target_dir = master_dir if rel["group"] == "master" else tx_dir
+        _check("관계", rel_type, properties, rel.get("naturalKey"), target_dir / f"rels_{rel_type.lower()}.csv")
+
+    return problems
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     tx_group = parser.add_mutually_exclusive_group(required=True)
@@ -310,6 +386,15 @@ def main() -> None:
     tx_dir = IMPORT_DIR / tx_dir_name
     master_dir = IMPORT_DIR / "master"
 
+    print("0. 적재 전 검사 (CSV 컬럼 / 제약조건, DB 접속 전)")
+    problems = check_csv_columns(tx_dir_name) + check_constraint_violations(tx_dir_name)
+    if problems:
+        print(f"  {len(problems)}건 발견 - 적재를 시작하지 않습니다:")
+        for p in problems:
+            print(f"    {p}")
+        raise SystemExit(1)
+    print("  OK: 문제 없음")
+
     env = load_env()
     uri, user, password = env["NEO4J_URI"], env["NEO4J_USER"], env["NEO4J_PASSWORD"]
     print(f"연결: {uri}")
@@ -319,8 +404,10 @@ def main() -> None:
         driver.verify_connectivity()
         with driver.session() as session:
             print("1. 제약조건")
-            for stmt in CONSTRAINTS:
+            constraint_statements = load_constraint_statements()
+            for stmt in constraint_statements:
                 session.run(stmt).consume()
+            print(f"  {len(constraint_statements)}개 제약조건 적용됨")
 
             print("2. 마스터 노드")
             for label, filename, body in MASTER_NODE_STEPS:
