@@ -168,9 +168,13 @@ export function Dashboard() {
     setActiveScreen('success')
   }
 
+  // 홈으로 돌아갈 때는 이전 질문의 잔여 UI 상태(근거 패널, Cypher 패널)도 함께 초기화해서
+  // 다음 질문 결과에 이전 상태가 그대로 남지 않도록 한다.
   const handleNavigateHome = () => {
     setActiveScreen('idle')
     setQueryText('')
+    if (evidencePanelOpen) toggleEvidencePanel()
+    if (cypherCollapsed) toggleCypherCollapsed()
   }
 
   const queryInputBar = (
