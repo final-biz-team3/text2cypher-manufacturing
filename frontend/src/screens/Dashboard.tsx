@@ -19,6 +19,8 @@ import type {
   SchemaRelationship,
 } from '@/types/query'
 
+// TODO: 아래 SCHEMA_NODES ~ FOLLOW_UP_QUESTIONS는 백엔드 연동 전까지 사용하는 목(mock) 데이터다.
+// 실제 API 연동 시 이 상수들과 handleSubmit의 목 처리 로직을 서버 응답으로 대체해야 한다.
 const SCHEMA_NODES: SchemaNode[] = [
   {
     label: 'Lot',
@@ -145,9 +147,12 @@ function generateHistoryId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+// 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
+// 질문 입력 → 목 결과 표시 → 이력 저장까지 대시보드의 핵심 흐름을 담당한다.
 export function Dashboard() {
   const [queryText, setQueryText] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
+  // 화면 단계(activeScreen)와 패널 열림/접힘 상태는 여러 컴포넌트가 공유해야 해서 전역 store에 둔다.
   const activeScreen = useUiStore((s) => s.activeScreen)
   const setActiveScreen = useUiStore((s) => s.setActiveScreen)
   const evidencePanelOpen = useUiStore((s) => s.evidencePanelOpen)
@@ -155,6 +160,7 @@ export function Dashboard() {
   const cypherCollapsed = useUiStore((s) => s.cypherCollapsed)
   const toggleCypherCollapsed = useUiStore((s) => s.toggleCypherCollapsed)
 
+  // 질문 제출: 이력에 기록하고 성공 화면으로 전환한다(현재는 항상 MOCK_RESULT를 보여준다)
   const handleSubmit = () => {
     const question = queryText.trim()
     if (!question) return
