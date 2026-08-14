@@ -38,6 +38,8 @@ text2cypher-manufacturing/
 
 ### 2. `docker-compose.yml` — 지금은 Neo4j 서비스만
 
+> **2026-08-14 갱신**: 아래 `image: neo4j:5-community`는 이 문서를 처음 쓴 시점(2026-08-08) 기준이다. 이후 `0007`에서 Neo4j를 Enterprise(평가판)로 전환했으므로, 실제 `docker-compose.yml`은 `neo4j:5-enterprise`를 쓴다. 이 절은 당시 결정 기록으로 남겨두고 고치지 않는다 — 최신 설정은 `0007` 참고.
+
 ```yaml
 services:
   neo4j:
