@@ -44,7 +44,7 @@ RETURN 'SalesOrder' AS label, count(so) AS n
 DELETE_WORKORDER = """
 MATCH (w:WorkOrder)
 WHERE toString(w.startDate) STARTS WITH $month
-CALL { WITH w
+CALL (w) {
   OPTIONAL MATCH (w)-[:HAS_OPERATION]->(ro:RoutingOperation)
   FOREACH (x IN CASE WHEN ro IS NOT NULL THEN [ro] ELSE [] END | DETACH DELETE x)
   DETACH DELETE w
@@ -54,7 +54,7 @@ CALL { WITH w
 DELETE_PURCHASEORDER = """
 MATCH (po:PurchaseOrder)
 WHERE toString(po.orderDate) STARTS WITH $month
-CALL { WITH po
+CALL (po) {
   OPTIONAL MATCH (po)-[:HAS_LINE]->(pol:PurchaseOrderLine)
   FOREACH (x IN CASE WHEN pol IS NOT NULL THEN [pol] ELSE [] END | DETACH DELETE x)
   DETACH DELETE po
@@ -64,7 +64,7 @@ CALL { WITH po
 DELETE_SALESORDER = """
 MATCH (so:SalesOrder)
 WHERE toString(so.orderDate) STARTS WITH $month
-CALL { WITH so
+CALL (so) {
   DETACH DELETE so
 } IN TRANSACTIONS OF 500 ROWS
 """

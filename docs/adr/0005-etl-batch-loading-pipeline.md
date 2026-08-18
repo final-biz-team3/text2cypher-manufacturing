@@ -39,7 +39,7 @@
 | 마스터(1회 적재) | Product, Supplier, ProductCategory, ProductSubcategory, Location, ScrapReason | SUPPLIES, REQUIRES_COMPONENT, STOCKED_AT, IN_SUBCATEGORY, IN_CATEGORY |
 | 트랜잭션(배치 단위 지속 적재) | PurchaseOrder, PurchaseOrderLine, SalesOrder, WorkOrder, RoutingOperation | HAS_LINE, PLACED_WITH, FOR_PRODUCT, CONTAINS_PRODUCT, HAS_OPERATION, PERFORMED_AT, PRODUCES, SCRAPPED_DUE_TO |
 
-`export_to_csv.py`가 `master`/`tx` 두 모드로 CSV를 만들고, `load_to_neo4j.py`가 제약조건 → 마스터 → 트랜잭션 순서로 적재한다.
+`export_to_csv.py`가 `master`/`tx` 두 모드로 CSV를 만들고, `load_to_neo4j.py`가 적재 전 검사 → 제약조건 → 마스터 → 트랜잭션 순서로 적재한다(적재 전 검사는 10번 참고).
 
 ### 2. 관계 적재를 자연키 유무 · 다건 허용 여부로 3그룹 분류 (0004 참고)
 
@@ -78,14 +78,14 @@ CSV를 로컬에서 읽어 1,000행 단위로 `UNWIND $rows AS row ...` 배치�
 
 ```
 etl/
-├── export_to_csv.py    (master / tx --before / tx --since-last / tx --month)
-├── load_to_neo4j.py     (Bolt 기반 적재 — 제약조건 → 마스터 → 트랜잭션 → 검증, 마스터 관계 prune 포함)
-├── run_monthly.py       (오케스트레이터 — 스케줄러가 호출하는 진입점, 동시 실행 방지 락 포함)
-├── reset_month.py       (시연 · 복구용 — 특정 기간 삭제, Bolt 기반)
-├── check_csv_columns.py (CSV 헤더 ↔ Cypher row.* 참조 대조, CI 게이트)
-├── requirements.txt     (pandas, openpyxl, neo4j — backend와 별도 관리, neo4j는 backend와 버전 통일)
 ├── data/                (원본 xlsx, git 추적 제외)
-└── import/              (export 결과, git 추적 제외)
+├── import/              (export 결과, git 추적 제외)
+├── requirements.txt     (pandas, openpyxl, neo4j, PyYAML — backend와 별도 관리, neo4j는 backend와 버전 통일)
+├── export_to_csv.py     (master / tx --before / tx --since-last / tx --month — 엑셀 -> CSV, 적재 파이프라인의 첫 단계)
+├── graph_constraints.py (제약조건 생성 — 0007 참고)
+├── load_to_neo4j.py     (Bolt 기반 적재 — 적재 전 검사 → 제약조건 → 마스터 → 트랜잭션 → 검증, 마스터 관계 prune 포함)
+├── run_monthly.py       (오케스트레이터 — export_to_csv.py + load_to_neo4j.py를 이어서 실행, 동시 실행 방지 락 포함)
+└── reset_month.py       (시연 · 복구용 — 특정 기간 삭제, Bolt 기반)
 ```
 
 ETL은 API 서빙과 무관한 독립 배치 작업이라 `backend/`와 분리한다(근거는 0001과 동일 — 담당 영역별 폴더 분리). Bolt 경로만 쓰므로 `docker-compose.yml`에 Neo4j 컨테이너용 `/import`·`/etl` 마운트를 추가할 필요가 없다 — CSV는 항상 로컬(ETL 실행 위치)에서 읽어 드라이버로 전송하기 때문이다.
@@ -105,12 +105,24 @@ ETL은 API 서빙과 무관한 독립 배치 작업이라 `backend/`와 분리�
 | 동시 실행 충돌 | `run_monthly.py` 시작 시 `etl/.lock` 파일 존재 여부 확인, 있으면 종료 |
 | 배치 도중 실패 · 네트워크 중단 | 1,000행 단위 트랜잭션 + `MERGE` 자체가 복구 전략(재시도 시 이미 반영된 배치는 no-op) |
 | 지연 도착 데이터 | 워터마크에서 며칠 룩백(lookback) 후 재스캔(겹쳐도 `MERGE`라 안전) |
-| 소스 컬럼 변경 | `check_csv_columns.py`를 CI에 포함해 배포 전 자동 검출 |
+| 소스 컬럼 변경 | `load_to_neo4j.py`가 적재 시작 전(DB 접속 전) `check_csv_columns()`로 자동 검출 후 중단(10번 참고) |
 | 그룹 A 마스터 관계가 삭제된 원본을 못 지우는 문제 | 2번의 prune 단계로 해결(마스터 한정) |
 
 ### 9. 시연 · 복구 시나리오
 
 `reset_month.py --month <YYYY-MM>`로 해당 기간의 WorkOrder/RoutingOperation, PurchaseOrder/PurchaseOrderLine, SalesOrder만 삭제하고 마스터는 보존한다(삭제 전 미리보기, 기본적으로 사람 확인 `y`/`N`, `--yes`로 생략 가능). 삭제 후 3번의 강제 재적재 모드(`--month`)로 같은 기간을 다시 적재하면, MERGE 기반이라 중복 없이 채워진다.
+
+`reset_month.py`의 삭제 쿼리(`CALL { WITH x ... } IN TRANSACTIONS OF 500 ROWS`)는 Neo4j 5.26에서 "변수 스코프 절 없는 `CALL` 서브쿼리" deprecation 경고가 뜬다(2026-08-14 확인). 동작엔 영향 없지만 `CALL (x) { ... }` 문법으로 갱신했다.
+
+### 10. 적재 전 자동 검사를 `load_to_neo4j.py`에 내장 (2026-08-14)
+
+원래 `check_csv_columns.py`는 별도 스크립트로 존재해서, `load_to_neo4j.py` 실행 전에 사람이 따로 기억해서 돌려야 했다. `run_monthly.py`로 트랜잭션 적재(특히 워터마크 증분)가 스케줄러 자동 실행으로 넘어가는 중이라, "체크를 깜빡하면 그만"인 수동 단계는 위험하다고 판단해 `load_to_neo4j.py` 안으로 흡수했다.
+
+- `check_csv_columns.py` 파일은 삭제하고, 로직을 `load_to_neo4j.py`의 `check_csv_columns()` 함수로 그대로 옮겼다(기존 `MASTER_NODE_STEPS` 등 STEP 목록을 그대로 재사용하므로 별도 파일일 필요가 없어졌다).
+- `main()`이 **DB에 연결하기 전에** 이 함수(와 제약조건 위반 검사 — 0007 참고)를 먼저 호출한다. 문제를 전부 모아서 어떤 라벨/파일의 어떤 컬럼이 문제인지 출력한 뒤 `SystemExit(1)`로 중단하므로, 원격 서버에 연결도 하지 않고 실패한다.
+- `run_monthly.py`는 `subprocess.run` 결과가 실패면 이미 `SystemExit`로 멈추는 구조라 별도 배선 변경이 필요 없었다.
+
+**실행 검증(2026-08-14)**: `tx_backfill`·`tx_2014-05`(둘 다 정상 데이터)에 대해 `check_csv_columns()`/`check_constraint_violations()` 둘 다 문제 0건을 확인했다. 그리고 스크래치 사본에 일부러 결함 3종(컬럼 누락 1건, 존재 위반 1건, 유일성 위반 1건)을 심어서 실행했더니 정확히 3건 다 잡아냈다(실제 `etl/import` 데이터는 건드리지 않음). `pytest backend/tests/graph_schema/` 21개도 재확인.
 
 ## 검토했으나 채택하지 않은 대안
 
@@ -137,13 +149,13 @@ ETL은 API 서빙과 무관한 독립 배치 작업이라 `backend/`와 분리�
 - Bolt 하나로 통일하면서 `docker-compose.yml`에 Neo4j용 CSV 마운트가 필요 없어졌다 — 어떤 환경(로컬/원격)에서도 동일한 스크립트로 적재한다.
 - 워터마크는 날짜 컬럼(`startDate`/`orderDate`) 기준이라, 이미 지나간 워터마크보다 이전인 레코드의 후속 상태 변경(예: 진행 중이던 WorkOrder가 나중에 완료 처리됨)은 자동으로 재수집되지 않는다. 이런 정정은 3번의 강제 재적재 모드로 수동 처리해야 한다.
 - 실시간 증분 모드(`--since-last`)는 사람이 스케줄러를 등록해야 주기적으로 돈다. 실제 등록(Windows 작업 스케줄러/cron)은 이번 범위에 포함하지 않고, 실행 명령만 준비해둔다.
-- **실행 검증**: 로컬 docker-compose Neo4j(팀 공유 서버와 무관한 격리 환경)에 실제 xlsx 원본으로 검증했다.
+- **실행 검증(2026-08-13)**: 로컬 docker-compose Neo4j(팀 공유 서버와 무관한 격리 환경)에 실제 xlsx 원본으로 검증했다.
   - 마스터: `export_to_csv.py master` → Product 504·Supplier 104·ProductCategory 4·ProductSubcategory 37·Location 14·ScrapReason 16, SUPPLIES 443(비활성 공급업체 17곳 제외)·REQUIRES_COMPONENT 2576·STOCKED_AT 1069·IN_SUBCATEGORY 295·IN_CATEGORY 37. 같은 CSV로 `load_to_neo4j.py`를 두 번 실행해도 DB 카운트가 그대로였고(idempotent), prune 단계도 `-0`(삭제 대상 없음)으로 정상 동작했다.
   - 초기 백필: `tx --before 2011-08-01` → PurchaseOrder 8·SalesOrder 479·WorkOrder 2434, CSV 행수와 적재 후 DB 카운트가 정확히 일치.
   - 실시간 증분: `tx --since-last --as-of 2011-10-01` → 워터마크(하한)~as-of(상한) 범위만 뽑혀 SalesOrder +439·WorkOrder +2423 추가됨을 확인. 같은 as-of로 재실행하면 0건(idempotent). as-of를 2011-12-01로 늘리면 그 구간만 추가로 뽑힘(SalesOrder +506·WorkOrder +2730) — 워터마크 하한과 as-of 상한이 둘 다 의도대로 동작함을 확인했다.
   - 시연·복구 시나리오: `reset_month.py --month 2011-09 --yes`로 WorkOrder 1207건·SalesOrder 157건 삭제(마스터 Product 504건은 그대로 보존) → `run_monthly.py --month 2011-09`(강제 재적재)로 재적재하니 WorkOrder·SalesOrder 카운트가 삭제 전과 정확히 동일하게 복원됨을 확인했다.
   - 동시 실행 방지: `etl/.lock` 파일이 있는 상태에서 `run_monthly.py`를 실행하면 즉시 종료(exit 1)함을 확인했다.
-  - `check_csv_columns.py`를 `--dir tx_backfill`·`--dir tx_incremental`·`--month 2011-09` 세 경우 모두 실행해 전부 `OK`를 확인했다.
+  - `check_csv_columns.py`를 `--dir tx_backfill`·`--dir tx_incremental`·`--month 2011-09` 세 경우 모두 실행해 전부 `OK`를 확인했다(이 스크립트는 이후 `load_to_neo4j.py`에 통합되고 삭제됨 — 10번 참고).
   - `graph_schema.yaml` 변경(태그 분리 등) 이후 `pytest backend/tests/graph_schema/` 21개 전부 통과 — PR #8(`feat/schema-serializer`) 구현에 영향이 없음을 재확인했다.
 
 ## 확실하지 않은 부분
@@ -155,6 +167,7 @@ ETL은 API 서빙과 무관한 독립 배치 작업이라 `backend/`와 분리�
 ## 참고 자료
 
 - 0004 (그래프 스키마 설계, 마스터/트랜잭션 분리, 관계 그룹 A/B/C 근거)
+- 0007 (그래프 스키마 제약조건 4종 — `load_to_neo4j.py`의 제약조건 생성 단계가 여기서 나온다)
 - Neo4j Cypher Manual, "MERGE" — 재실행 안전한 적재 패턴
 - Apache Airflow 공식 문서, "Backfill" — 특정 기간을 명시적으로 재실행하는 표준 패턴
 - dbt 공식 문서, "Incremental models" — 평상시 증분 + `--full-refresh` 이원화 패턴
