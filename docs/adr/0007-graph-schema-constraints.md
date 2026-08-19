@@ -2,7 +2,9 @@
 
 ## 상태
 
-확정 (2026-08-14)
+폐기 (2026-08-20) — 구조화 MVP 전환으로 대체됨
+
+> **2026-08-20 정정**: 이 문서가 정의한 제약조건 자동 생성기(`etl/graph_constraints.py`, Enterprise 전용 문법 생성)는 구조화 MVP 스키마엔 적용하지 않기로 했다(파일 자체는 삭제하지 않고 상위호환 용도로 보존). 현재 Neo4j 제약조건은 이미 Community 5.26에서 검증된 `schema/structured_mvp_constraints.cypher`를 그대로 실행한다(자동 생성 없음). 근거: `docs/superpowers/plans/2026-08-19-structured-mvp-data-loading.md`. 이 문서는 과거 결정 기록으로만 남긴다.
 
 ## 한 줄 요약
 
