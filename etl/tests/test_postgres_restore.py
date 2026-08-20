@@ -10,6 +10,7 @@ from postgres_restore import (
     build_pg_restore_command,
     build_pg_restore_list_command,
     parse_toc_table_names,
+    restore_confirmed,
     target_database_exists,
     wrap_for_docker_exec,
 )
@@ -174,3 +175,19 @@ def test_target_database_exists_false_when_no_row() -> None:
             return _FakeCursor(None)
 
     assert target_database_exists(_Conn(), "adventureworks") is False
+
+
+def test_restore_confirmed_true_when_input_matches_db_name() -> None:
+    assert restore_confirmed("adventureworks", "adventureworks") is True
+
+
+def test_restore_confirmed_false_when_input_does_not_match() -> None:
+    assert restore_confirmed("yes", "adventureworks") is False
+
+
+def test_restore_confirmed_strips_surrounding_whitespace() -> None:
+    assert restore_confirmed(" adventureworks \n", "adventureworks") is True
+
+
+def test_restore_confirmed_false_for_empty_input() -> None:
+    assert restore_confirmed("", "adventureworks") is False

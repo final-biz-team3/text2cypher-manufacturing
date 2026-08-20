@@ -14,6 +14,15 @@ PG_RESTORE_DOCKER_CONTAINER 환경변수로 컨테이너 이름을 바꿀 수 �
 검증 로직 자체는 psycopg2가 필요해 이 파일과 책임을 분리해 두고, 이 파일의
 main()에서만 두 단계를 이어붙인다 - 복원 없이 이미 있는 DB만 검증하고
 싶을 때는 postgres_restore_validate.py를 그대로 독립 실행하면 된다.
+
+실제 --clean 복원 직전에는 로컬/원격 구분 없이 항상 대상 DB 이름을 그대로
+입력하는 확인 절차를 거친다(PR #16 리뷰 P1-2 대응). 호스트 문자열만으로
+로컬/원격을 구분해서 로컬이면 확인을 건너뛰는 방식은 안전하지 않다고
+판단했다 - SSH 터널을 쓰면 원격도 "localhost"로 보이고, 누군가의 로컬
+DB가 다른 사람에게는 실제로 공유 서버일 수도 있기 때문이다. 자동화/CI에서
+쓸 때는 --yes를 매번 명시적으로 넘겨 이 확인을 생략할 수 있다 - .env에
+영구 저장하는 방식은 이번 사고 시나리오(설정을 깜빡하고 안 되돌림)를 그대로
+재현하므로 쓰지 않는다.
 """
 
 import argparse
@@ -112,6 +121,18 @@ def wrap_for_docker_exec(
     return docker_command + command
 
 
+def restore_confirmed(user_input: str, db: str) -> bool:
+    """사용자가 입력한 문자열이 대상 DB 이름과 정확히 일치하는지 확인한다.
+
+    --clean 복원은 로컬/원격을 가리지 않고 항상 이 확인을 거친다(PR #16 리뷰
+    P1-2 대응). 처음엔 "원격일 때만 확인"을 고려했으나, 호스트 문자열만으로는
+    로컬/원격을 안전하게 구분할 수 없다(SSH 터널을 쓰면 원격도 "localhost"로
+    보이고, 누군가의 로컬 DB가 다른 사람에게는 공유 서버일 수도 있다) - 그래서
+    대상 구분 없이 매번 DB 이름을 그대로 입력해야만 진행되게 한다.
+    """
+    return user_input.strip() == db
+
+
 def target_database_exists(conn, db: str) -> bool:
     """conn(서버의 postgres 유지보수 DB 연결)으로 db가 이미 존재하는지 확인한다.
 
@@ -130,10 +151,17 @@ def copy_dump_into_container(
 
     --list(TOC 조회)는 스트림이 아니라 파일 임의 접근이 필요해 stdin 파이프로
     못 넘기므로, 컨테이너 안에 실제 파일로 먼저 넣어둔다.
+
+    stdin=DEVNULL: docker cp는 입력이 필요 없는데 지정을 안 하면 부모 프로세스의
+    stdin을 그대로 물려받는다. 이 함수가 main()에서 나중에 나오는 복원 확인
+    프롬프트(input())보다 먼저 실행되는데, docker cp가 상속받은 stdin을 그대로
+    들고 있다가 반환하면서 그 이후의 input() 호출이 EOFError로 즉시 실패하는
+    문제가 실행 검증(2026-08-20, --yes 확인 게이트 추가 중) 중 발견됐다.
     """
     subprocess.run(
         ["docker", "cp", str(dump_path), f"{container}:{container_path}"],
         check=True,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -144,6 +172,11 @@ def main() -> None:
         description="AdventureWorksPG.gz를 PostgreSQL로 복원한다."
     )
     parser.add_argument("--dump-path", default="etl/data/AdventureWorksPG.gz")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="확인 프롬프트 없이 진행한다(자동화/CI 전용, 매번 명시적으로 넘겨야 함).",
+    )
     args = parser.parse_args()
 
     dump_path = Path(args.dump_path)
@@ -191,10 +224,25 @@ def main() -> None:
     if via_docker:
         list_command = wrap_for_docker_exec(list_command, container=container, env={})
     list_result = subprocess.run(
-        list_command, capture_output=True, text=True, check=False
+        list_command,
+        capture_output=True,
+        text=True,
+        check=False,
+        stdin=subprocess.DEVNULL,
     )
     expected_tables = parse_toc_table_names(list_result.stdout)
     print(f"   덤프에 데이터가 있는 테이블 {len(expected_tables)}개 확인")
+
+    print(
+        f"이 작업은 '{host}:{port}/{db}'의 기존 데이터를 --clean으로 삭제하고 "
+        "덤프로 덮어씁니다."
+    )
+    if args.yes:
+        print("   (--yes로 확인 생략)")
+    else:
+        user_input = input(f"계속하려면 데이터베이스 이름을 그대로 입력하세요 [{db}]: ")
+        if not restore_confirmed(user_input, db):
+            sys.exit("입력한 이름이 일치하지 않아 복원을 중단합니다.")
 
     print("2) 복원 실행")
     command = build_pg_restore_command(
