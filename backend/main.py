@@ -1,18 +1,24 @@
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from api.health import router as health_router
 from core.neo4j import close_driver, get_driver
+from core.postgres import close_connection, get_connection
+
+load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_driver()
+    get_connection()
     yield
     close_driver()
+    close_connection()
 
 
 app = FastAPI(

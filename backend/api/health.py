@@ -1,7 +1,9 @@
+import os
+
 from fastapi import APIRouter
 
-from core.config import settings
 from core.neo4j import get_driver
+from core.postgres import get_connection
 
 router = APIRouter()
 
@@ -18,11 +20,25 @@ async def health_check():
         neo4j_status = "error"
         neo4j_detail = str(e)
 
+    postgres_status = "ok"
+    postgres_detail = None
+
+    try:
+        connection = get_connection()
+        connection.execute("SELECT 1")
+    except Exception as e:
+        postgres_status = "error"
+        postgres_detail = str(e)
+
     return {
         "status": "ok",
-        "env": settings.app_env,
+        "env": os.getenv("APP_ENV", "development"),
         "neo4j": {
             "status": neo4j_status,
             **({"detail": neo4j_detail} if neo4j_detail else {}),
+        },
+        "postgres": {
+            "status": postgres_status,
+            **({"detail": postgres_detail} if postgres_detail else {}),
         },
     }

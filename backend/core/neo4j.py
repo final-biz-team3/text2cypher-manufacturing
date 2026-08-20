@@ -1,6 +1,6 @@
-from neo4j import Driver, GraphDatabase
+import os
 
-from core.config import settings
+from neo4j import Driver, GraphDatabase
 
 _driver: Driver | None = None
 
@@ -9,8 +9,11 @@ def get_driver() -> Driver:
     global _driver
     if _driver is None:
         _driver = GraphDatabase.driver(
-            settings.neo4j_uri,
-            auth=(settings.neo4j_user, settings.neo4j_password),
+            os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+            auth=(
+                os.getenv("NEO4J_USER", "neo4j"),
+                os.getenv("NEO4J_PASSWORD", "changeme_local"),
+            ),
         )
     return _driver
 
