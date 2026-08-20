@@ -1,8 +1,17 @@
 """구조화 MVP 전체 동기화 진입점.
 
-실행 순서(docs/etl/2-structured_mvp_loading_rules.md 2절 그대로):
+실행 순서(docs/etl/2-structured_mvp_loading_rules.md 2절 기반, PR #16 리뷰 P1-1
+반영으로 검증을 prune 앞뒤로 나눔):
 제약조건 적용 -> syncRunId 생성 -> 노드 6종 적재 -> 관계 6종 적재
-(적재 전 참조 무결성 검사 포함) -> 사후 검증 -> prune.
+(적재 전 참조 무결성 검사 포함) -> 사전 검증(이번 syncRunId 범위만) -> prune ->
+사후 재검증(전역, 최종 상태 확인).
+
+사전 검증을 prune 앞에 두는 이유: 기존에는 검증이 syncRunId로 범위를 제한하지
+않아서, 이번 실행에서 뭔가 누락돼도 이전 실행의 stale 데이터가 검증을 통과시킬
+수 있었다. 그 상태에서 prune이 stale 데이터를 지우면 "검증은 통과했지만 실제로는
+누락된" 최종 상태가 남는다. 그래서 prune 전에는 이번 syncRunId 범위만 검증해서
+적재 자체가 정상인지 확인하고, prune이 끝난 뒤에 전역 범위로 다시 검증해서
+최종 상태까지 확인한다.
 
 사용법(리포 루트 기준):
     python etl/run_structured_mvp_sync.py
@@ -116,6 +125,7 @@ def main() -> None:
 
         print("2) 노드 6종 추출 + 적재")
         node_id_sets: dict[str, set] = {}
+        expected_node_counts: dict[str, int] = {}
         for spec in NODE_SPECS:
             raw_rows = extract_rows(pg_conn, spec.extract_sql)
             rows = [
@@ -124,9 +134,11 @@ def main() -> None:
             ]
             load_rows(driver, spec, rows, sync_run_id)
             node_id_sets[spec.label] = {row[spec.unique_key] for row in rows}
+            expected_node_counts[spec.label] = len(rows)
             print(f"   {spec.label}: {len(rows)}건")
 
         print("3) 관계 6종 추출 + 사전 참조 무결성 검사 + 적재")
+        expected_rel_counts: dict[str, int] = {}
         for spec in RELATIONSHIP_SPECS:
             from_key, to_key, from_label, to_label = RELATIONSHIP_ENDPOINTS[
                 spec.rel_type
@@ -147,28 +159,56 @@ def main() -> None:
                 )
 
             load_rows(driver, spec, rows, sync_run_id)
+            expected_rel_counts[spec.rel_type] = len(rows)
             print(f"   {spec.rel_type}: {len(rows)}건")
 
-        print("4) 사후 검증")
-        node_counts = count_nodes_by_label(driver, BUSINESS_LABELS)
-        rel_counts = count_relationships_by_type(driver, RELATIONSHIP_TYPES)
-        print(f"   노드 건수: {node_counts}")
-        print(f"   관계 건수: {rel_counts}")
+        print("4) 사전 검증 (prune 전, 이번 syncRunId 범위만)")
+        scoped_node_counts = count_nodes_by_label(
+            driver, BUSINESS_LABELS, sync_run_id=sync_run_id
+        )
+        scoped_rel_counts = count_relationships_by_type(
+            driver, RELATIONSHIP_TYPES, sync_run_id=sync_run_id
+        )
+        if scoped_node_counts != expected_node_counts:
+            sys.exit(
+                f"노드 적재 건수 불일치 (추출 {expected_node_counts} vs 적재 "
+                f"{scoped_node_counts}) - prune 실행 안 함"
+            )
+        if scoped_rel_counts != expected_rel_counts:
+            sys.exit(
+                f"관계 적재 건수 불일치 (추출 {expected_rel_counts} vs 적재 "
+                f"{scoped_rel_counts}) - prune 실행 안 함"
+            )
 
         parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
         entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+        failures = verify_fixture_entities(driver, entities, sync_run_id=sync_run_id)
+        failures += verify_work_order_17747_fixture(driver, sync_run_id=sync_run_id)
+        failures += verify_bom_680_to_492_quantity(driver, sync_run_id=sync_run_id)
+        if failures:
+            print(f"   사전 fixture 검증 실패 {len(failures)}건 (prune 실행 안 함):")
+            for failure in failures:
+                print(f"     - {failure}")
+            sys.exit(1)
+        print("   사전 검증 통과 (건수 일치 + fixture 전부 이번 실행 데이터로 확인)")
+
+        print("5) stale 데이터 prune")
+        prune_stale(driver, sync_run_id)
+
+        print("6) 사후 재검증 (prune 이후 최종 상태)")
+        final_node_counts = count_nodes_by_label(driver, BUSINESS_LABELS)
+        final_rel_counts = count_relationships_by_type(driver, RELATIONSHIP_TYPES)
+        print(f"   노드 건수: {final_node_counts}")
+        print(f"   관계 건수: {final_rel_counts}")
         failures = verify_fixture_entities(driver, entities)
         failures += verify_work_order_17747_fixture(driver)
         failures += verify_bom_680_to_492_quantity(driver)
         if failures:
-            print(f"   fixture 검증 실패 {len(failures)}건:")
+            print(f"   사후 fixture 검증 실패 {len(failures)}건 (prune은 이미 실행됨):")
             for failure in failures:
                 print(f"     - {failure}")
             sys.exit(1)
-        print("   fixture 검증 전부 통과")
-
-        print("5) stale 데이터 prune")
-        prune_stale(driver, sync_run_id)
+        print("   사후 검증 전부 통과")
 
         print("동기화 완료")
     finally:

@@ -40,32 +40,59 @@ def counts_are_equal(first: dict[str, int], second: dict[str, int]) -> bool:
     return first == second
 
 
-def count_nodes_by_label(driver: Driver, labels: list[str]) -> dict[str, int]:
-    """라벨별 노드 건수를 센다."""
+def count_nodes_by_label(
+    driver: Driver, labels: list[str], sync_run_id: str | None = None
+) -> dict[str, int]:
+    """라벨별 노드 건수를 센다.
+
+    sync_run_id를 주면 그 실행에서 적재된 노드만 센다(prune 전 사전 검증용).
+    안 주면(기본값) 전체를 센다(prune 후 사후 검증, 독립 실행용).
+    """
     counts: dict[str, int] = {}
     with driver.session() as session:
         for label in labels:
-            result = session.run(f"MATCH (n:{label}) RETURN count(n) AS c")
+            result = session.run(
+                f"""
+                MATCH (n:{label})
+                WHERE $syncRunId IS NULL OR n.syncRunId = $syncRunId
+                RETURN count(n) AS c
+                """,
+                syncRunId=sync_run_id,
+            )
             counts[label] = result.single()["c"]
     return counts
 
 
-def count_relationships_by_type(driver: Driver, rel_types: list[str]) -> dict[str, int]:
-    """관계타입별 건수를 센다."""
+def count_relationships_by_type(
+    driver: Driver, rel_types: list[str], sync_run_id: str | None = None
+) -> dict[str, int]:
+    """관계타입별 건수를 센다. sync_run_id 의미는 count_nodes_by_label과 동일하다."""
     counts: dict[str, int] = {}
     with driver.session() as session:
         for rel_type in rel_types:
-            result = session.run(f"MATCH ()-[r:{rel_type}]->() RETURN count(r) AS c")
+            result = session.run(
+                f"""
+                MATCH ()-[r:{rel_type}]->()
+                WHERE $syncRunId IS NULL OR r.syncRunId = $syncRunId
+                RETURN count(r) AS c
+                """,
+                syncRunId=sync_run_id,
+            )
             counts[rel_type] = result.single()["c"]
     return counts
 
 
-def verify_fixture_entities(driver: Driver, entities: dict[str, Any]) -> list[str]:
+def verify_fixture_entities(
+    driver: Driver, entities: dict[str, Any], sync_run_id: str | None = None
+) -> list[str]:
     """query_parameters.json의 entities가 실제로 그래프에 존재하는지 확인한다.
 
     Q12~Q20 fixture의 "시작 노드"가 전부 존재해야 한다는 완료 조건(
     docs/etl/2-structured_mvp_loading_rules.md 7절)을 검사한다. Gold 쿼리 자체는 이번
     범위 밖이라 여기서는 시작점 존재 여부만 확인한다.
+
+    sync_run_id를 주면 그 실행에서 적재된 노드로 존재하는지까지 확인한다(prune 전
+    사전 검증용 - 이전 실행에서 남아있는 stale 노드로 검증이 통과하는 걸 막는다).
     """
     failures: list[str] = []
     with driver.session() as session:
@@ -81,22 +108,39 @@ def verify_fixture_entities(driver: Driver, entities: dict[str, Any]) -> list[st
         for entity_key, id_field in product_checks:
             product_id = entities[entity_key][id_field]
             result = session.run(
-                "MATCH (p:Product {productId: $id}) RETURN count(p) AS c", id=product_id
+                """
+                MATCH (p:Product {productId: $id})
+                WHERE $syncRunId IS NULL OR p.syncRunId = $syncRunId
+                RETURN count(p) AS c
+                """,
+                id=product_id,
+                syncRunId=sync_run_id,
             )
             if result.single()["c"] == 0:
                 failures.append(f"{entity_key}: Product {product_id} 없음")
 
         supplier_id = entities["supplier"]["supplierId"]
         result = session.run(
-            "MATCH (s:Supplier {supplierId: $id}) RETURN count(s) AS c", id=supplier_id
+            """
+            MATCH (s:Supplier {supplierId: $id})
+            WHERE $syncRunId IS NULL OR s.syncRunId = $syncRunId
+            RETURN count(s) AS c
+            """,
+            id=supplier_id,
+            syncRunId=sync_run_id,
         )
         if result.single()["c"] == 0:
             failures.append(f"supplier: Supplier {supplier_id} 없음")
 
         work_order_id = entities["workOrder"]["workOrderId"]
         result = session.run(
-            "MATCH (w:WorkOrder {workOrderId: $id}) RETURN count(w) AS c",
+            """
+            MATCH (w:WorkOrder {workOrderId: $id})
+            WHERE $syncRunId IS NULL OR w.syncRunId = $syncRunId
+            RETURN count(w) AS c
+            """,
             id=work_order_id,
+            syncRunId=sync_run_id,
         )
         if result.single()["c"] == 0:
             failures.append(f"workOrder: WorkOrder {work_order_id} 없음")
@@ -104,17 +148,30 @@ def verify_fixture_entities(driver: Driver, entities: dict[str, Any]) -> list[st
     return failures
 
 
-def verify_work_order_17747_fixture(driver: Driver) -> list[str]:
+def verify_work_order_17747_fixture(
+    driver: Driver, sync_run_id: str | None = None
+) -> list[str]:
     """docs/etl/2-structured_mvp_loading_rules.md 7절의 구체적 fixture 검증:
-    작업지시 17747의 공정 순서 1·6과 작업장 10·50이 존재해야 한다."""
+    작업지시 17747의 공정 순서 1·6과 작업장 10·50이 존재해야 한다.
+
+    sync_run_id를 주면 경로의 시작 노드·관계·중간 노드·관계·끝 노드가 전부 이번
+    실행에서 적재된 것인지까지 확인한다(prune 전 사전 검증용).
+    """
     failures: list[str] = []
     with driver.session() as session:
         result = session.run("""
-            MATCH (:WorkOrder {workOrderId: 17747})-[:HAS_OPERATION]->(ro:RoutingOperation)
-                  -[:PERFORMED_AT]->(loc:Location)
+            MATCH (wo:WorkOrder {workOrderId: 17747})-[r1:HAS_OPERATION]->(ro:RoutingOperation)
+                  -[r2:PERFORMED_AT]->(loc:Location)
+            WHERE $syncRunId IS NULL OR (
+                wo.syncRunId = $syncRunId AND r1.syncRunId = $syncRunId
+                AND ro.syncRunId = $syncRunId AND r2.syncRunId = $syncRunId
+                AND loc.syncRunId = $syncRunId
+            )
             RETURN collect(DISTINCT ro.sequence) AS sequences,
                    collect(DISTINCT loc.locationId) AS locationIds
-            """)
+            """,
+            syncRunId=sync_run_id,
+        )
         record = result.single()
         sequences = set(record["sequences"])
         location_ids = set(record["locationIds"])
@@ -125,20 +182,33 @@ def verify_work_order_17747_fixture(driver: Driver) -> list[str]:
     return failures
 
 
-def verify_bom_680_to_492_quantity(driver: Driver) -> list[str]:
+def verify_bom_680_to_492_quantity(
+    driver: Driver, sync_run_id: str | None = None
+) -> list[str]:
     """docs/etl/2-structured_mvp_loading_rules.md 7절: Product 680에서 492로 가는 필요수량이
-    10개 생산 기준 80이어야 한다(bomAsOfDate=2014-08-08 유효 경로만)."""
+    10개 생산 기준 80이어야 한다(bomAsOfDate=2014-08-08 유효 경로만).
+
+    sync_run_id를 주면 경로의 시작·끝 노드와 모든 관계가 이번 실행에서 적재된
+    것인지까지 확인한다(prune 전 사전 검증용). Q19 계약이 요구하는 "전체 경로 합산"
+    검증(P2 항목)은 이번 변경 범위 밖이라 기존 ORDER BY ... LIMIT 1 로직은 그대로 둔다.
+    """
     with driver.session() as session:
         result = session.run("""
-            MATCH path = (:Product {productId: 680})-[r:REQUIRES_COMPONENT*1..4]->
-                         (:Product {productId: 492})
+            MATCH path = (start:Product {productId: 680})-[r:REQUIRES_COMPONENT*1..4]->
+                         (end:Product {productId: 492})
             WHERE all(rel IN r WHERE
                 rel.startDate <= date('2014-08-08')
-                AND (rel.endDate IS NULL OR date('2014-08-08') < rel.endDate))
+                AND (rel.endDate IS NULL OR date('2014-08-08') < rel.endDate)
+                AND ($syncRunId IS NULL OR rel.syncRunId = $syncRunId))
+              AND ($syncRunId IS NULL OR (
+                  start.syncRunId = $syncRunId AND end.syncRunId = $syncRunId
+              ))
             RETURN reduce(qty = 10.0, rel IN r | qty * rel.quantityPerAssembly) AS requiredQty
             ORDER BY requiredQty DESC
             LIMIT 1
-            """)
+            """,
+            syncRunId=sync_run_id,
+        )
         record = result.single()
         if record is None:
             return ["Product 680 -> 492 유효 BOM 경로가 없음"]
