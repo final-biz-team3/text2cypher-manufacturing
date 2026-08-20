@@ -3,7 +3,7 @@
 ## 상태
 폐기 (2026-08-20) — 구조화 MVP 전환으로 대체됨
 
-> **2026-08-20 정정**: 이 문서가 정의한 11노드·13관계(마스터/트랜잭션 분리, 관계 그룹 A/B/C)는 Excel 원본 데이터를 전제로 한 스키마다. AdventureWorks(PostgreSQL)를 원본으로 하는 구조화 MVP로 전환하면서 `schema/graph_schema.yaml`을 업무 6노드·6관계(Product/Supplier/WorkOrder/RoutingOperation/Location/ScrapReason)로 완전히 교체했다 — 이 문서가 설명하는 스키마는 더 이상 `schema/graph_schema.yaml`과 일치하지 않는다. 현재 기준은 `schema/graph_schema.yaml`과 `docs/design/1-structured_mvp_source_mapping.md`, 전환 근거는 `md/2026-08-19-structured-mvp-data-loading.md` 참고. 이 문서는 과거 결정 기록으로만 남긴다.
+> **2026-08-20 정정**: 이 문서가 정의한 11노드·13관계(마스터/트랜잭션 분리, 관계 그룹 A/B/C)는 Excel 원본 데이터를 전제로 한 스키마다. AdventureWorks(PostgreSQL)를 원본으로 하는 구조화 MVP로 전환하면서 `schema/graph_schema.yaml`을 업무 6노드·6관계(Product/Supplier/WorkOrder/RoutingOperation/Location/ScrapReason)로 완전히 교체했다 — 이 문서가 설명하는 스키마는 더 이상 `schema/graph_schema.yaml`과 일치하지 않는다. 현재 기준은 `schema/graph_schema.yaml`과 `docs/etl/1-structured_mvp_source_mapping.md`, 전환 근거는 `md/2026-08-19-structured-mvp-data-loading.md` 참고. 이 문서는 과거 결정 기록으로만 남긴다.
 
 ## 한 줄 요약
 

@@ -1,7 +1,7 @@
 """구조화 MVP 6노드·6관계의 추출(SQL)·적재(Cypher) 스펙을 한 곳에 모은다.
 
-schema/graph_schema.yaml, docs/design/1-structured_mvp_source_mapping.md,
-docs/design/2-structured_mvp_loading_rules.md에서 정의한 매핑을 그대로 코드로 옮긴 것이다.
+schema/graph_schema.yaml, docs/etl/1-structured_mvp_source_mapping.md,
+docs/etl/2-structured_mvp_loading_rules.md에서 정의한 매핑을 그대로 코드로 옮긴 것이다.
 extract/load 모듈은 이 스펙만 순회하므로, 새 노드/관계가 생기면 여기 한 줄만
 추가하면 된다.
 

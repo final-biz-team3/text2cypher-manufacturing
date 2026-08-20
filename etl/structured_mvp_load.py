@@ -1,7 +1,7 @@
 """구조화 MVP 노드·관계를 배치(UNWIND)로 Neo4j에 MERGE하고, 제약조건 DDL을
 적용하고, 이번 syncRunId에 없는 stale 데이터를 prune한다.
 
-docs/design/2-structured_mvp_loading_rules.md 6절의 prune Cypher를 그대로 사용한다 - 관계를
+docs/etl/2-structured_mvp_loading_rules.md 6절의 prune Cypher를 그대로 사용한다 - 관계를
 먼저 지우고, 그 다음 업무 노드 6개 라벨만 정확히 지운다(온톨로지 노드는
 아직 없으므로 해당 없음).
 """

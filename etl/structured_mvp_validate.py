@@ -24,7 +24,7 @@ def find_dangling_relationship_rows(
 ) -> list[dict[str, Any]]:
     """관계 행 중 시작/도착 노드가 아직 적재되지 않은(고아) 행을 찾는다.
 
-    docs/design/2-structured_mvp_loading_rules.md 5절: "하나라도 존재하면 관계를 조용히
+    docs/etl/2-structured_mvp_loading_rules.md 5절: "하나라도 존재하면 관계를 조용히
     버리지 않고 적재를 실패시킨다. 실패한 business key 목록을 로그에 남긴다."
     이 함수는 그 "실패한 business key 목록"을 계산하는 순수 함수다.
     """
@@ -64,7 +64,7 @@ def verify_fixture_entities(driver: Driver, entities: dict[str, Any]) -> list[st
     """query_parameters.json의 entities가 실제로 그래프에 존재하는지 확인한다.
 
     Q12~Q20 fixture의 "시작 노드"가 전부 존재해야 한다는 완료 조건(
-    docs/design/2-structured_mvp_loading_rules.md 7절)을 검사한다. Gold 쿼리 자체는 이번
+    docs/etl/2-structured_mvp_loading_rules.md 7절)을 검사한다. Gold 쿼리 자체는 이번
     범위 밖이라 여기서는 시작점 존재 여부만 확인한다.
     """
     failures: list[str] = []
@@ -105,7 +105,7 @@ def verify_fixture_entities(driver: Driver, entities: dict[str, Any]) -> list[st
 
 
 def verify_work_order_17747_fixture(driver: Driver) -> list[str]:
-    """docs/design/2-structured_mvp_loading_rules.md 7절의 구체적 fixture 검증:
+    """docs/etl/2-structured_mvp_loading_rules.md 7절의 구체적 fixture 검증:
     작업지시 17747의 공정 순서 1·6과 작업장 10·50이 존재해야 한다."""
     failures: list[str] = []
     with driver.session() as session:
@@ -126,7 +126,7 @@ def verify_work_order_17747_fixture(driver: Driver) -> list[str]:
 
 
 def verify_bom_680_to_492_quantity(driver: Driver) -> list[str]:
-    """docs/design/2-structured_mvp_loading_rules.md 7절: Product 680에서 492로 가는 필요수량이
+    """docs/etl/2-structured_mvp_loading_rules.md 7절: Product 680에서 492로 가는 필요수량이
     10개 생산 기준 80이어야 한다(bomAsOfDate=2014-08-08 유효 경로만)."""
     with driver.session() as session:
         result = session.run("""

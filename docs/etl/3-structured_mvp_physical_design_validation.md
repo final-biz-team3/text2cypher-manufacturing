@@ -13,8 +13,8 @@
 
 - `schema/structured_mvp_graph_schema.yaml`
 - `schema/structured_mvp_constraints.cypher`
-- `docs/design/1-structured_mvp_source_mapping.md`
-- `docs/design/2-structured_mvp_loading_rules.md`
+- `docs/etl/1-structured_mvp_source_mapping.md`
+- `docs/etl/2-structured_mvp_loading_rules.md`
 - `queries/query_contracts.json`
 - `queries/query_parameters.json`
 
