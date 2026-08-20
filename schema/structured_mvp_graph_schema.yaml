@@ -1,6 +1,6 @@
 # neo4jTarget은 원본 전달 시점(2026-08-19, Community 기준) 값이 아니라 실제 운영 환경에
 # 맞춰 갱신했다(PR #16 리뷰 대응, 2026-08-20) - docker-compose.yml/원격 공유 서버 모두
-# neo4j:5-enterprise(패치 버전 고정 안 함, 5.x 최신을 그대로 추적)로 운영 중이다.
+# neo4j:5.26.29-enterprise(패치 버전 고정, Gold 결과·ETL 재현성 확보)로 운영 중이다.
 # schema/structured_mvp_constraints.cypher의 DDL 자체는 Community 호환 문법을 그대로
 # 쓴다(Enterprise 전용 NODE KEY/RELATIONSHIP KEY 등은 아직 도입하지 않음) - edition은
 # "실행 중인 서버가 어떤 에디션인가"를 뜻하고, DDL 문법 선택과는 별개다.
@@ -8,7 +8,7 @@ schemaVersion: "1.0.0"
 name: manufacturing-risk-structured-mvp
 status: implementation-ready
 neo4jTarget:
-  version: "5-enterprise (latest, 패치 미고정)"
+  version: "5.26.29-enterprise"
   edition: enterprise
 
 ownership:

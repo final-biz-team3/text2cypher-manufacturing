@@ -4,7 +4,7 @@
 
 폐기 (2026-08-20) — 구조화 MVP 전환으로 대체됨
 
-> **2026-08-20 정정**: 이 문서가 정의한 제약조건 자동 생성기(`etl/graph_constraints.py`, Enterprise 전용 문법 생성)는 구조화 MVP 스키마엔 적용하지 않기로 했다(파일 자체는 삭제하지 않고 상위호환 용도로 보존). 현재 Neo4j 제약조건은 `schema/structured_mvp_constraints.cypher`를 그대로 실행하며, **이 DDL 문법 자체는 Community 호환**이다(자동 생성 없음, NODE KEY/RELATIONSHIP KEY 미사용). 근거: `md/2026-08-19-structured-mvp-data-loading.md`. **다만 실행 환경 자체는 아래(1번)에서 이미 Enterprise로 전환한 상태를 그대로 유지한다** - PR #16 리뷰에서 "DDL은 Community라면서 compose는 Enterprise"라는 불일치 지적을 받고, DDL 문법 선택(Community 호환)과 런타임 에디션(Enterprise)은 별개 결정이라는 걸 재확인했다. 이 문서는 과거 결정 기록으로만 남긴다.
+> **2026-08-20 정정**: 이 문서가 정의한 제약조건 자동 생성기(`etl/graph_constraints.py`, Enterprise 전용 문법 생성)는 구조화 MVP 스키마엔 적용하지 않기로 했다. **최초 정정 때는 "파일을 삭제하지 않고 상위호환 용도로 보존"이라고 적었으나 이는 사실과 다르다 - 실제로는 옛 Excel 기반 ETL 파이프라인 일괄 정리 커밋(9d5ce59)에서 이 PR 범위 안에 삭제됐다.** 현재 Neo4j 제약조건은 `schema/structured_mvp_constraints.cypher`를 그대로 실행하며, **이 DDL 문법 자체는 Community 호환**이다(자동 생성 없음, NODE KEY/RELATIONSHIP KEY 미사용). 근거: `md/2026-08-19-structured-mvp-data-loading.md`. **다만 실행 환경 자체는 아래(1번)에서 이미 Enterprise로 전환한 상태를 그대로 유지하며, 이후 패치 버전도 `5.26.29-enterprise`로 고정했다**(PR #16 리뷰에서 "DDL은 Community라면서 compose는 Enterprise"라는 불일치, 이어서 "재현성을 위해 패치 버전을 고정하라"는 지적을 순서대로 받아 반영). DDL 문법 선택(Community 호환)과 런타임 에디션(Enterprise, 패치 고정)은 별개 결정이다. 이 문서는 과거 결정 기록으로만 남긴다.
 
 ## 한 줄 요약
 
