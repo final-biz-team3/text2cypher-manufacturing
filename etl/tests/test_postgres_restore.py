@@ -7,8 +7,10 @@
 from pathlib import Path
 
 from postgres_restore import (
+    build_new_database_name,
     build_pg_restore_command,
     build_pg_restore_list_command,
+    build_previous_database_name,
     parse_toc_table_names,
     restore_confirmed,
     target_database_exists,
@@ -191,3 +193,17 @@ def test_restore_confirmed_strips_surrounding_whitespace() -> None:
 
 def test_restore_confirmed_false_for_empty_input() -> None:
     assert restore_confirmed("", "adventureworks") is False
+
+
+def test_build_new_database_name_appends_restore_and_timestamp() -> None:
+    assert (
+        build_new_database_name("adventureworks", "20260820T120000Z")
+        == "adventureworks_restore_20260820T120000Z"
+    )
+
+
+def test_build_previous_database_name_appends_previous_and_timestamp() -> None:
+    assert (
+        build_previous_database_name("adventureworks", "20260820T120000Z")
+        == "adventureworks_previous_20260820T120000Z"
+    )
