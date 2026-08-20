@@ -1,10 +1,25 @@
 """PostgreSQL에서 구조화 MVP 노드·관계 원본 행을 읽어 Neo4j MERGE에 바로
 쓸 수 있는 형태(날짜/시간을 ISO 문자열로)로 정규화한다."""
 
+import decimal
 from typing import Any
 
 import psycopg2
 import psycopg2.extras
+
+
+def coerce_decimals(row: dict[str, Any]) -> dict[str, Any]:
+    """psycopg2가 PostgreSQL numeric(quantityPerAssembly 등)을 돌려줄 때 쓰는
+    decimal.Decimal을 float으로 바꾼다.
+
+    Neo4j 드라이버(Bolt 패킹)는 Decimal을 지원하지 않아 그대로 넘기면
+    "Values of type <class 'decimal.Decimal'> are not supported"로 실패한다
+    (실행 검증, 2026-08-20, REQUIRES_COMPONENT.quantityPerAssembly에서 발견).
+    """
+    return {
+        key: float(value) if isinstance(value, decimal.Decimal) else value
+        for key, value in row.items()
+    }
 
 
 def normalize_row(
@@ -37,4 +52,4 @@ def extract_rows(
     """SQL을 실행해 컬럼명을 키로 하는 dict 행 목록을 반환한다."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
         cursor.execute(sql)
-        return [dict(row) for row in cursor.fetchall()]
+        return [coerce_decimals(dict(row)) for row in cursor.fetchall()]
