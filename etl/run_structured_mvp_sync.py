@@ -151,7 +151,7 @@ def main() -> None:
         print(f"   노드 건수: {node_counts}")
         print(f"   관계 건수: {rel_counts}")
 
-        parameters_path = ROOT_DIR / "queries" / "reference" / "query_parameters.json"
+        parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
         entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
         failures = verify_fixture_entities(driver, entities)
         failures += verify_work_order_17747_fixture(driver)

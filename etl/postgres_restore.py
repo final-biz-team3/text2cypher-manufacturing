@@ -219,7 +219,7 @@ def main() -> None:
         run_fixture_checks,
     )
 
-    parameters_path = ROOT_DIR / "queries" / "reference" / "query_parameters.json"
+    parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
 
     conn = psycopg2.connect(
         host=host, port=port, dbname=db, user=user, password=password

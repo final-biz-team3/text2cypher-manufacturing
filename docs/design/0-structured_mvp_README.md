@@ -13,7 +13,7 @@ PostgreSQL AdventureWorks 전체 데이터 중 Q12~Q20의 관계 탐색에 필�
 | `docs/design/1-structured_mvp_source_mapping.md` | PostgreSQL 테이블·컬럼 매핑 |
 | `docs/design/2-structured_mvp_loading_rules.md` | 적재 순서·멱등성·prune·검증 규칙 |
 | `queries/query_contracts.json` | Q01~Q20 결과 계약과 실제 fixture |
-| `queries/reference/query_parameters.json` | 검증용 실제 파라미터 |
+| `queries/query_parameters.json` | 검증용 실제 파라미터 |
 
 모든 경로는 저장소 루트를 기준으로 한다.
 

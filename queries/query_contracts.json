@@ -6,7 +6,7 @@
   "scope": "PostgreSQL 전체 원본과 Neo4j 관계 그래프를 결합한 제조 데이터 탐색 MVP",
   "referenceArtifacts": {
     "querySet": "docs/design/manufacturing-risk-query-set.md",
-    "parameters": "queries/reference/query_parameters.json",
+    "parameters": "queries/query_parameters.json",
     "parameterEvidence": "reports/query_parameter_selection_report.md",
     "dataStructure": "docs/design/postgresql-neo4j-data-structure-mentor.md",
     "neo4jBlueprint": "docs/design/manufacturing-risk-structured-mvp-blueprint.md"

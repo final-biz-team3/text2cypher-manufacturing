@@ -3,7 +3,7 @@
 두 단계로 검증한다.
 1. 테이블 단위: postgres_restore.parse_toc_table_names()가 덤프 TOC에서 뽑은
    "데이터가 있는 테이블 목록"과 실제 DB의 테이블 목록을 비교한다(find_missing_tables).
-2. 값 단위: queries/reference/query_parameters.json의 entities에 있는 정확한
+2. 값 단위: queries/query_parameters.json의 entities에 있는 정확한
    정답값(제품명, 재고 수량, 작업지시 폐기수량 등)이 실제 DB 조회 결과와
    일치하는지 확인한다(build_fixture_checks/run_fixture_checks). 이 값들은
    원본 스냅샷에서 실제로 조회해 확정된 것이므로, 여기서 어긋나면 복원
@@ -215,7 +215,7 @@ def main() -> None:
     print(f"대상: {host}:{port}/{db}")
 
     dump_path = ROOT_DIR / "etl" / "data" / "AdventureWorksPG.gz"
-    parameters_path = ROOT_DIR / "queries" / "reference" / "query_parameters.json"
+    parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
 
     via_docker = shutil.which("pg_restore") is None
     if via_docker:
