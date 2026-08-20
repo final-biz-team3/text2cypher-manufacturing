@@ -33,6 +33,9 @@ namespace_packages = true
 explicit_package_bases = true
 
 [tool.pytest.ini_options]
-addopts = "--verbose"
+addopts = "--verbose -m \"not integration\""
 pythonpath = ["backend"]
 testpaths = ["backend/tests"]
+markers = [
+    "integration: 실제 OpenAI API/PostgreSQL 연결이 필요한 테스트",
+]
