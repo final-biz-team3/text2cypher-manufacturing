@@ -13,6 +13,16 @@ from typing import Any
 from dotenv import load_dotenv
 from neo4j import Driver, GraphDatabase
 
+# quantityPerAssembly가 PostgreSQL Decimal -> float 변환 후 Cypher에서 다시 곱셈을
+# 거치므로, 수학적으로 정확히 80이어도 부동소수점 표현 오차로 79.99999999999997
+# 같은 값이 나올 수 있다 - 정확 비교(!=)가 아니라 허용 오차 비교를 쓴다.
+REQUIRED_QTY_EPSILON = 1e-6
+
+
+def quantities_match(actual: float, expected: float) -> bool:
+    """부동소수점 오차를 허용하고 두 수량이 사실상 같은지 비교한다."""
+    return abs(actual - expected) <= REQUIRED_QTY_EPSILON
+
 
 def find_dangling_relationship_rows(
     relationship_rows: list[dict[str, Any]],
@@ -216,7 +226,7 @@ def verify_bom_680_to_492_quantity(
         record = result.single()
         if record is None or record["pathCount"] == 0:
             return ["Product 680 -> 492 유효 BOM 경로가 없음"]
-        if record["requiredQty"] != 80:
+        if not quantities_match(record["requiredQty"], 80):
             return [
                 f"Product 680 -> 492 필요수량(전체 경로 합산) 80 기대, "
                 f"실제 {record['requiredQty']} (경로 {record['pathCount']}개)"
