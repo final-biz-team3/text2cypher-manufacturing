@@ -1,0 +1,323 @@
+# neo4jTarget은 원본 전달 시점(2026-08-19, Community 기준) 값이 아니라 실제 운영 환경에
+# 맞춰 갱신했다(PR #16 리뷰 대응, 2026-08-20) - docker-compose.yml/원격 공유 서버 모두
+# neo4j:5.26.29-enterprise(패치 버전 고정, Gold 결과·ETL 재현성 확보)로 운영 중이다.
+# schema/structured_mvp_constraints.cypher의 DDL 자체는 Community 호환 문법을 그대로
+# 쓴다(Enterprise 전용 NODE KEY/RELATIONSHIP KEY 등은 아직 도입하지 않음) - edition은
+# "실행 중인 서버가 어떤 에디션인가"를 뜻하고, DDL 문법 선택과는 별개다.
+schemaVersion: "1.0.0"
+name: manufacturing-risk-structured-mvp
+status: implementation-ready
+neo4jTarget:
+  version: "5.26.29-enterprise"
+  edition: enterprise
+
+ownership:
+  authoritativeDatabase: postgresql
+  graphRole: relationship-navigation-read-model
+  numericTruth:
+    - inventory
+    - price
+    - cost
+    - salesQuantity
+    - purchaseQuantity
+    - scrappedQuantity
+
+queryCoverage:
+  graphOnly: [RQ12, RQ13, RQ14, RQ15, RQ16, RQ17]
+  hybrid: [RQ18, RQ19, RQ20]
+  excludedSqlOnly: [RQ01, RQ02, RQ03, RQ04, RQ05, RQ06, RQ07, RQ08, RQ09, RQ10, RQ11]
+
+commonRules:
+  bomAsOfDate: "2014-08-08"
+  bomMaxDepth: 4
+  businessKeyJoin: true
+  useNeo4jInternalId: false
+  technicalProperties:
+    syncRunId: STRING
+    sourceModifiedAt: LOCAL_DATETIME
+
+nodes:
+  Product:
+    group: business
+    source:
+      schema: production
+      table: product
+    uniqueKey: productId
+    constraintName: product_id
+    properties:
+      productId: {type: INTEGER, required: true, sourceColumn: productid}
+      name: {type: STRING, required: true, sourceColumn: name}
+      sellableFinishedGood: {type: BOOLEAN, required: true, sourceColumn: finishedgoodsflag}
+      syncRunId: {type: STRING, required: true, technical: true}
+      sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
+
+  Supplier:
+    group: business
+    source:
+      schema: purchasing
+      table: vendor
+    uniqueKey: supplierId
+    constraintName: supplier_id
+    properties:
+      supplierId: {type: INTEGER, required: true, sourceColumn: businessentityid}
+      name: {type: STRING, required: true, sourceColumn: name}
+      active: {type: BOOLEAN, required: true, sourceColumn: activeflag}
+      syncRunId: {type: STRING, required: true, technical: true}
+      sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
+
+  WorkOrder:
+    group: business
+    source:
+      schema: production
+      table: workorder
+    uniqueKey: workOrderId
+    constraintName: work_order_id
+    properties:
+      workOrderId: {type: INTEGER, required: true, sourceColumn: workorderid}
+      syncRunId: {type: STRING, required: true, technical: true}
+      sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
+
+  RoutingOperation:
+    group: business
+    source:
+      schema: production
+      table: workorderrouting
+    uniqueKey: routingOperationKey
+    constraintName: routing_operation_key
+    keyComposition: "workorderid + '-' + productid + '-' + operationsequence"
+    keyStability: "snapshot-safe; re-evaluate for mutable operation sequences"
+    properties:
+      routingOperationKey: {type: STRING, required: true, synthetic: true}
+      sequence: {type: INTEGER, required: true, sourceColumn: operationsequence}
+      syncRunId: {type: STRING, required: true, technical: true}
+      sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
+
+  Location:
+    group: business
+    source:
+      schema: production
+      table: location
+    uniqueKey: locationId
+    constraintName: location_id
+    properties:
+      locationId: {type: INTEGER, required: true, sourceColumn: locationid}
+      name: {type: STRING, required: true, sourceColumn: name}
+      syncRunId: {type: STRING, required: true, technical: true}
+      sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
+
+  ScrapReason:
+    group: business
+    source:
+      schema: production
+      table: scrapreason
+    uniqueKey: scrapReasonId
+    constraintName: scrap_reason_id
+    properties:
+      scrapReasonId: {type: INTEGER, required: true, sourceColumn: scrapreasonid}
+      name: {type: STRING, required: true, sourceColumn: name}
+      syncRunId: {type: STRING, required: true, technical: true}
+      sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
+
+  Term:
+    group: ontology
+    source: {type: seed-file, status: pending-seed-content}
+    uniqueKey: termId
+    constraintName: term_id
+    properties:
+      termId: {type: STRING, required: true}
+      text: {type: STRING, required: true}
+      normalizedText: {type: STRING, required: true}
+      language: {type: STRING, required: true, default: ko}
+      ontologyVersion: {type: STRING, required: true}
+
+  BusinessConcept:
+    group: ontology
+    source: {type: seed-file, status: pending-seed-content}
+    uniqueKey: conceptId
+    constraintName: business_concept_id
+    properties:
+      conceptId: {type: STRING, required: true}
+      nameKo: {type: STRING, required: true}
+      description: {type: STRING, required: true}
+      ontologyVersion: {type: STRING, required: true}
+
+  QuestionIntent:
+    group: ontology
+    source: {type: query-contract, path: queries/query_contracts.json}
+    uniqueKey: intentId
+    constraintName: question_intent_id
+    properties:
+      intentId: {type: STRING, required: true}
+      nameKo: {type: STRING, required: true}
+      route: {type: STRING, required: true, allowed: [SQL, GRAPH, HYBRID]}
+      confidenceThreshold: {type: FLOAT, required: true}
+      enabled: {type: BOOLEAN, required: true}
+
+  EntityType:
+    group: ontology
+    source: {type: seed-file, status: pending-seed-content}
+    uniqueKey: entityTypeId
+    constraintName: entity_type_id
+    properties:
+      entityTypeId: {type: STRING, required: true}
+      nameKo: {type: STRING, required: true}
+      neo4jLabel: {type: STRING, required: false}
+      sqlTable: {type: STRING, required: false}
+      businessKey: {type: STRING, required: true}
+
+  QueryTemplate:
+    group: ontology
+    source: {type: application-registry, status: gold-query-pending}
+    uniqueKey: templateId
+    constraintName: query_template_id
+    properties:
+      templateId: {type: STRING, required: true}
+      queryId: {type: STRING, required: true}
+      route: {type: STRING, required: true, allowed: [SQL, GRAPH, HYBRID]}
+      version: {type: STRING, required: true}
+      enabled: {type: BOOLEAN, required: true}
+
+relationships:
+  SUPPLIES:
+    group: business
+    from: Supplier
+    to: Product
+    source:
+      schema: purchasing
+      table: productvendor
+      joins:
+        - "productvendor.businessentityid = vendor.businessentityid"
+    mergeKey: supplyKey
+    keyComposition: "businessentityid + '-' + productid"
+    loadCondition: "vendor.activeflag = true"
+    properties:
+      supplyKey: {type: STRING, required: true, synthetic: true}
+      syncRunId: {type: STRING, required: true, technical: true}
+
+  REQUIRES_COMPONENT:
+    group: business
+    from: Product
+    to: Product
+    directionMeaning: "assembly -> component"
+    source:
+      schema: production
+      table: billofmaterials
+    mergeKey: bomId
+    loadCondition: "load all rows; filter validity at query time"
+    properties:
+      bomId: {type: INTEGER, required: true, sourceColumn: billofmaterialsid}
+      quantityPerAssembly: {type: FLOAT, required: true, sourceColumn: perassemblyqty}
+      startDate: {type: DATE, required: true, sourceColumn: startdate}
+      endDate: {type: DATE, required: false, sourceColumn: enddate}
+      syncRunId: {type: STRING, required: true, technical: true}
+
+  PRODUCES:
+    group: business
+    from: WorkOrder
+    to: Product
+    source: {schema: production, table: workorder}
+    mergeKey: endpoints
+    properties:
+      syncRunId: {type: STRING, required: true, technical: true}
+
+  HAS_OPERATION:
+    group: business
+    from: WorkOrder
+    to: RoutingOperation
+    source: {schema: production, table: workorderrouting}
+    mergeKey: endpoints
+    properties:
+      syncRunId: {type: STRING, required: true, technical: true}
+
+  PERFORMED_AT:
+    group: business
+    from: RoutingOperation
+    to: Location
+    source: {schema: production, table: workorderrouting}
+    mergeKey: endpoints
+    properties:
+      syncRunId: {type: STRING, required: true, technical: true}
+
+  SCRAPPED_DUE_TO:
+    group: business
+    from: WorkOrder
+    to: ScrapReason
+    source: {schema: production, table: workorder}
+    mergeKey: endpoints
+    loadCondition: "scrappedqty > 0 AND scrapreasonid IS NOT NULL"
+    properties:
+      syncRunId: {type: STRING, required: true, technical: true}
+
+  MEANS:
+    group: ontology
+    from: Term
+    to: BusinessConcept
+    mergeKey: endpoints
+    properties: {}
+
+  REQUIRES_CONCEPT:
+    group: ontology
+    from: QuestionIntent
+    to: BusinessConcept
+    mergeKey: endpoints
+    properties:
+      required: {type: BOOLEAN, required: true}
+
+  USES_ENTITY_TYPE:
+    group: ontology
+    from: QuestionIntent
+    to: EntityType
+    mergeKey: endpoints
+    properties:
+      parameterName: {type: STRING, required: true}
+      required: {type: BOOLEAN, required: true}
+
+  EXECUTES_TEMPLATE:
+    group: ontology
+    from: QuestionIntent
+    to: QueryTemplate
+    mergeKey: endpoints
+    properties:
+      executionOrder: {type: INTEGER, required: true}
+
+  RESOLVED_BY:
+    group: ontology
+    from: BusinessConcept
+    to: QueryTemplate
+    mergeKey: endpoints
+    properties: {}
+
+  CAN_COMBINE_WITH:
+    group: ontology
+    from: BusinessConcept
+    to: BusinessConcept
+    mergeKey: endpoints
+    properties: {}
+
+indexes:
+  - name: product_name
+    type: RANGE
+    label: Product
+    properties: [name]
+    supportsQueries: [RQ12, RQ13, RQ16, RQ17, RQ19]
+  - name: supplier_name
+    type: RANGE
+    label: Supplier
+    properties: [name]
+    supportsQueries: [RQ14, RQ18]
+  - name: term_normalized_text
+    type: RANGE
+    label: Term
+    properties: [normalizedText]
+    supportsQueries: [RQ01, RQ02, RQ03, RQ04, RQ05, RQ06, RQ07, RQ08, RQ09, RQ10, RQ11, RQ12, RQ13, RQ14, RQ15, RQ16, RQ17, RQ18, RQ19, RQ20]
+
+excludedIndexes:
+  - target: Supplier.active
+    reason: "low-cardinality flag and Supplier.name is the query start"
+  - target: relationship-properties
+    reason: "no current query starts from a relationship property"
+  - target: fulltext
+    reason: "typo correction is not in the current MVP"
+  - target: vector
+    reason: "document and embedding search are excluded from the current MVP"
+

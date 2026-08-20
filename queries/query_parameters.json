@@ -1,0 +1,57 @@
+{
+  "version": "2.0.0",
+  "confirmedAt": "2026-08-19",
+  "sourceSnapshot": "C:/Users/user/Downloads/AdventureWorksPG/AdventureWorksPG",
+  "sourceDatabase": {
+    "format": "PostgreSQL custom dump",
+    "dumpedFrom": "PostgreSQL 14.4",
+    "validationRuntime": "PostgreSQL 16.4 Docker",
+    "database": "adventureworks"
+  },
+  "selectionPolicy": [
+    "원본 PostgreSQL에서 정확히 일치하는 이름과 business key를 사용한다.",
+    "단순 질문은 1건 또는 의미 있는 여러 행을 반환하는 값을 선택한다.",
+    "그래프 질문은 기준일에 유효하고 최대 깊이 4 안에서 비어 있지 않은 경로를 선택한다.",
+    "통합 질문은 Neo4j 대상 business key와 PostgreSQL 수치가 결합되는 값을 선택한다.",
+    "BOM 기준일은 현재 날짜가 아니라 고정된 2014-08-08을 사용한다."
+  ],
+  "shared": {
+    "bomAsOfDate": "2014-08-08",
+    "maxDepth": 4,
+    "productionQty": 10
+  },
+  "entities": {
+    "pricedProduct": {"productId": 956, "productName": "Touring-1000 Yellow, 54"},
+    "multiLocationProduct": {"productId": 747, "productName": "HL Mountain Frame - Black, 38", "inventoryRowCount": 6},
+    "riskComponent": {"productId": 492, "productName": "Paint - Black", "safetyStockLevel": 60, "actualStock": 47, "shortageQty": 13},
+    "finishedProduct": {"productId": 680, "productName": "HL Road Frame - Black, 58"},
+    "deepComponent": {"productId": 486, "productName": "Metal Sheet 5"},
+    "comparisonProductA": {"productId": 765, "productName": "Road-650 Black, 58"},
+    "comparisonProductB": {"productId": 775, "productName": "Mountain-100 Black, 38"},
+    "supplier": {"supplierId": 1494, "supplierName": "Allenson Cycles", "suppliedProductId": 530, "suppliedProductName": "Seat Post", "componentStock": 780},
+    "workOrder": {"workOrderId": 17747, "productId": 802, "productName": "LL Fork", "scrappedQty": 54, "scrapReasonId": 8, "operationCount": 2},
+    "category": {"categoryId": 2, "categoryName": "Components", "productCount": 134}
+  },
+  "queries": {
+    "RQ01": {"productName": "Touring-1000 Yellow, 54"},
+    "RQ02": {"productName": "HL Mountain Frame - Black, 38"},
+    "RQ03": {},
+    "RQ04": {},
+    "RQ05": {},
+    "RQ06": {"productName": "Touring-1000 Yellow, 54"},
+    "RQ07": {"categoryName": "Components"},
+    "RQ08": {"productName": "Paint - Black"},
+    "RQ09": {},
+    "RQ10": {},
+    "RQ11": {},
+    "RQ12": {"componentName": "Paint - Black", "bomAsOfDate": "2014-08-08", "maxDepth": 4},
+    "RQ13": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4},
+    "RQ14": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4},
+    "RQ15": {"workOrderId": 17747},
+    "RQ16": {"finishedProductName": "HL Road Frame - Black, 58", "componentName": "Metal Sheet 5", "bomAsOfDate": "2014-08-08", "maxDepth": 4},
+    "RQ17": {"finishedProductNameA": "Road-650 Black, 58", "finishedProductNameB": "Mountain-100 Black, 38", "bomAsOfDate": "2014-08-08", "maxDepth": 4},
+    "RQ18": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4},
+    "RQ19": {"finishedProductName": "HL Road Frame - Black, 58", "productionQty": 10, "bomAsOfDate": "2014-08-08", "maxDepth": 4},
+    "RQ20": {"workOrderId": 17747}
+  }
+}

@@ -1,6 +1,12 @@
 services:
   neo4j:
-    image: neo4j:5-enterprise
+    # 패치 버전 고정(PR #16 리뷰 재대응, 2026-08-20) - "latest 추적"이었던 이전 결정을
+    # 뒤집었다: 이 프로젝트는 Gold 결과·ETL 재현성이 중요해서 팀원마다 pull 시점에 따라
+    # 실제 버전이 달라지는 걸 허용할 수 없다는 지적을 받아들였다. 5.26은 Neo4j 5.x의
+    # 마지막 릴리스이자 LTS(2028-06까지 지원)라 고정해도 기능 손해가 없다. 원격 공유
+    # 서버도 같은 태그로 맞춘다.
+    image: neo4j:5.26.29-enterprise
+    container_name: neo4j
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -10,20 +16,64 @@ services:
     volumes:
       - neo4j_data:/data
 
+  postgres:
+    # 패치 버전 고정(PR #16 리뷰 재대응, 2026-08-20) - Neo4j와 같은 재현성 이유.
+    # PostgreSQL은 메이저 버전마다 출시 후 5년 지원(16은 2029-11까지)이고, 마이너
+    # 버전(16.x)은 기능 추가 없이 보안·버그 수정만 담는다. 팀 원격 공유 서버가
+    # 실제로 16.14를 쓰고 있어(로컬에 새로 pull하면 16.15가 잡힘) 재현성 취지에
+    # 맞춰 이미 검증된 원격 버전에 맞춘다.
+    image: postgres:16.14
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-adventureworks}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-adventureworks}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    ports:
+      - "52001:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    depends_on:
+      - postgres
+
   backend:
     build: ./backend
+    container_name: backend
     ports:
       - "8000:8000"
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: ${NEO4J_USER}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-adventureworks}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       APP_ENV: ${APP_ENV:-development}
     depends_on:
-      - neo4j
+      neo4j:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
       - ./backend:/app
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
   neo4j_data:
+  postgres_data:
