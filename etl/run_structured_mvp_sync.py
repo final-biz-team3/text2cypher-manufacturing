@@ -102,6 +102,10 @@ def main() -> None:
         os.environ["NEO4J_URI"],
         auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
     )
+    try:
+        driver.verify_connectivity()
+    except Exception as exc:
+        sys.exit(f"Neo4j 접속 실패 ({os.environ['NEO4J_URI']}): {exc}")
 
     sync_run_id = generate_sync_run_id()
     print(f"syncRunId = {sync_run_id}")

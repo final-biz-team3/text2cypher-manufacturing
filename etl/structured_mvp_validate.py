@@ -1,8 +1,17 @@
-"""구조화 MVP 적재의 사전(참조 무결성)·사후(건수/중복/fixture) 검증 함수."""
+"""구조화 MVP 적재의 사전(참조 무결성)·사후(건수/중복/fixture) 검증 함수.
 
+독립 실행하면(python etl/structured_mvp_validate.py) 재적재 없이 현재
+Neo4j 상태만 검증한다 - postgres_restore_validate.py가 복원 없이
+PostgreSQL만 검증하는 것과 대칭이다.
+"""
+
+import json
+import os
+import sys
 from typing import Any
 
-from neo4j import Driver
+from dotenv import load_dotenv
+from neo4j import Driver, GraphDatabase
 
 
 def find_dangling_relationship_rows(
@@ -138,3 +147,58 @@ def verify_bom_680_to_492_quantity(driver: Driver) -> list[str]:
                 f"Product 680 -> 492 필요수량 80 기대, 실제 {record['requiredQty']}"
             ]
     return []
+
+
+def main() -> None:
+    """재적재 없이 현재 Neo4j 상태만 검증한다.
+
+    사용법(리포 루트 기준): python etl/structured_mvp_validate.py
+    """
+    from postgres_restore import ROOT_DIR
+    from run_structured_mvp_sync import NEO4J_REQUIRED_ENV_VARS, RELATIONSHIP_TYPES
+    from structured_mvp_load import BUSINESS_LABELS
+
+    load_dotenv(ROOT_DIR / ".env")
+
+    missing_vars = [
+        name for name in NEO4J_REQUIRED_ENV_VARS if not os.environ.get(name)
+    ]
+    if missing_vars:
+        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_vars)}")
+
+    print(f"대상: {os.environ['NEO4J_URI']}")
+
+    driver = GraphDatabase.driver(
+        os.environ["NEO4J_URI"],
+        auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
+    )
+    try:
+        driver.verify_connectivity()
+    except Exception as exc:
+        sys.exit(f"Neo4j 접속 실패 ({os.environ['NEO4J_URI']}): {exc}")
+
+    try:
+        print("1) 건수 확인")
+        node_counts = count_nodes_by_label(driver, BUSINESS_LABELS)
+        rel_counts = count_relationships_by_type(driver, RELATIONSHIP_TYPES)
+        print(f"   노드 건수: {node_counts}")
+        print(f"   관계 건수: {rel_counts}")
+
+        print("2) fixture 검증 (query_parameters.json 기준)")
+        parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
+        entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+        failures = verify_fixture_entities(driver, entities)
+        failures += verify_work_order_17747_fixture(driver)
+        failures += verify_bom_680_to_492_quantity(driver)
+        if failures:
+            print(f"   fixture 검증 실패 {len(failures)}건:")
+            for failure in failures:
+                print(f"     - {failure}")
+            sys.exit(1)
+        print("   fixture 검증 전부 통과")
+    finally:
+        driver.close()
+
+
+if __name__ == "__main__":
+    main()
