@@ -4,7 +4,7 @@
 
 폐기 (2026-08-20) — 구조화 MVP 전환으로 대체됨
 
-> **2026-08-20 정정**: 이 문서가 구성한 `etl/export_to_csv.py`/`etl/load_to_neo4j.py`/`etl/run_monthly.py`/`etl/reset_month.py` 등 CSV 기반 배치 적재 파이프라인은 삭제됐다. AdventureWorks(PostgreSQL)를 PostgreSQL 드라이버로 직접 읽어 Neo4j에 적재하는 새 파이프라인(`etl/restore_postgres.py`, `etl/structured_mvp_*.py` 예정)으로 대체됐다. 계획: `docs/superpowers/plans/2026-08-19-structured-mvp-data-loading.md`. 이 문서는 과거 결정 기록으로만 남긴다.
+> **2026-08-20 정정**: 이 문서가 구성한 `etl/export_to_csv.py`/`etl/load_to_neo4j.py`/`etl/run_monthly.py`/`etl/reset_month.py` 등 CSV 기반 배치 적재 파이프라인은 삭제됐다. AdventureWorks(PostgreSQL)를 PostgreSQL 드라이버로 직접 읽어 Neo4j에 적재하는 새 파이프라인(`etl/postgres_restore.py`, `etl/structured_mvp_*.py` 예정)으로 대체됐다. 계획: `docs/superpowers/plans/2026-08-19-structured-mvp-data-loading.md`. 이 문서는 과거 결정 기록으로만 남긴다.
 
 ## 한 줄 요약
 

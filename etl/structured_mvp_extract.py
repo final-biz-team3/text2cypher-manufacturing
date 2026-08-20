@@ -30,7 +30,7 @@ def normalize_row(
 ) -> dict[str, Any]:
     """date/datetime 컬럼을 ISO-8601 문자열로 바꾼다. NULL은 그대로 둔다.
 
-    docs/design/3-structured_mvp_loading_rules.md의 MERGE 예시가 date(row.x)/localdatetime(row.x)로
+    docs/design/2-structured_mvp_loading_rules.md의 MERGE 예시가 date(row.x)/localdatetime(row.x)로
     문자열을 기대하므로, psycopg2가 돌려주는 datetime.date/datetime 객체를 여기서
     미리 문자열로 바꿔 그 Cypher를 그대로 재사용할 수 있게 한다.
     """

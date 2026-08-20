@@ -1,6 +1,6 @@
 """구조화 MVP 전체 동기화 진입점.
 
-실행 순서(docs/design/3-structured_mvp_loading_rules.md 2절 그대로):
+실행 순서(docs/design/2-structured_mvp_loading_rules.md 2절 그대로):
 제약조건 적용 -> syncRunId 생성 -> 노드 6종 적재 -> 관계 6종 적재
 (적재 전 참조 무결성 검사 포함) -> 사후 검증 -> prune.
 
@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 
 import psycopg2
 from neo4j import GraphDatabase
-from restore_postgres import REQUIRED_ENV_VARS, ROOT_DIR, target_database_exists
+from postgres_restore import REQUIRED_ENV_VARS, ROOT_DIR, target_database_exists
 from structured_mvp_extract import extract_rows, normalize_row
 from structured_mvp_load import (
     BUSINESS_LABELS,

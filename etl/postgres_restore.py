@@ -9,11 +9,11 @@ PG_RESTORE_DOCKER_CONTAINER 환경변수로 컨테이너 이름을 바꿀 수 �
 있으므로, 컨테이너를 거치더라도 실제 복원 대상은 로컬이든 원격이든 상관없다.
 
 복원 전 `--list`로 덤프의 목차(TOC)를 먼저 읽어 몇 개 테이블에 데이터가
-있는지 확인하고(사전 검증), 복원 후에는 validate_postgres_restore.py의
+있는지 확인하고(사전 검증), 복원 후에는 postgres_restore_validate.py의
 검증 함수를 그대로 불러와 테이블·픽스처 값 사후 검증까지 이어서 실행한다.
 검증 로직 자체는 psycopg2가 필요해 이 파일과 책임을 분리해 두고, 이 파일의
 main()에서만 두 단계를 이어붙인다 - 복원 없이 이미 있는 DB만 검증하고
-싶을 때는 validate_postgres_restore.py를 그대로 독립 실행하면 된다.
+싶을 때는 postgres_restore_validate.py를 그대로 독립 실행하면 된다.
 """
 
 import argparse
@@ -86,7 +86,7 @@ def parse_toc_table_names(toc_text: str) -> set[str]:
     """`pg_restore --list` 출력에서 실제 데이터가 있는 테이블 이름을 뽑는다.
 
     반환값은 "schema.table" 형태의 집합이며, 복원 후 실제 DB에 같은 테이블이
-    존재하는지 사후 검증(validate_postgres_restore.py)에서 대조하는 기준이 된다.
+    존재하는지 사후 검증(postgres_restore_validate.py)에서 대조하는 기준이 된다.
     """
     tables: set[str] = set()
     for line in toc_text.splitlines():
@@ -213,7 +213,7 @@ def main() -> None:
     print(f"   복원 완료 (기대 테이블 수: {len(expected_tables)})")
 
     print("3) 사후 검증 (테이블 존재 + 픽스처 값 대조)")
-    from validate_postgres_restore import (
+    from postgres_restore_validate import (
         build_fixture_checks,
         find_missing_tables,
         run_fixture_checks,

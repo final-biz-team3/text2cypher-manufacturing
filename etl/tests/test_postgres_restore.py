@@ -6,7 +6,7 @@
 
 from pathlib import Path
 
-from restore_postgres import (
+from postgres_restore import (
     build_pg_restore_command,
     build_pg_restore_list_command,
     parse_toc_table_names,

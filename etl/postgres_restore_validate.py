@@ -1,7 +1,7 @@
 """복원된 PostgreSQL에 유실 없이 데이터가 들어왔는지 사후 검증한다.
 
 두 단계로 검증한다.
-1. 테이블 단위: restore_postgres.parse_toc_table_names()가 덤프 TOC에서 뽑은
+1. 테이블 단위: postgres_restore.parse_toc_table_names()가 덤프 TOC에서 뽑은
    "데이터가 있는 테이블 목록"과 실제 DB의 테이블 목록을 비교한다(find_missing_tables).
 2. 값 단위: queries/reference/query_parameters.json의 entities에 있는 정확한
    정답값(제품명, 재고 수량, 작업지시 폐기수량 등)이 실제 DB 조회 결과와
@@ -188,14 +188,14 @@ def run_fixture_checks(conn: _Connection, checks: list[FixtureCheck]) -> list[st
 
 
 def main() -> None:
-    """restore_postgres.py로 복원한 DB에 대해 테이블·픽스처 사후 검증을 실행한다.
+    """postgres_restore.py로 복원한 DB에 대해 테이블·픽스처 사후 검증을 실행한다.
 
-    사용법(리포 루트 기준): python etl/validate_postgres_restore.py
+    사용법(리포 루트 기준): python etl/postgres_restore_validate.py
     """
     load_dotenv(ROOT_DIR / ".env")
 
     import psycopg2
-    from restore_postgres import (
+    from postgres_restore import (
         REQUIRED_ENV_VARS,
         build_pg_restore_list_command,
         copy_dump_into_container,

@@ -5,7 +5,7 @@ find_missing_tables/run_fixture_checks는 DB 커서를 쓰지만, 이 테스트�
 비교 로직만 검증한다. 진짜 DB로 하는 검증은 로컬 docker 환경에서 진행한다.
 """
 
-from validate_postgres_restore import (
+from postgres_restore_validate import (
     build_fixture_checks,
     find_missing_tables,
     run_fixture_checks,
