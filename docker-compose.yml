@@ -1,5 +1,8 @@
 services:
   neo4j:
+    # 패치 버전을 고정하지 않고 5.x Enterprise 최신을 그대로 추적한다(의도적 결정,
+    # PR #16 리뷰 대응 2026-08-20). 원격 공유 서버도 같은 정책으로 운영 중이며,
+    # 현재 확인된 실제 버전은 5.26.29(docs/adr/0007-graph-schema-constraints.md 참고).
     image: neo4j:5-enterprise
     container_name: neo4j
     ports:

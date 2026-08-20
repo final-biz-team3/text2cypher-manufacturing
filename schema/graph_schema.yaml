@@ -16,8 +16,11 @@
 #
 # 제약조건은 이 yaml에서 자동 생성하지 않는다(Enterprise 전용 문법을 쓰는
 # etl/graph_constraints.py는 이번 스키마엔 적용하지 않기로 결정 — 대신
-# schema/structured_mvp_constraints.cypher를 그대로 실행한다. Community
-# 호환 확인 완료, md/2026-08-19-structured-mvp-data-loading.md 참고).
+# schema/structured_mvp_constraints.cypher를 그대로 실행한다. 이 DDL은 Community
+# 호환 문법이지만(md/2026-08-19-structured-mvp-data-loading.md 참고), 실제 실행
+# 환경(docker-compose.yml, 원격 공유 서버)은 neo4j:5-enterprise다(2026-08-20
+# 결정: 평가판 Enterprise 유지, PR #16 리뷰 대응) — DDL 문법 선택과 실행 환경
+# 에디션은 별개다.
 # =============================================================================
 
 meta:

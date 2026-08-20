@@ -1,5 +1,13 @@
 # Neo4j 정형 MVP 물리 설계 검증 보고서
 
+> **2026-08-20 정정**: 아래 검증은 원 설계자가 `neo4j:5.26.12-community`에서 수행한
+> 기록이며 그대로 보존한다. 실제 우리 팀의 운영 환경(로컬 docker-compose, 원격 공유
+> 서버)은 이후 `neo4j:5-enterprise`(평가판, 패치 미고정)로 전환됐다 - 근거:
+> `docs/adr/0007-graph-schema-constraints.md`. 아래 "UNIQUE 제약조건 11개" 등 DDL
+> 자체는 여전히 Community 호환 문법 그대로 쓰고 있어(`schema/structured_mvp_constraints.cypher`)
+> 이 문서의 검증 결과 자체는 유효하지만, "Community" 표기를 현재 실행 환경으로
+> 오해하지 않도록 남긴다.
+
 ## 최종 판정
 
 **조건부 구현 승인**으로 판단한다. 업무 그래프 6개 노드·6개 관계와 경량 온톨로지 5개 노드·6개 관계가 Q12~Q20 계약을 지원하며, 제약조건·인덱스 DDL은 실제 Neo4j 5.26.12 Community에서 실행 및 재실행에 성공했다.

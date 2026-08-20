@@ -1,5 +1,10 @@
-// Neo4j 5.26 Community compatible DDL
+// DDL syntax is Community-compatible (UNIQUE only, no NODE KEY/RELATIONSHIP KEY).
 // UNIQUE constraints also create backing range indexes.
+// Actual runtime environment is neo4j:5-enterprise (evaluation license, latest
+// patch tracked, not pinned) - docker-compose.yml and the remote shared server
+// both run Enterprise (decided 2026-08-20, PR #16 review). DDL syntax choice
+// and runtime edition are independent: this file stays Community-compatible
+// syntax on purpose, it is not evidence that Community edition is targeted.
 //
 // 원본 neo4j_structured_mvp_design/structured_mvp_constraints.cypher는 제약조건
 // 11개(업무 6 + 온톨로지 5)와 인덱스 3개(product_name/supplier_name/term_normalized_text)를
