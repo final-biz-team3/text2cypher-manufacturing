@@ -10,8 +10,8 @@ PostgreSQL AdventureWorks 전체 데이터 중 Q12~Q20의 관계 탐색에 필�
 |---|---|
 | `schema/structured_mvp_graph_schema.yaml` | 노드·관계·속성·인덱스의 기계 판독 기준 |
 | `schema/structured_mvp_constraints.cypher` | Neo4j 제약조건·인덱스 실행 DDL |
-| `docs/design/structured_mvp_source_mapping.md` | PostgreSQL 테이블·컬럼 매핑 |
-| `docs/design/structured_mvp_loading_rules.md` | 적재 순서·멱등성·prune·검증 규칙 |
+| `docs/design/2-structured_mvp_source_mapping.md` | PostgreSQL 테이블·컬럼 매핑 |
+| `docs/design/3-structured_mvp_loading_rules.md` | 적재 순서·멱등성·prune·검증 규칙 |
 | `queries/query_contracts.json` | Q01~Q20 결과 계약과 실제 fixture |
 | `queries/reference/query_parameters.json` | 검증용 실제 파라미터 |
 
