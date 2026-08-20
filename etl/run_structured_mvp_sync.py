@@ -132,6 +132,11 @@ def main() -> None:
                 normalize_row(r, datetime_columns=spec.datetime_columns)
                 for r in raw_rows
             ]
+            if not rows:
+                sys.exit(
+                    f"{spec.label} 추출 결과가 0건입니다 - Postgres 연결/쿼리 "
+                    "문제일 수 있어 적재를 중단합니다."
+                )
             load_rows(driver, spec, rows, sync_run_id)
             node_id_sets[spec.label] = {row[spec.unique_key] for row in rows}
             expected_node_counts[spec.label] = len(rows)
@@ -145,6 +150,11 @@ def main() -> None:
             ]
             raw_rows = extract_rows(pg_conn, spec.extract_sql)
             rows = [normalize_row(r, date_columns=spec.date_columns) for r in raw_rows]
+            if not rows:
+                sys.exit(
+                    f"{spec.rel_type} 추출 결과가 0건입니다 - Postgres 연결/쿼리 "
+                    "문제일 수 있어 적재를 중단합니다."
+                )
 
             dangling = find_dangling_relationship_rows(
                 rows,
