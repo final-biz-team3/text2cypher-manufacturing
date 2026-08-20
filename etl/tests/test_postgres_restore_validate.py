@@ -65,8 +65,7 @@ class FakeCursor:
         key = (" ".join(sql.split()), params)
         self._last_row = self._responses[key]
 
-    def fetchone(self) -> tuple:
-        assert self._last_row is not None
+    def fetchone(self) -> tuple | None:
         return self._last_row
 
     def fetchall(self) -> list[tuple]:
@@ -125,6 +124,27 @@ def test_run_fixture_checks_reports_mismatch() -> None:
     assert len(failures) == 1
     assert "pricedProduct" in failures[0]
     assert "Wrong Name" in failures[0]
+
+
+def test_run_fixture_checks_reports_missing_row_instead_of_crashing() -> None:
+    checks = build_fixture_checks(SAMPLE_ENTITIES)
+    responses = {
+        (" ".join(sql.split()), params): (
+            (expected,) if not isinstance(expected, tuple) else expected
+        )
+        for _, sql, params, expected in checks
+    }
+    # pricedProduct 행 자체가 유실된 상황을 흉내낸다(fetchone()이 None 반환)
+    price_check = next(c for c in checks if "pricedProduct" in c[0])
+    key = (" ".join(price_check[1].split()), price_check[2])
+    responses[key] = None
+    conn = FakeConnection(FakeCursor(responses))
+
+    failures = run_fixture_checks(conn, checks)
+
+    assert len(failures) == 1
+    assert "pricedProduct" in failures[0]
+    assert "유실" in failures[0]
 
 
 def test_find_missing_tables_returns_tables_absent_from_actual() -> None:

@@ -181,6 +181,9 @@ def run_fixture_checks(conn: _Connection, checks: list[FixtureCheck]) -> list[st
         for description, sql, params, expected in checks:
             cursor.execute(sql, params)
             row = cursor.fetchone()
+            if row is None:
+                failures.append(f"{description}: 기대 {expected!r}, 실제 없음(행 유실)")
+                continue
             actual = row[0] if len(row) == 1 else tuple(row)
             if actual != expected:
                 failures.append(f"{description}: 기대 {expected!r}, 실제 {actual!r}")
@@ -232,9 +235,23 @@ def main() -> None:
     if via_docker:
         list_command = wrap_for_docker_exec(list_command, container=container, env={})
     list_result = subprocess.run(
-        list_command, capture_output=True, text=True, check=False
+        list_command,
+        capture_output=True,
+        text=True,
+        check=False,
+        stdin=subprocess.DEVNULL,
     )
+    if list_result.returncode != 0:
+        sys.exit(
+            f"덤프 목차 조회 실패 (exit code {list_result.returncode}): "
+            f"{list_result.stderr.strip()}"
+        )
     expected_tables = parse_toc_table_names(list_result.stdout)
+    if not expected_tables:
+        sys.exit(
+            "덤프 목차에서 데이터가 있는 테이블을 하나도 찾지 못했습니다 - "
+            "덤프 파일이 손상됐거나 명령이 실패했을 수 있습니다."
+        )
     print(f"   덤프 기준 데이터 있는 테이블 {len(expected_tables)}개")
 
     conn = psycopg2.connect(
