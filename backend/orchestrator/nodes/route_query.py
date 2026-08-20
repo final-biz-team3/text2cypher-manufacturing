@@ -35,7 +35,7 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], d
     """OpenAI 클라이언트를 주입받은 route_query 노드 함수를 만든다."""
 
     def route_query(state: OrchestratorState) -> dict:
-        entity_json = json.dumps(state["entity"], ensure_ascii=False)
+        entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
         user_content = f"Q: {state['query']}\nentity: {entity_json}\nA:"
 
         response = openai_client.chat.completions.create(
