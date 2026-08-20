@@ -185,12 +185,16 @@ def verify_work_order_17747_fixture(
 def verify_bom_680_to_492_quantity(
     driver: Driver, sync_run_id: str | None = None
 ) -> list[str]:
-    """docs/etl/2-structured_mvp_loading_rules.md 7절: Product 680에서 492로 가는 필요수량이
-    10개 생산 기준 80이어야 한다(bomAsOfDate=2014-08-08 유효 경로만).
+    """docs/etl/2-structured_mvp_loading_rules.md 7절 + RQ19 계약: Product 680에서
+    492로 가는 필요수량이 10개 생산 기준 80이어야 한다(bomAsOfDate=2014-08-08
+    유효 경로만). RQ19 businessRules: "같은 componentId에 도달하는 모든 경로
+    필요수량을 합산한다" - 680->492 사이에 유효 경로가 여러 개면 그 전부를
+    더해야 한다(PR #16 리뷰 P2 항목, 예전엔 최댓값 경로 1개만 봤음). 실제
+    데이터로 확인한 결과 680->492는 유효 경로가 1개뿐이라 합산해도 기존 기댓값
+    80은 그대로다.
 
     sync_run_id를 주면 경로의 시작·끝 노드와 모든 관계가 이번 실행에서 적재된
-    것인지까지 확인한다(prune 전 사전 검증용). Q19 계약이 요구하는 "전체 경로 합산"
-    검증(P2 항목)은 이번 변경 범위 밖이라 기존 ORDER BY ... LIMIT 1 로직은 그대로 둔다.
+    것인지까지 확인한다(prune 전 사전 검증용).
     """
     with driver.session() as session:
         result = session.run("""
@@ -203,18 +207,19 @@ def verify_bom_680_to_492_quantity(
               AND ($syncRunId IS NULL OR (
                   start.syncRunId = $syncRunId AND end.syncRunId = $syncRunId
               ))
-            RETURN reduce(qty = 10.0, rel IN r | qty * rel.quantityPerAssembly) AS requiredQty
-            ORDER BY requiredQty DESC
-            LIMIT 1
+            RETURN sum(reduce(qty = 10.0, rel IN r | qty * rel.quantityPerAssembly))
+                       AS requiredQty,
+                   count(*) AS pathCount
             """,
             syncRunId=sync_run_id,
         )
         record = result.single()
-        if record is None:
+        if record is None or record["pathCount"] == 0:
             return ["Product 680 -> 492 유효 BOM 경로가 없음"]
         if record["requiredQty"] != 80:
             return [
-                f"Product 680 -> 492 필요수량 80 기대, 실제 {record['requiredQty']}"
+                f"Product 680 -> 492 필요수량(전체 경로 합산) 80 기대, "
+                f"실제 {record['requiredQty']} (경로 {record['pathCount']}개)"
             ]
     return []
 
