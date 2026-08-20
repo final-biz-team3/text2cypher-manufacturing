@@ -14,8 +14,6 @@ etl/venv/
 etl/__pycache__/
 etl/**/__pycache__/
 etl/data/*
-etl/import/*
-!etl/import/.gitkeep
 
 # ── Node / React (Vite) ──
 frontend/node_modules/
