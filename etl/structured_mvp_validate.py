@@ -1,8 +1,8 @@
-"""구조화 MVP 적재의 사전(참조 무결성)·사후(건수/중복/fixture) 검증 함수.
+"""구조화 MVP 적재의 쓰기 전(추출 결과)·쓰기 후(건수/fixture) 검증 함수.
 
 독립 실행하면(python etl/structured_mvp_validate.py) 재적재 없이 현재
-Neo4j 상태만 검증한다 - postgres_restore_validate.py가 복원 없이
-PostgreSQL만 검증하는 것과 대칭이다.
+기본 Neo4j 데이터베이스 상태만 검증한다 - postgres_restore_validate.py가
+복원 없이 PostgreSQL만 검증하는 것과 대칭이다.
 """
 
 import json
@@ -32,7 +32,7 @@ def find_dangling_relationship_rows(
     from_ids: set[Any],
     to_ids: set[Any],
 ) -> list[dict[str, Any]]:
-    """관계 행 중 시작/도착 노드가 아직 적재되지 않은(고아) 행을 찾는다.
+    """관계 행 중 시작/도착 노드가 아직 추출되지 않은(고아) 행을 찾는다.
 
     docs/etl/2-structured_mvp_loading_rules.md 5절: "하나라도 존재하면 관계를 조용히
     버리지 않고 적재를 실패시킨다. 실패한 business key 목록을 로그에 남긴다."
@@ -45,21 +45,54 @@ def find_dangling_relationship_rows(
     ]
 
 
+def find_duplicate_key_rows(
+    rows: list[dict[str, Any]], key_columns: tuple[str, ...]
+) -> list[tuple[Any, ...]]:
+    """key_columns 조합 기준으로 중복된 키 값을 찾는다(쓰기 전 검증용).
+
+    MERGE는 같은 키를 가진 여러 행을 하나로 뭉개버리기 때문에, 추출 단계에서
+    이미 중복이 있으면 "추출 건수 == 적재 건수" 같은 사후 비교로는 못 잡는다
+    (애초에 적재 건수 자체가 줄어들어서 기대치도 같이 줄어든 것처럼 보일 수
+    있음). 쓰기 전에 원본 추출 결과만 보고 중복 여부를 확정한다.
+    """
+    counts: dict[tuple[Any, ...], int] = {}
+    for row in rows:
+        key = tuple(row[col] for col in key_columns)
+        counts[key] = counts.get(key, 0) + 1
+    return [key for key, count in counts.items() if count > 1]
+
+
+def find_rows_with_null_key(
+    rows: list[dict[str, Any]], key_columns: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """key_columns 중 하나라도 None인 행을 찾는다(쓰기 전 검증용).
+
+    MERGE 키가 None이면 MERGE는 실패하지 않고 "속성이 없는" 값으로 조용히
+    매칭/생성해버릴 수 있어, 사전에 걸러야 한다.
+    """
+    return [row for row in rows if any(row[col] is None for col in key_columns)]
+
+
 def counts_are_equal(first: dict[str, int], second: dict[str, int]) -> bool:
     """두 스냅샷의 라벨/관계타입별 건수가 완전히 같은지 비교한다(멱등성 재검증용)."""
     return first == second
 
 
 def count_nodes_by_label(
-    driver: Driver, labels: list[str], sync_run_id: str | None = None
+    driver: Driver,
+    labels: list[str],
+    sync_run_id: str | None = None,
+    database: str | None = None,
 ) -> dict[str, int]:
     """라벨별 노드 건수를 센다.
 
-    sync_run_id를 주면 그 실행에서 적재된 노드만 센다(prune 전 사전 검증용).
-    안 주면(기본값) 전체를 센다(prune 후 사후 검증, 독립 실행용).
+    database를 주면(새 DB에 적재+검증 후 승격하는 흐름에서, 아직 기본
+    데이터베이스가 아닌 새 DB를 대상으로) 그 데이터베이스만 센다. 안 주면
+    드라이버의 기본 데이터베이스(독립 실행용)를 쓴다. sync_run_id를 주면
+    그 실행에서 적재된 노드만 센다.
     """
     counts: dict[str, int] = {}
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         for label in labels:
             result = session.run(
                 f"""
@@ -74,11 +107,14 @@ def count_nodes_by_label(
 
 
 def count_relationships_by_type(
-    driver: Driver, rel_types: list[str], sync_run_id: str | None = None
+    driver: Driver,
+    rel_types: list[str],
+    sync_run_id: str | None = None,
+    database: str | None = None,
 ) -> dict[str, int]:
-    """관계타입별 건수를 센다. sync_run_id 의미는 count_nodes_by_label과 동일하다."""
+    """관계타입별 건수를 센다. database/sync_run_id 의미는 count_nodes_by_label과 동일하다."""
     counts: dict[str, int] = {}
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         for rel_type in rel_types:
             result = session.run(
                 f"""
@@ -93,7 +129,10 @@ def count_relationships_by_type(
 
 
 def verify_fixture_entities(
-    driver: Driver, entities: dict[str, Any], sync_run_id: str | None = None
+    driver: Driver,
+    entities: dict[str, Any],
+    sync_run_id: str | None = None,
+    database: str | None = None,
 ) -> list[str]:
     """query_parameters.json의 entities가 실제로 그래프에 존재하는지 확인한다.
 
@@ -101,11 +140,10 @@ def verify_fixture_entities(
     docs/etl/2-structured_mvp_loading_rules.md 7절)을 검사한다. Gold 쿼리 자체는 이번
     범위 밖이라 여기서는 시작점 존재 여부만 확인한다.
 
-    sync_run_id를 주면 그 실행에서 적재된 노드로 존재하는지까지 확인한다(prune 전
-    사전 검증용 - 이전 실행에서 남아있는 stale 노드로 검증이 통과하는 걸 막는다).
+    database/sync_run_id 의미는 count_nodes_by_label과 동일하다.
     """
     failures: list[str] = []
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         product_checks = [
             ("pricedProduct", "productId"),
             ("multiLocationProduct", "productId"),
@@ -159,16 +197,17 @@ def verify_fixture_entities(
 
 
 def verify_work_order_17747_fixture(
-    driver: Driver, sync_run_id: str | None = None
+    driver: Driver,
+    sync_run_id: str | None = None,
+    database: str | None = None,
 ) -> list[str]:
     """docs/etl/2-structured_mvp_loading_rules.md 7절의 구체적 fixture 검증:
     작업지시 17747의 공정 순서 1·6과 작업장 10·50이 존재해야 한다.
 
-    sync_run_id를 주면 경로의 시작 노드·관계·중간 노드·관계·끝 노드가 전부 이번
-    실행에서 적재된 것인지까지 확인한다(prune 전 사전 검증용).
+    database/sync_run_id 의미는 count_nodes_by_label과 동일하다.
     """
     failures: list[str] = []
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         result = session.run("""
             MATCH (wo:WorkOrder {workOrderId: 17747})-[r1:HAS_OPERATION]->(ro:RoutingOperation)
                   -[r2:PERFORMED_AT]->(loc:Location)
@@ -193,7 +232,9 @@ def verify_work_order_17747_fixture(
 
 
 def verify_bom_680_to_492_quantity(
-    driver: Driver, sync_run_id: str | None = None
+    driver: Driver,
+    sync_run_id: str | None = None,
+    database: str | None = None,
 ) -> list[str]:
     """docs/etl/2-structured_mvp_loading_rules.md 7절 + RQ19 계약: Product 680에서
     492로 가는 필요수량이 10개 생산 기준 80이어야 한다(bomAsOfDate=2014-08-08
@@ -203,10 +244,9 @@ def verify_bom_680_to_492_quantity(
     데이터로 확인한 결과 680->492는 유효 경로가 1개뿐이라 합산해도 기존 기댓값
     80은 그대로다.
 
-    sync_run_id를 주면 경로의 시작·끝 노드와 모든 관계가 이번 실행에서 적재된
-    것인지까지 확인한다(prune 전 사전 검증용).
+    database/sync_run_id 의미는 count_nodes_by_label과 동일하다.
     """
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         result = session.run("""
             MATCH path = (start:Product {productId: 680})-[r:REQUIRES_COMPONENT*1..4]->
                          (end:Product {productId: 492})
@@ -235,7 +275,7 @@ def verify_bom_680_to_492_quantity(
 
 
 def main() -> None:
-    """재적재 없이 현재 Neo4j 상태만 검증한다.
+    """재적재 없이 현재 기본 Neo4j 데이터베이스 상태만 검증한다.
 
     사용법(리포 루트 기준): python etl/structured_mvp_validate.py
     """

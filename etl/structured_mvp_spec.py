@@ -31,6 +31,10 @@ class RelationshipSpec:
     rel_type: str
     extract_sql: str
     merge_cypher: str  # "UNWIND $rows AS row" 뒤에 붙는 본문
+    # merge_cypher의 MERGE 패턴이 실제로 무엇을 키로 매칭하는지 - 관계 속성 키가
+    # 있으면 그 컬럼(예: bomId), 없으면 (시작 컬럼, 도착 컬럼) 쌍. 쓰기 전 중복 검사
+    # (find_duplicate_key_rows)에 쓴다.
+    merge_key_columns: tuple[str, ...]
     date_columns: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -155,6 +159,7 @@ MATCH (p:Product {productId: row.productId})
 MERGE (s)-[r:SUPPLIES {supplyKey: row.supplyKey}]->(p)
 SET r.syncRunId = $syncRunId
 """,
+        merge_key_columns=("supplyKey",),
     ),
     RelationshipSpec(
         rel_type="REQUIRES_COMPONENT",
@@ -177,6 +182,7 @@ SET r.quantityPerAssembly = row.quantityPerAssembly,
     r.endDate = CASE WHEN row.endDate IS NULL THEN NULL ELSE date(row.endDate) END,
     r.syncRunId = $syncRunId
 """,
+        merge_key_columns=("bomId",),
         date_columns=("startDate", "endDate"),
     ),
     RelationshipSpec(
@@ -191,6 +197,7 @@ MATCH (p:Product {productId: row.productId})
 MERGE (wo)-[r:PRODUCES]->(p)
 SET r.syncRunId = $syncRunId
 """,
+        merge_key_columns=("workOrderId", "productId"),
     ),
     RelationshipSpec(
         rel_type="HAS_OPERATION",
@@ -206,6 +213,7 @@ MATCH (ro:RoutingOperation {routingOperationKey: row.routingOperationKey})
 MERGE (wo)-[r:HAS_OPERATION]->(ro)
 SET r.syncRunId = $syncRunId
 """,
+        merge_key_columns=("workOrderId", "routingOperationKey"),
     ),
     RelationshipSpec(
         rel_type="PERFORMED_AT",
@@ -221,6 +229,7 @@ MATCH (loc:Location {locationId: row.locationId})
 MERGE (ro)-[r:PERFORMED_AT]->(loc)
 SET r.syncRunId = $syncRunId
 """,
+        merge_key_columns=("routingOperationKey", "locationId"),
     ),
     RelationshipSpec(
         rel_type="SCRAPPED_DUE_TO",
@@ -236,5 +245,6 @@ MATCH (sr:ScrapReason {scrapReasonId: row.scrapReasonId})
 MERGE (wo)-[r:SCRAPPED_DUE_TO]->(sr)
 SET r.syncRunId = $syncRunId
 """,
+        merge_key_columns=("workOrderId", "scrapReasonId"),
     ),
 ]
