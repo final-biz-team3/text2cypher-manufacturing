@@ -6,6 +6,9 @@ on:
     paths:
       - "backend/**"
       - "etl/**"
+      - "schema/**"
+      - "queries/**"
+      - "docker-compose.yml"
       - "pyproject.toml"
       - ".github/workflows/code-quality.yml"
   pull_request:
@@ -13,6 +16,9 @@ on:
     paths:
       - "backend/**"
       - "etl/**"
+      - "schema/**"
+      - "queries/**"
+      - "docker-compose.yml"
       - "pyproject.toml"
       - ".github/workflows/code-quality.yml"
 
