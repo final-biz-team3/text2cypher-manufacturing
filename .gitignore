@@ -14,8 +14,6 @@ etl/venv/
 etl/__pycache__/
 etl/**/__pycache__/
 etl/data/*
-etl/import/*
-!etl/import/.gitkeep
 
 # ── Node / React (Vite) ──
 frontend/node_modules/
@@ -49,3 +47,6 @@ Thumbs.db
 CLAUDE.md
 .worktrees/
 .superpowers/
+
+# ── 개인 작업 메모(개인 관리, 저장소 공유 대상 아님) ──
+md/

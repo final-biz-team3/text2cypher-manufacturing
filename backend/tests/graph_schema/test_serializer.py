@@ -112,7 +112,8 @@ def test_serialize_graph_schema_serializes_project_yaml() -> None:
     assert schema_text.startswith(
         "Node properties:\nProduct {productId: INTEGER, name: STRING"
     )
-    assert "IN_SUBCATEGORY {}" in schema_text
+    assert "REQUIRES_COMPONENT {bomId: INTEGER" in schema_text
     assert "(:Supplier)-[:SUPPLIES]->(:Product)" in schema_text
+    assert "(:Product)-[:REQUIRES_COMPONENT]->(:Product)" in schema_text
     assert "sourceColumn" not in schema_text
     assert not schema_text.endswith("\n")

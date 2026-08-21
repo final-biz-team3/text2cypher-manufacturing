@@ -1,0 +1,413 @@
+"""AdventureWorksPG.gz(PostgreSQL 커스텀 포맷 덤프)를 pg_restore로 복원한다.
+
+pg_restore는 postgres:16 공식 Docker 이미지에 이미 포함돼 있으므로 별도
+설치가 필요 없다. 다만 이 프로젝트의 개발 환경(Windows)엔 pg_restore가
+PATH에 없는 경우가 있다 - 그럴 땐 로컬 docker-compose의 postgres 컨테이너
+안에 이미 들어있는 pg_restore를 `docker exec`로 대신 부른다(자동 판단,
+PG_RESTORE_DOCKER_CONTAINER 환경변수로 컨테이너 이름을 바꿀 수 있음,
+기본값 "postgres"). --host/--port는 원격 공유 서버를 그대로 가리킬 수
+있으므로, 컨테이너를 거치더라도 실제 복원 대상은 로컬이든 원격이든 상관없다.
+
+복원 전 `--list`로 덤프의 목차(TOC)를 먼저 읽어 몇 개 테이블에 데이터가
+있는지 확인하고(사전 검증), 복원 후에는 postgres_restore_validate.py의
+검증 함수를 그대로 불러와 테이블·픽스처 값 사후 검증까지 이어서 실행한다.
+검증 로직 자체는 psycopg2가 필요해 이 파일과 책임을 분리해 두고, 이 파일의
+main()에서만 두 단계를 이어붙인다 - 복원 없이 이미 있는 DB만 검증하고
+싶을 때는 postgres_restore_validate.py를 그대로 독립 실행하면 된다.
+
+기존 DB에 바로 --clean을 실행하지 않는다(PR #16 리뷰 P1-2 대응). 대신 항상
+새 DB(`{db}_restore_<타임스탬프>`)를 만들어 그쪽에 복원·검증하고, 검증까지
+통과한 뒤에만 기존 DB와 이름을 교체한다 - 기존 DB는 지우지 않고
+`{db}_previous_<타임스탬프>`로 보존한다(사람이 확인 후 직접 정리). 교체
+직전에는 로컬/원격 구분 없이 항상 대상 DB 이름을 그대로 입력하는 확인
+절차를 거친다 - 호스트 문자열만으로 로컬/원격을 구분해서 로컬이면 확인을
+건너뛰는 방식은 안전하지 않다고 판단했다(SSH 터널을 쓰면 원격도
+"localhost"로 보이고, 누군가의 로컬 DB가 다른 사람에게는 실제로 공유
+서버일 수도 있다). 자동화/CI에서 쓸 때는 --yes를 매번 명시적으로 넘겨 이
+확인을 생략할 수 있다 - .env에 영구 저장하는 방식은 이번 사고 시나리오
+(설정을 깜빡하고 안 되돌림)를 그대로 재현하므로 쓰지 않는다.
+
+교체 자체(ALTER DATABASE ... RENAME TO ...)는 대상 DB에 다른 활성 연결이
+하나라도 있으면 PostgreSQL이 자동으로 실패시킨다 - 그래서 강제로 연결을
+끊지 않아도 안전하게 자동화할 수 있다(로컬 테스트로 실제 확인,
+2026-08-20). 두 RENAME을 한 트랜잭션으로 묶어서, 실패하면 아무 것도 안
+바뀐 채로 롤백되고 새로 복원된 DB는 그대로 남는다 - 나중에 다시
+시도하거나 사람이 직접 처리하면 된다.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+import psycopg2
+import psycopg2.errors
+from dotenv import load_dotenv
+from psycopg2 import sql
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+REQUIRED_ENV_VARS = ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER"]
+
+# "TABLE DATA <schema> <table> <owner>" 형태의 TOC 행만 잡는다. "TABLE"(스키마
+# 정의)이나 "SEQUENCE" 등 데이터가 없는 항목은 유실 검증에 의미가 없어 제외한다.
+TABLE_DATA_LINE = re.compile(r"^\d+;\s+0\s+\d+\s+TABLE DATA\s+(\S+)\s+(\S+)\s+\S+$")
+
+
+def build_pg_restore_command(
+    dump_path: Path | str,
+    *,
+    host: str,
+    port: str,
+    db: str,
+    user: str,
+) -> list[str]:
+    """pg_restore 실행 인자 목록을 조립한다.
+
+    dump_path는 Path 대신 str로 넘길 수도 있다 - docker exec로 컨테이너
+    안(Linux)의 파일을 가리킬 때(예: "/tmp/x.gz") Windows에서 pathlib.Path로
+    감싸면 WindowsPath가 "/"를 "\\"로 바꿔버려 컨테이너 안에서 경로를 못
+    찾는 버그가 있었다(실행 검증에서 발견, 2026-08-20). 컨테이너 경로는
+    항상 str 그대로 넘긴다.
+
+    --clean --if-exists: 재실행해도 안전하도록 기존 객체를 먼저 지우고 복원한다.
+    --no-owner: 원본 덤프의 소유자(Windows 로컬 계정)를 무시하고 접속 계정
+    소유로 복원한다(대상 서버 계정이 원본과 다를 수 있어 반드시 필요).
+    --no-acl: 원본이 Azure Database for PostgreSQL에서 뜬 덤프라 GRANT 대상에
+    azure_pg_admin 같은 Azure 전용 역할이 섞여 있다. 이 역할은 우리 환경(로컬
+    docker, 원격 공유 서버)에 존재하지 않아 권한 부여문마다 오류가 난다(실행
+    검증 결과 76건, 전부 이 원인). 우리는 자체 접속 계정으로 이미 전체 권한을
+    가지므로 원본 권한을 복원할 필요가 없어 통째로 건너뛴다 - 매번 반복되는
+    무해한 오류를 로그에 남기지 않기 위해서다.
+    """
+    return [
+        "pg_restore",
+        f"--host={host}",
+        f"--port={port}",
+        f"--dbname={db}",
+        f"--username={user}",
+        "--no-owner",
+        "--no-acl",
+        "--clean",
+        "--if-exists",
+        "--verbose",
+        str(dump_path),
+    ]
+
+
+def build_pg_restore_list_command(dump_path: Path | str) -> list[str]:
+    """덤프 파일의 목차(TOC)만 읽는 명령을 조립한다. DB 접속이 필요 없다."""
+    return ["pg_restore", "--list", str(dump_path)]
+
+
+def parse_toc_table_names(toc_text: str) -> set[str]:
+    """`pg_restore --list` 출력에서 실제 데이터가 있는 테이블 이름을 뽑는다.
+
+    반환값은 "schema.table" 형태의 집합이며, 복원 후 실제 DB에 같은 테이블이
+    존재하는지 사후 검증(postgres_restore_validate.py)에서 대조하는 기준이 된다.
+    """
+    tables: set[str] = set()
+    for line in toc_text.splitlines():
+        match = TABLE_DATA_LINE.match(line.strip())
+        if match:
+            schema, table = match.groups()
+            tables.add(f"{schema}.{table}")
+    return tables
+
+
+def wrap_for_docker_exec(
+    command: list[str], *, container: str, env: dict[str, str]
+) -> list[str]:
+    """로컬에 없는 pg_restore 대신 컨테이너 안의 pg_restore를 부르도록 감싼다.
+
+    호스트 환경변수는 컨테이너 안으로 자동으로 안 들어가므로(PGPASSWORD 등)
+    -e로 하나씩 명시적으로 전달한다.
+    """
+    docker_command = ["docker", "exec"]
+    for key, value in env.items():
+        docker_command += ["-e", f"{key}={value}"]
+    docker_command += ["-i", container]
+    return docker_command + command
+
+
+def restore_confirmed(user_input: str, db: str) -> bool:
+    """사용자가 입력한 문자열이 대상 DB 이름과 정확히 일치하는지 확인한다.
+
+    --clean 복원은 로컬/원격을 가리지 않고 항상 이 확인을 거친다(PR #16 리뷰
+    P1-2 대응). 처음엔 "원격일 때만 확인"을 고려했으나, 호스트 문자열만으로는
+    로컬/원격을 안전하게 구분할 수 없다(SSH 터널을 쓰면 원격도 "localhost"로
+    보이고, 누군가의 로컬 DB가 다른 사람에게는 공유 서버일 수도 있다) - 그래서
+    대상 구분 없이 매번 DB 이름을 그대로 입력해야만 진행되게 한다.
+    """
+    return user_input.strip() == db
+
+
+def target_database_exists(conn, db: str) -> bool:
+    """conn(서버의 postgres 유지보수 DB 연결)으로 db가 이미 존재하는지 확인한다.
+
+    로컬에 DB가 있다고 가정하지 않는다 - .env가 가리키는 서버에 실제로
+    접속해서 확인하고, 없으면 복원을 시도하지 않고 바로 알린다.
+    """
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db,))
+        return cursor.fetchone() is not None
+
+
+def generate_restore_timestamp() -> str:
+    """이번 복원 실행을 식별할 타임스탬프를 만든다. 새 DB 이름과 보존용 이름에
+    같이 쓰여서, DB 목록만 보고도 어느 복원 실행이 만든 것인지 알 수 있다."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def build_new_database_name(db: str, timestamp: str) -> str:
+    """복원을 받을 새 임시 DB 이름을 만든다."""
+    return f"{db}_restore_{timestamp}"
+
+
+def build_previous_database_name(db: str, timestamp: str) -> str:
+    """교체 전 기존 DB를 보존할 이름을 만든다."""
+    return f"{db}_previous_{timestamp}"
+
+
+def create_database(conn, db_name: str) -> None:
+    """conn(유지보수 DB 연결)으로 새 DB를 만든다.
+
+    CREATE DATABASE는 트랜잭션 안에서 실행할 수 없으므로 conn.autocommit이
+    True여야 한다(호출자 책임).
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
+
+
+def swap_databases(
+    conn, *, live_db: str, new_db: str, previous_db_name: str | None
+) -> bool:
+    """new_db를 live_db 이름으로 승격한다(기존 live_db가 있으면 previous_db_name으로 보존).
+
+    두 RENAME을 한 트랜잭션으로 묶어서 실행한다(conn.autocommit=False여야
+    함, 호출자 책임) - 대상 DB에 다른 활성 연결이 있으면 PostgreSQL이
+    ObjectInUse로 문장 실행 자체를 실패시키므로, 강제로 연결을 끊지 않아도
+    "지금은 안 됨"으로 안전하게 끝난다.
+
+    반환값: 성공하면 True. 다른 세션이 사용 중이라 실패했으면(ObjectInUse)
+    롤백하고 False를 반환한다(호출자가 재시도를 안내하도록) - 이 경우
+    live_db·new_db 둘 다 그대로 보존된다. 그 외 예상 못 한 오류는 그대로
+    예외로 전파한다.
+    """
+    try:
+        with conn.cursor() as cursor:
+            if previous_db_name is not None:
+                cursor.execute(
+                    sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+                        sql.Identifier(live_db), sql.Identifier(previous_db_name)
+                    )
+                )
+            cursor.execute(
+                sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+                    sql.Identifier(new_db), sql.Identifier(live_db)
+                )
+            )
+        conn.commit()
+        return True
+    except psycopg2.errors.ObjectInUse:
+        conn.rollback()
+        return False
+
+
+def copy_dump_into_container(
+    dump_path: Path, *, container: str, container_path: str
+) -> None:
+    """호스트의 덤프 파일을 컨테이너 안의 container_path로 복사한다.
+
+    --list(TOC 조회)는 스트림이 아니라 파일 임의 접근이 필요해 stdin 파이프로
+    못 넘기므로, 컨테이너 안에 실제 파일로 먼저 넣어둔다.
+
+    stdin=DEVNULL: docker cp는 입력이 필요 없는데 지정을 안 하면 부모 프로세스의
+    stdin을 그대로 물려받는다. 이 함수가 main()에서 나중에 나오는 복원 확인
+    프롬프트(input())보다 먼저 실행되는데, docker cp가 상속받은 stdin을 그대로
+    들고 있다가 반환하면서 그 이후의 input() 호출이 EOFError로 즉시 실패하는
+    문제가 실행 검증(2026-08-20, --yes 확인 게이트 추가 중) 중 발견됐다.
+    """
+    subprocess.run(
+        ["docker", "cp", str(dump_path), f"{container}:{container_path}"],
+        check=True,
+        stdin=subprocess.DEVNULL,
+    )
+
+
+def main() -> None:
+    load_dotenv(ROOT_DIR / ".env")
+
+    parser = argparse.ArgumentParser(
+        description="AdventureWorksPG.gz를 PostgreSQL로 복원한다."
+    )
+    parser.add_argument("--dump-path", default="etl/data/AdventureWorksPG.gz")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="확인 프롬프트 없이 진행한다(자동화/CI 전용, 매번 명시적으로 넘겨야 함).",
+    )
+    args = parser.parse_args()
+
+    dump_path = Path(args.dump_path)
+    if not dump_path.exists():
+        sys.exit(f"덤프 파일이 없습니다: {dump_path}")
+
+    missing_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
+    if missing_vars:
+        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_vars)}")
+
+    host = os.environ["POSTGRES_HOST"]
+    port = os.environ["POSTGRES_PORT"]
+    db = os.environ["POSTGRES_DB"]
+    user = os.environ["POSTGRES_USER"]
+    password = os.environ.get("POSTGRES_PASSWORD", "")
+    print(f"대상: {host}:{port}/{db}")
+
+    timestamp = generate_restore_timestamp()
+    new_db = build_new_database_name(db, timestamp)
+
+    maintenance_conn = psycopg2.connect(
+        host=host, port=port, dbname="postgres", user=user, password=password
+    )
+    maintenance_conn.autocommit = True
+    live_db_exists = target_database_exists(maintenance_conn, db)
+    print(f"0) 새 DB '{new_db}' 생성 (기존 '{db}'는 아직 건드리지 않음)")
+    create_database(maintenance_conn, new_db)
+
+    via_docker = shutil.which("pg_restore") is None
+    container = os.environ.get("PG_RESTORE_DOCKER_CONTAINER", "postgres")
+    if via_docker:
+        container_dump_path = f"/tmp/{dump_path.name}"
+        print(f"   (로컬에 pg_restore가 없어 컨테이너 '{container}' 안에서 실행)")
+        copy_dump_into_container(
+            dump_path, container=container, container_path=container_dump_path
+        )
+        # 컨테이너 안(Linux) 경로이므로 Path로 감싸지 않는다 - Windows에서
+        # Path("/tmp/x")는 "/"를 "\"로 바꿔버려 컨테이너 안에서 못 찾는다.
+        restore_target_path: Path | str = container_dump_path
+    else:
+        restore_target_path = dump_path
+
+    print("1) 덤프 목차(TOC) 확인 (사전 검증)")
+    list_command = build_pg_restore_list_command(restore_target_path)
+    if via_docker:
+        list_command = wrap_for_docker_exec(list_command, container=container, env={})
+    list_result = subprocess.run(
+        list_command,
+        capture_output=True,
+        text=True,
+        check=False,
+        stdin=subprocess.DEVNULL,
+    )
+    if list_result.returncode != 0:
+        sys.exit(
+            f"덤프 목차 조회 실패 (exit code {list_result.returncode}): "
+            f"{list_result.stderr.strip()}"
+        )
+    expected_tables = parse_toc_table_names(list_result.stdout)
+    if not expected_tables:
+        sys.exit(
+            "덤프 목차에서 데이터가 있는 테이블을 하나도 찾지 못했습니다 - "
+            "덤프 파일이 손상됐거나 명령이 실패했을 수 있습니다."
+        )
+    print(f"   덤프에 데이터가 있는 테이블 {len(expected_tables)}개 확인")
+
+    print(f"2) 복원 실행 (새 DB '{new_db}', 기존 '{db}'는 그대로)")
+    command = build_pg_restore_command(
+        restore_target_path, host=host, port=port, db=new_db, user=user
+    )
+    if via_docker:
+        command = wrap_for_docker_exec(
+            command, container=container, env={"PGPASSWORD": password}
+        )
+        env = os.environ
+    else:
+        env = {**os.environ, "PGPASSWORD": password}
+    result = subprocess.run(
+        command, env=env, check=False, stdin=subprocess.DEVNULL
+    )
+    if result.returncode != 0:
+        sys.exit(
+            f"pg_restore 실패 (exit code {result.returncode}) - 새 DB "
+            f"'{new_db}'는 조사를 위해 남겨뒀습니다. 확인 후 필요 없으면 "
+            "직접 삭제하세요."
+        )
+    print(f"   복원 완료 (기대 테이블 수: {len(expected_tables)})")
+
+    print(f"3) 사후 검증 (새 DB '{new_db}' 대상, 테이블 존재 + 픽스처 값 대조)")
+    from postgres_restore_validate import (
+        build_fixture_checks,
+        find_missing_tables,
+        run_fixture_checks,
+    )
+
+    parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
+
+    conn = psycopg2.connect(
+        host=host, port=port, dbname=new_db, user=user, password=password
+    )
+    try:
+        missing_tables = find_missing_tables(expected_tables, conn)
+        entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+        failures = run_fixture_checks(conn, build_fixture_checks(entities))
+    finally:
+        conn.close()
+
+    if missing_tables:
+        print(f"   누락된 테이블 {len(missing_tables)}개: {sorted(missing_tables)}")
+    if failures:
+        print(f"   픽스처 불일치 {len(failures)}건:")
+        for failure in failures:
+            print(f"     - {failure}")
+
+    if missing_tables or failures:
+        sys.exit(
+            f"검증 실패 - 새 DB '{new_db}'는 조사를 위해 남겨뒀습니다. 확인 후 "
+            "필요 없으면 직접 삭제하세요."
+        )
+    print(f"   테이블 {len(expected_tables)}개 전체 확인, 픽스처 유실/손상 없음")
+
+    print(f"4) '{db}' <- '{new_db}' 교체")
+    previous_db_name = build_previous_database_name(db, timestamp) if live_db_exists else None
+    if previous_db_name is not None:
+        print(f"   기존 '{db}'는 지우지 않고 '{previous_db_name}'로 보존합니다.")
+    else:
+        print(f"   '{db}'가 아직 없어서 새로 만듭니다.")
+    if args.yes:
+        print("   (--yes로 확인 생략)")
+    else:
+        user_input = input(f"계속하려면 데이터베이스 이름을 그대로 입력하세요 [{db}]: ")
+        if not restore_confirmed(user_input, db):
+            sys.exit(
+                "입력한 이름이 일치하지 않아 교체를 중단합니다. 복원된 데이터는 "
+                f"'{new_db}'에 그대로 남아있습니다."
+            )
+
+    maintenance_conn.autocommit = False
+    swapped = swap_databases(
+        maintenance_conn, live_db=db, new_db=new_db, previous_db_name=previous_db_name
+    )
+    maintenance_conn.close()
+
+    if not swapped:
+        sys.exit(
+            f"교체 실패 - 다른 세션이 '{db}' 또는 '{new_db}'에 접속 중입니다. "
+            f"복원된 데이터는 '{new_db}'에 안전하게 남아있으니, 나중에 다시 "
+            "실행하거나 직접 ALTER DATABASE로 교체하세요."
+        )
+
+    print(f"   교체 완료. '{db}'가 이번에 복원한 데이터를 가리킵니다.")
+    if previous_db_name is not None:
+        print(
+            f"   기존 데이터는 '{previous_db_name}'로 보존됨 - 확인 후 필요 없으면 "
+            "직접 삭제하세요."
+        )
+
+
+if __name__ == "__main__":
+    main()
