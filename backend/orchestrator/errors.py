@@ -1,9 +1,8 @@
-"""Orchestrator 파이프라인의 도메인 예외 계층을 정의한다."""
+# Orchestrator 파이프라인의 도메인 예외 계층
 
 
+# 모든 도메인 예외의 공통 베이스
 class AppError(Exception):
-    """모든 도메인 예외의 공통 베이스."""
-
     def __init__(self, status_code: int, code: str, message: str) -> None:
         self.status_code = status_code
         self.code = code
@@ -11,9 +10,8 @@ class AppError(Exception):
         super().__init__(message)
 
 
+# 질의 대상 이름으로 엔티티를 찾지 못했을 때 발생
 class EntityNotFoundError(AppError):
-    """질의 대상 이름으로 엔티티를 찾지 못했을 때 발생한다."""
-
     def __init__(self) -> None:
         super().__init__(
             404,
@@ -22,12 +20,9 @@ class EntityNotFoundError(AppError):
         )
 
 
+# 유사 후보가 여러 개라 사용자 확인이 필요할 때 발생
+# 이번 범위(resolve_entity의 정확 일치 매칭)에서는 raise되지 않는다
 class EntityAmbiguousError(AppError):
-    """유사 후보가 여러 개라 사용자 확인이 필요할 때 발생한다.
-
-    이번 범위(resolve_entity의 정확 일치 매칭)에서는 raise되지 않는다.
-    """
-
     def __init__(self, candidates: list) -> None:
         super().__init__(
             200,
@@ -37,12 +32,9 @@ class EntityAmbiguousError(AppError):
         self.candidates = candidates
 
 
+# self-correction 재시도 횟수를 초과했을 때 발생
+# 이번 범위(self-correction 루프 미구현)에서는 raise되지 않는다
 class RetryExceededError(AppError):
-    """self-correction 재시도 횟수를 초과했을 때 발생한다.
-
-    이번 범위(self-correction 루프 미구현)에서는 raise되지 않는다.
-    """
-
     def __init__(self) -> None:
         super().__init__(
             422,

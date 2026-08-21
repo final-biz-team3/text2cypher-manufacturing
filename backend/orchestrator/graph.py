@@ -1,5 +1,3 @@
-"""resolve_entity -> route_query 2노드 Orchestrator 서브그래프를 조립한다."""
-
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -10,14 +8,12 @@ from orchestrator.nodes.route_query import make_route_query_node
 from orchestrator.state import OrchestratorState
 
 
+# OpenAI/PostgreSQL 클라이언트를 주입받아 컴파일된 그래프를 반환
+# START -> resolve_entity -> route_query -> END
+# run_agents, generate_answer는 다음 세션에서 이어붙인다
 def build_orchestrator_graph(
     openai_client: Any, postgres_connection: Any
 ) -> CompiledStateGraph:
-    """OpenAI/PostgreSQL 클라이언트를 주입받아 컴파일된 그래프를 반환한다.
-
-    START -> resolve_entity -> route_query -> END.
-    run_agents, generate_answer는 다음 세션에서 이어붙인다.
-    """
     graph = StateGraph(OrchestratorState)
     # mypy는 factory가 반환하는 `Callable[[OrchestratorState], dict]` 정적 타입을
     # add_node의 `_Node[NodeInputT] | ...` 오버로드 Union과 단일화하지 못해
