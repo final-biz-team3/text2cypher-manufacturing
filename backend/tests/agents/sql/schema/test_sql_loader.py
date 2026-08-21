@@ -6,10 +6,10 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from sql_schema.loader import load_sql_schema
-from sql_schema.models import SqlSchema
+from agents.sql.schema.loader import load_sql_schema
+from agents.sql.schema.models import SqlSchema
 
-PROJECT_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "schema" / "sql_schema.yaml"
+PROJECT_SCHEMA_PATH = Path(__file__).resolve().parents[5] / "schema" / "sql_schema.yaml"
 
 
 def test_load_sql_schema_returns_validated_model(tmp_path: Path) -> None:

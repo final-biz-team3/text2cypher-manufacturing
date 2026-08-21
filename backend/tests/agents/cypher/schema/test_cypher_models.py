@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from graph_schema.models import GraphSchema
+from agents.cypher.schema.models import GraphSchema
 
 
 def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:

@@ -22,7 +22,7 @@ Relationship SUPPLIES: 부품 공급 관계, 부품을 공급함
 별도로 정렬하지 않는다.
 """
 
-from graph_schema.models import GraphSchema, PropertySchema
+from agents.cypher.schema.models import GraphSchema, PropertySchema
 
 
 def _format_properties(

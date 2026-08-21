@@ -6,11 +6,11 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from graph_schema.loader import load_graph_schema
-from graph_schema.models import GraphSchema
+from agents.cypher.schema.loader import load_graph_schema
+from agents.cypher.schema.models import GraphSchema
 
 PROJECT_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[3] / "schema" / "graph_schema.yaml"
+    Path(__file__).resolve().parents[5] / "schema" / "graph_schema.yaml"
 )
 
 

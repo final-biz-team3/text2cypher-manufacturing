@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from sql_schema.models import SqlSchema
+from agents.sql.schema.models import SqlSchema
 
 
 def load_sql_schema(path: str | Path) -> SqlSchema:

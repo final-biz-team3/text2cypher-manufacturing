@@ -5,7 +5,7 @@
 조인은 ``SqlSchema``에 저장된 YAML 입력 순서를 그대로 유지한다.
 """
 
-from sql_schema.models import ColumnSchema, SqlSchema, TableSchema
+from agents.sql.schema.models import ColumnSchema, SqlSchema, TableSchema
 
 
 def _format_column(name: str, column: ColumnSchema) -> str:

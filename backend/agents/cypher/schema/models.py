@@ -1,4 +1,4 @@
-"""프롬프트 생성에 필요한 그래프 스키마 입력 모델을 정의한다."""
+"""Text-to-Cypher 프롬프트에 필요한 그래프 스키마 입력 모델을 정의한다."""
 
 from typing import Literal, Self
 

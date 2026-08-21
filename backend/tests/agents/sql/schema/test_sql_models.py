@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from sql_schema.models import SqlSchema
+from agents.sql.schema.models import SqlSchema
 
 
 def test_sql_schema_maps_valid_tables_columns_joins_and_aliases() -> None:

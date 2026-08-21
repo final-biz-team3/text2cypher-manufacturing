@@ -10,7 +10,7 @@
 # structured_mvp_physical_design_validation.md), ITDA-Neo4j_v4(arrows.app 다이어그램,
 # etl/data/에 로컬 보관, git 추적 제외).
 #
-# 참고: backend/graph_schema의 로더(models.py, extra="ignore")는 노드·관계·속성의
+# 참고: backend/agents/cypher/schema의 로더(models.py, extra="ignore")는 노드·관계·속성의
 # aliases와 nodes.*.properties.*.type,
 # relationships.*.{from,to,properties.*.type}만 읽고 나머지는 전부 무시한다.
 #

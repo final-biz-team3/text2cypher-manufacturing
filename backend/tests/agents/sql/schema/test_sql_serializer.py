@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from sql_schema.loader import load_sql_schema
-from sql_schema.models import SqlSchema
-from sql_schema.serializer import serialize_sql_schema
+from agents.sql.schema.loader import load_sql_schema
+from agents.sql.schema.models import SqlSchema
+from agents.sql.schema.serializer import serialize_sql_schema
 
-PROJECT_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "schema" / "sql_schema.yaml"
+PROJECT_SCHEMA_PATH = Path(__file__).resolve().parents[5] / "schema" / "sql_schema.yaml"
 
 
 def test_serialize_sql_schema_formats_tables_primary_keys_and_joins() -> None:
