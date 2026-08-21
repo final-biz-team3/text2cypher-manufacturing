@@ -1,0 +1,30 @@
+tables:
+  production.product:
+    aliases: [제품]
+    columns:
+      productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: []}
+      listprice: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [정가]}
+      standardcost: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [표준원가]}
+      safetystocklevel: {type: SMALLINT, primaryKey: false, nullable: false, aliases: [안전재고, 안전재고 수준]}
+
+  production.productinventory:
+    aliases: []
+    columns:
+      productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      locationid: {type: SMALLINT, primaryKey: true, nullable: false, aliases: []}
+      shelf: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [선반]}
+      bin: {type: SMALLINT, primaryKey: false, nullable: false, aliases: [보관함]}
+      quantity: {type: SMALLINT, primaryKey: false, nullable: false, aliases: [위치별 재고 수량, 재고 수량]}
+
+  production.location:
+    aliases: [재고 위치]
+    columns:
+      locationid: {type: SMALLINT, primaryKey: true, nullable: false, aliases: []}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: []}
+
+joins:
+  - from: production.productinventory.productid
+    to: production.product.productid
+  - from: production.productinventory.locationid
+    to: production.location.locationid
