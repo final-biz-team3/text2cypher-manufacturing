@@ -12,6 +12,7 @@ def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
         {
             "nodes": {
                 "Supplier": {
+                    "aliases": ["공급업체", "업체"],
                     "properties": {
                         "supplierId": {"type": "INTEGER"},
                     },
@@ -26,8 +27,12 @@ def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
                 "SUPPLIES": {
                     "from": "Supplier",
                     "to": "Product",
+                    "aliases": ["공급 관계"],
                     "properties": {
-                        "standardPrice": {"type": "FLOAT"},
+                        "standardPrice": {
+                            "type": "FLOAT",
+                            "aliases": ["표준 가격"],
+                        },
                     },
                 },
             },
@@ -38,7 +43,10 @@ def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
 
     assert relationship.from_node == "Supplier"
     assert relationship.to_node == "Product"
+    assert relationship.aliases == ["공급 관계"]
+    assert schema.nodes["Supplier"].aliases == ["공급업체", "업체"]
     assert relationship.properties["standardPrice"].data_type == "FLOAT"
+    assert relationship.properties["standardPrice"].aliases == ["표준 가격"]
 
 
 def test_graph_schema_ignores_metadata_outside_prompt_contract() -> None:
@@ -66,8 +74,12 @@ def test_graph_schema_ignores_metadata_outside_prompt_contract() -> None:
     assert schema.model_dump() == {
         "nodes": {
             "Product": {
+                "aliases": [],
                 "properties": {
-                    "productId": {"data_type": "INTEGER"},
+                    "productId": {
+                        "data_type": "INTEGER",
+                        "aliases": [],
+                    },
                 },
             },
         },
@@ -96,6 +108,22 @@ def test_property_schema_rejects_unsupported_data_type() -> None:
                         "properties": {
                             "name": {"type": "TEXT"},
                         },
+                    },
+                },
+                "relationships": {},
+            }
+        )
+
+
+def test_graph_schema_rejects_aliases_that_are_not_a_list() -> None:
+    """alias는 하나뿐이어도 문자열 목록으로만 입력받는다."""
+    with pytest.raises(ValidationError):
+        GraphSchema.model_validate(
+            {
+                "nodes": {
+                    "Product": {
+                        "aliases": "제품",
+                        "properties": {},
                     },
                 },
                 "relationships": {},

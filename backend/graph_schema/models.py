@@ -29,11 +29,13 @@ class PropertySchema(_SchemaModel):
     """노드 또는 관계 속성의 데이터 타입을 표현한다."""
 
     data_type: PropertyDataType = Field(alias="type")
+    aliases: list[str] = Field(default_factory=list)
 
 
 class NodeSchema(_SchemaModel):
     """노드가 가지는 속성을 표현한다."""
 
+    aliases: list[str] = Field(default_factory=list)
     properties: dict[str, PropertySchema]
 
 
@@ -42,6 +44,7 @@ class RelationshipSchema(_SchemaModel):
 
     from_node: str = Field(alias="from")
     to_node: str = Field(alias="to")
+    aliases: list[str] = Field(default_factory=list)
     properties: dict[str, PropertySchema]
 
 

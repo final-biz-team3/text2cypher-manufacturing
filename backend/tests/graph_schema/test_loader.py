@@ -21,15 +21,17 @@ def test_load_graph_schema_returns_validated_model(tmp_path: Path) -> None:
         """
 nodes:
   Supplier:
+    aliases: [공급업체, 업체]
     properties:
       name: {type: STRING}
   Product:
     properties:
-      productId: {type: INTEGER}
+      productId: {type: INTEGER, aliases: [제품 ID]}
 relationships:
   SUPPLIES:
     from: Supplier
     to: Product
+    aliases: [공급 관계]
     properties: {}
 """.lstrip(),
         encoding="utf-8",
@@ -38,9 +40,12 @@ relationships:
     schema = load_graph_schema(schema_path)
 
     assert isinstance(schema, GraphSchema)
+    assert schema.nodes["Supplier"].aliases == ["공급업체", "업체"]
     assert schema.nodes["Product"].properties["productId"].data_type == "INTEGER"
+    assert schema.nodes["Product"].properties["productId"].aliases == ["제품 ID"]
     assert schema.relationships["SUPPLIES"].from_node == "Supplier"
     assert schema.relationships["SUPPLIES"].to_node == "Product"
+    assert schema.relationships["SUPPLIES"].aliases == ["공급 관계"]
 
 
 def test_load_graph_schema_loads_project_schema() -> None:
@@ -48,6 +53,9 @@ def test_load_graph_schema_loads_project_schema() -> None:
     schema = load_graph_schema(PROJECT_SCHEMA_PATH)
 
     assert schema.nodes["Product"].properties["name"].data_type == "STRING"
+    assert schema.nodes["Product"].aliases == ["제품", "부품", "완제품"]
+    assert schema.nodes["Supplier"].aliases == ["공급업체", "업체", "공급사"]
+    assert schema.nodes["Location"].aliases == ["작업장", "공정 위치"]
     assert schema.relationships["SUPPLIES"].from_node == "Supplier"
     assert schema.relationships["SUPPLIES"].to_node == "Product"
 

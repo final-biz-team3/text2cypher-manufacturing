@@ -10,9 +10,9 @@
 # structured_mvp_physical_design_validation.md), ITDA-Neo4j_v4(arrows.app 다이어그램,
 # etl/data/에 로컬 보관, git 추적 제외).
 #
-# 참고: backend/graph_schema의 로더(models.py, extra="ignore")는
-# nodes.*.properties.*.type과 relationships.*.{from,to,properties.*.type}만
-# 읽고 나머지는 전부 무시한다.
+# 참고: backend/graph_schema의 로더(models.py, extra="ignore")는 노드·관계·속성의
+# aliases와 nodes.*.properties.*.type,
+# relationships.*.{from,to,properties.*.type}만 읽고 나머지는 전부 무시한다.
 #
 # 제약조건은 이 yaml에서 자동 생성하지 않는다(Enterprise 전용 문법을 쓰는
 # etl/graph_constraints.py는 이번 스키마엔 적용하지 않기로 결정 — 대신
@@ -36,69 +36,76 @@ meta:
 
 nodes:
   Product:
+    aliases: [제품, 부품, 완제품]
     uniqueKey: productId
     constraintName: product_id
     source: {schema: production, table: product}
     properties:
-      productId: {type: INTEGER, required: true, sourceColumn: productid}
-      name: {type: STRING, required: true, sourceColumn: name}
-      sellableFinishedGood: {type: BOOLEAN, required: true, sourceColumn: finishedgoodsflag}
+      productId: {type: INTEGER, required: true, sourceColumn: productid, aliases: [제품 ID, 부품 ID, 완제품 ID]}
+      name: {type: STRING, required: true, sourceColumn: name, aliases: [제품명, 부품명, 완제품명]}
+      sellableFinishedGood: {type: BOOLEAN, required: true, sourceColumn: finishedgoodsflag, aliases: [판매 가능한 완제품 여부, 완제품 여부]}
       sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
       syncRunId: {type: STRING, required: true, technical: true}
 
   Supplier:
+    aliases: [공급업체, 업체, 공급사]
     uniqueKey: supplierId
     constraintName: supplier_id
     source: {schema: purchasing, table: vendor}
     properties:
-      supplierId: {type: INTEGER, required: true, sourceColumn: businessentityid}
-      name: {type: STRING, required: true, sourceColumn: name}
-      active: {type: BOOLEAN, required: true, sourceColumn: activeflag}
+      supplierId: {type: INTEGER, required: true, sourceColumn: businessentityid, aliases: [공급업체 ID, 업체 ID, 공급사 ID]}
+      name: {type: STRING, required: true, sourceColumn: name, aliases: [공급업체명, 업체명, 공급사명]}
+      active: {type: BOOLEAN, required: true, sourceColumn: activeflag, aliases: [활성 여부, 활성 상태]}
       sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
       syncRunId: {type: STRING, required: true, technical: true}
 
   WorkOrder:
+    aliases: [작업지시, 생산 작업지시]
     uniqueKey: workOrderId
     constraintName: work_order_id
     source: {schema: production, table: workorder}
     properties:
-      workOrderId: {type: INTEGER, required: true, sourceColumn: workorderid}
+      workOrderId: {type: INTEGER, required: true, sourceColumn: workorderid, aliases: [작업지시 ID]}
       sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
       syncRunId: {type: STRING, required: true, technical: true}
 
   RoutingOperation:
+    aliases: [공정, 작업 공정, 라우팅 공정]
     uniqueKey: routingOperationKey
     constraintName: routing_operation_key
     keyComposition: "workorderid + '-' + productid + '-' + operationsequence"
     source: {schema: production, table: workorderrouting}
     properties:
-      routingOperationKey: {type: STRING, required: true, synthetic: true}
-      sequence: {type: INTEGER, required: true, sourceColumn: operationsequence}
+      routingOperationKey: {type: STRING, required: true, synthetic: true, aliases: [공정 식별 키]}
+      sequence: {type: INTEGER, required: true, sourceColumn: operationsequence, aliases: [공정 순서, 작업 순서]}
       sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
       syncRunId: {type: STRING, required: true, technical: true}
 
   Location:
+    aliases: [작업장, 공정 위치]
     uniqueKey: locationId
     constraintName: location_id
     source: {schema: production, table: location}
     properties:
-      locationId: {type: INTEGER, required: true, sourceColumn: locationid}
-      name: {type: STRING, required: true, sourceColumn: name}
+      locationId: {type: INTEGER, required: true, sourceColumn: locationid, aliases: [작업장 ID, 공정 위치 ID]}
+      name: {type: STRING, required: true, sourceColumn: name, aliases: [작업장명, 공정 위치명]}
       sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
       syncRunId: {type: STRING, required: true, technical: true}
 
   ScrapReason:
+    aliases: [폐기 사유, 폐기사유]
     uniqueKey: scrapReasonId
     constraintName: scrap_reason_id
     source: {schema: production, table: scrapreason}
     properties:
-      scrapReasonId: {type: INTEGER, required: true, sourceColumn: scrapreasonid}
-      name: {type: STRING, required: true, sourceColumn: name}
+      scrapReasonId: {type: INTEGER, required: true, sourceColumn: scrapreasonid, aliases: [폐기 사유 ID, 폐기사유 ID]}
+      name: {type: STRING, required: true, sourceColumn: name, aliases: [폐기 사유명, 폐기사유명]}
       sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
       syncRunId: {type: STRING, required: true, technical: true}
 
 relationships:
   SUPPLIES:
+    aliases: [부품 공급 관계, 부품을 공급함, 부품의 공급업체]
     from: Supplier
     to: Product
     source: {schema: purchasing, table: productvendor}
@@ -108,18 +115,20 @@ relationships:
       syncRunId: {type: STRING, required: true, technical: true}
 
   REQUIRES_COMPONENT:
+    aliases: [BOM 구성 관계, BOM 경로, 하위 부품 관계, 부품을 사용함, 부품을 필요로 함]
     from: Product   # 상위 조립품(assembly)
     to: Product     # 하위 부품(component)
     source: {schema: production, table: billofmaterials}
     loadCondition: "load all rows; filter validity at query time via bomAsOfDate"
     properties:
-      bomId: {type: INTEGER, required: true, sourceColumn: billofmaterialsid}
-      quantityPerAssembly: {type: FLOAT, required: true, sourceColumn: perassemblyqty}
-      startDate: {type: DATE, required: true, sourceColumn: startdate}
-      endDate: {type: DATE, required: false, sourceColumn: enddate}
+      bomId: {type: INTEGER, required: true, sourceColumn: billofmaterialsid, aliases: [BOM ID]}
+      quantityPerAssembly: {type: FLOAT, required: true, sourceColumn: perassemblyqty, aliases: [조립품 1개당 필요 수량, 단위당 필요 수량]}
+      startDate: {type: DATE, required: true, sourceColumn: startdate, aliases: [BOM 유효 시작일]}
+      endDate: {type: DATE, required: false, sourceColumn: enddate, aliases: [BOM 유효 종료일]}
       syncRunId: {type: STRING, required: true, technical: true}
 
   PRODUCES:
+    aliases: [제품 생산 관계, 작업지시가 생산하는 제품]
     from: WorkOrder
     to: Product
     source: {schema: production, table: workorder}
@@ -127,6 +136,7 @@ relationships:
       syncRunId: {type: STRING, required: true, technical: true}
 
   HAS_OPERATION:
+    aliases: [작업 공정 관계, 작업지시가 포함하는 공정, 작업지시가 거친 공정]
     from: WorkOrder
     to: RoutingOperation
     source: {schema: production, table: workorderrouting}
@@ -134,6 +144,7 @@ relationships:
       syncRunId: {type: STRING, required: true, technical: true}
 
   PERFORMED_AT:
+    aliases: [공정 수행 작업장, 공정 수행 위치, 공정이 수행되는 작업장]
     from: RoutingOperation
     to: Location
     source: {schema: production, table: workorderrouting}
@@ -141,6 +152,7 @@ relationships:
       syncRunId: {type: STRING, required: true, technical: true}
 
   SCRAPPED_DUE_TO:
+    aliases: [폐기 사유 관계, 폐기 원인 관계, 작업지시의 폐기 사유]
     from: WorkOrder
     to: ScrapReason
     source: {schema: production, table: workorder}
