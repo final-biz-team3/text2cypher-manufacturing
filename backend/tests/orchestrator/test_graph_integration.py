@@ -1,7 +1,8 @@
 """RQ01~04(SQL), RQ12(GRAPH) 5개 질의가 resolve_entity -> route_query를
 실제 OpenAI/PostgreSQL로 올바르게 통과하는지 검증한다.
 
-query_parameters.json의 fixture(entities.pricedProduct 등)를 그대로 쓴다.
+fixture 값(productId 956/747/492 등)은 pr-16의 query_parameters.json
+(entities.pricedProduct 등)에서 가져왔다.
 """
 
 import pytest
