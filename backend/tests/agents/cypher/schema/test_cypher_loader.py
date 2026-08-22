@@ -58,6 +58,9 @@ def test_load_graph_schema_loads_project_schema() -> None:
     assert schema.nodes["Location"].aliases == ["작업장", "공정 위치"]
     assert schema.relationships["SUPPLIES"].from_node == "Supplier"
     assert schema.relationships["SUPPLIES"].to_node == "Product"
+    assert schema.query_policy is not None
+    assert schema.query_policy.bom_as_of_date == "2014-08-08"
+    assert schema.query_policy.bom_max_depth == 4
 
 
 def test_load_graph_schema_raises_when_file_does_not_exist(tmp_path: Path) -> None:

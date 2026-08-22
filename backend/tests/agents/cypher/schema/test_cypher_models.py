@@ -49,11 +49,15 @@ def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
     assert relationship.properties["standardPrice"].aliases == ["표준 가격"]
 
 
-def test_graph_schema_ignores_metadata_outside_prompt_contract() -> None:
-    """프롬프트 계약에 포함되지 않는 스키마 메타데이터는 무시한다."""
+def test_graph_schema_maps_query_policy_and_ignores_other_metadata() -> None:
+    """BOM 쿼리 정책은 매핑하고 나머지 스키마 메타데이터는 무시한다."""
     schema = GraphSchema.model_validate(
         {
-            "meta": {"nodeCount": 1},
+            "meta": {
+                "bomAsOfDate": "2014-08-08",
+                "bomMaxDepth": 4,
+                "nodeCount": 1,
+            },
             "nodes": {
                 "Product": {
                     "group": "master",
@@ -71,6 +75,9 @@ def test_graph_schema_ignores_metadata_outside_prompt_contract() -> None:
         }
     )
 
+    assert schema.query_policy is not None
+    assert schema.query_policy.bom_as_of_date == "2014-08-08"
+    assert schema.query_policy.bom_max_depth == 4
     assert schema.model_dump() == {
         "nodes": {
             "Product": {
@@ -85,6 +92,31 @@ def test_graph_schema_ignores_metadata_outside_prompt_contract() -> None:
         },
         "relationships": {},
     }
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        pytest.param(
+            {"bomAsOfDate": "2014-13-40", "bomMaxDepth": 4},
+            id="invalid-date",
+        ),
+        pytest.param(
+            {"bomAsOfDate": "2014-08-08", "bomMaxDepth": 0},
+            id="invalid-depth",
+        ),
+    ],
+)
+def test_graph_schema_rejects_invalid_bom_query_policy(meta: dict[str, object]) -> None:
+    """BOM 기준일이 잘못됐거나 최대 깊이가 1보다 작으면 거부한다."""
+    with pytest.raises(ValidationError):
+        GraphSchema.model_validate(
+            {
+                "meta": meta,
+                "nodes": {"Product": {"properties": {}}},
+                "relationships": {},
+            }
+        )
 
 
 def test_graph_schema_rejects_empty_nodes() -> None:

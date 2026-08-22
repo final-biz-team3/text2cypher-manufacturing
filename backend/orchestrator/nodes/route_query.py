@@ -42,7 +42,7 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], d
         user_content = f"Q: {state['query']}\nentity: {entity_json}\nA:"
 
         response = openai_client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            model=os.environ["OPENAI_MODEL"],
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},

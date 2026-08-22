@@ -1,23 +1,27 @@
-"""resolve_entity -> route_query 2노드 그래프의 전체 흐름을 테스트한다."""
+"""엔티티 확정 -> 라우팅 -> 쿼리 생성의 전체 흐름을 테스트한다."""
 
 from orchestrator.graph import build_orchestrator_graph
-from tests.orchestrator.fakes import (
-    FakeOpenAIClient,
-    FakePostgresConnection,
+from tests.mocks.openai import (
+    MockOpenAIClient,
     make_content_response,
     make_tool_call_response,
 )
+from tests.mocks.postgres import MockPostgresConnection
 
 
 def test_graph_resolves_entity_then_routes_to_sql() -> None:
     """제품명이 있는 SQL형 질의는 entity 확정 후 sql로 라우팅된다."""
-    openai_client = FakeOpenAIClient(
+    openai_client = MockOpenAIClient(
         make_tool_call_response(
             "extract_product_name", {"productName": "Touring-1000 Yellow, 54"}
         ),
         make_content_response('["sql"]'),
+        make_content_response(
+            "SELECT listprice, standardcost FROM production.product "
+            "WHERE productid = 956"
+        ),
     )
-    postgres_connection = FakePostgresConnection(
+    postgres_connection = MockPostgresConnection(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
     )
     graph = build_orchestrator_graph(openai_client, postgres_connection)
@@ -31,17 +35,26 @@ def test_graph_resolves_entity_then_routes_to_sql() -> None:
         "productName": "Touring-1000 Yellow, 54",
     }
     assert result["tool_plan"] == ["sql"]
+    assert result["sql_query"] == (
+        "SELECT listprice, standardcost FROM production.product "
+        "WHERE productid = 956"
+    )
+    assert result["cypher_query"] is None
 
 
 def test_graph_routes_to_graph_for_relationship_query() -> None:
     """부품 사용처를 묻는 질의는 entity 확정 후 graph로 라우팅된다."""
-    openai_client = FakeOpenAIClient(
+    openai_client = MockOpenAIClient(
         make_tool_call_response(
             "extract_product_name", {"productName": "Paint - Black"}
         ),
         make_content_response('["graph"]'),
+        make_content_response(
+            "MATCH (part:Product)<-[:REQUIRES_COMPONENT*1..4]-(parent:Product) "
+            "WHERE part.productId = 492 RETURN parent"
+        ),
     )
-    postgres_connection = FakePostgresConnection(
+    postgres_connection = MockPostgresConnection(
         rows_by_name={"Paint - Black": (492, "Paint - Black")}
     )
     graph = build_orchestrator_graph(openai_client, postgres_connection)
@@ -52,18 +65,26 @@ def test_graph_routes_to_graph_for_relationship_query() -> None:
 
     assert result["entity"] == {"productId": 492, "productName": "Paint - Black"}
     assert result["tool_plan"] == ["graph"]
+    assert result["sql_query"] is None
+    assert result["cypher_query"] == (
+        "MATCH (part:Product)<-[:REQUIRES_COMPONENT*1..4]-(parent:Product) "
+        "WHERE part.productId = 492 RETURN parent"
+    )
 
 
-def test_graph_routes_without_entity_for_aggregate_query() -> None:
-    """특정 제품을 지칭하지 않는 집계 질의는 entity=None으로 sql 라우팅된다."""
-    openai_client = FakeOpenAIClient(
+def test_graph_generates_sql_without_entity_for_aggregate_query() -> None:
+    """특정 제품을 지칭하지 않는 집계 질의도 SQL을 생성한다."""
+    openai_client = MockOpenAIClient(
         make_content_response("[]"),
         make_content_response('["sql"]'),
+        make_content_response("SELECT COUNT(*) FROM production.product"),
     )
-    postgres_connection = FakePostgresConnection(rows_by_name={})
+    postgres_connection = MockPostgresConnection(rows_by_name={})
     graph = build_orchestrator_graph(openai_client, postgres_connection)
 
-    result = graph.invoke({"query": "현재 활성 상태인 공급업체 수를 알려줘."})
+    result = graph.invoke({"query": "전체 제품 수를 알려줘."})
 
     assert result["entity"] is None
     assert result["tool_plan"] == ["sql"]
+    assert result["sql_query"] == "SELECT COUNT(*) FROM production.product"
+    assert result["cypher_query"] is None

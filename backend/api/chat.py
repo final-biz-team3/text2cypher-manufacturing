@@ -13,9 +13,7 @@ class ChatRequest(BaseModel):
     query: str
 
 
-# 자연어 질의를 오케스트레이터 그래프(resolve_entity -> route_query)로 라우팅
-# run_agents/generate_answer가 아직 없어 answer/sql/cypher는 반환하지 않는다
-# -> 이번 범위(엔티티 확정 + 분기)의 결과만 그대로 노출하는 테스트용 엔드포인트
+# /chat은 현재 질의 원문, 확정된 entity와 tool_plan을 반환한다.
 @router.post("/chat")
 async def chat(request: ChatRequest):
     graph = build_orchestrator_graph(get_openai_client(), get_connection())

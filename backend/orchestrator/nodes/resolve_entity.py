@@ -41,12 +41,13 @@ _SYSTEM_PROMPT = (
 # 도구 호출이 없으면(대상 제품이 없는 질의면) None 반환
 def _extract_product_name(query: str, openai_client: Any) -> str | None:
     response = openai_client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=os.environ["OPENAI_MODEL"],
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": query},
         ],
         tools=[_EXTRACT_PRODUCT_NAME_TOOL],
+        reasoning_effort="none",
     )
     tool_calls = response.choices[0].message.tool_calls
     if not tool_calls:
