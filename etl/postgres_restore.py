@@ -32,9 +32,11 @@ DB는 지우지 않고 `{db}_previous_<타임스탬프>`로 보존한다(사람�
 
 이 "활성 연결이 있으면 거부"라는 안전장치는, 진행 중인 작업이 없는 idle
 연결(예: 접속만 열어두고 있는 관리 도구)까지 막아버릴 수 있다. 그래서 교체
-직전에 대상 DB의 idle 연결만 찾아서(활성 트랜잭션이 있는 연결은 절대 건드리지
-않음) 종료할지 물어보고(--yes면 자동 진행), 그래도 실패하면(활성 연결이
-있거나 동시에 다른 세션이 먼저 교체를 끝낸 경우) 사유를 구분해서 알려준다.
+직전에 이름이 바뀌는 양쪽 DB(live_db·new_db 둘 다 - RENAME은 두 이름 모두
+활성 연결이 없어야 한다) 각각의 idle 연결만 찾아서(활성 트랜잭션이 있는
+연결은 절대 건드리지 않음) 종료할지 물어보고(--yes면 자동 진행), 그래도
+실패하면(활성 연결이 있거나 동시에 다른 세션이 먼저 교체를 끝낸 경우) 사유를
+구분해서 알려준다.
 복원·검증까지는 끝났는데 교체만 실패한 경우 처음부터 다시 복원할 필요 없이
 `--retry-swap <새 DB 이름>`으로 교체 단계만 재시도할 수 있다 - 이 로직(idle
 정리, 확인, 교체, 실패 메시지)은 정상 흐름의 4단계와 --retry-swap 둘 다
@@ -189,7 +191,7 @@ def swap_databases(
     - "in_use": 대상 DB에 활성 연결이 있어 실패(ObjectInUse). 롤백하고
       live_db·new_db 둘 다 그대로 보존된다.
     - "race": 그 사이 다른 세션이 먼저 교체를 끝내서 이름 상태가 예상과
-      달라짐(UndefinedDatabase: live_db가 이미 이름이 바뀌어 없음 /
+      달라짐(InvalidCatalogName: live_db가 이미 이름이 바뀌어 없음 /
       DuplicateDatabase: live_db 이름이 이미 다른 DB가 차지함). PostgreSQL
       RENAME엔 원자적 충돌 감지가 없어서 이 두 예외로 간접 판별한다.
 
@@ -213,7 +215,7 @@ def swap_databases(
     except psycopg2.errors.ObjectInUse:
         conn.rollback()
         return "in_use"
-    except (psycopg2.errors.UndefinedDatabase, psycopg2.errors.DuplicateDatabase):
+    except (psycopg2.errors.InvalidCatalogName, psycopg2.errors.DuplicateDatabase):
         conn.rollback()
         return "race"
 
@@ -301,15 +303,20 @@ def retry_swap(
     else:
         print(f"   '{db}'가 아직 없어서 새로 만듭니다.")
 
-    idle_conns = find_idle_connections(maintenance_conn, db)
-    if idle_conns:
+    # RENAME은 이름이 바뀌는 양쪽 DB 모두에 활성 연결이 없어야 한다 - live_db
+    # (db)뿐 아니라 new_db도 확인해야, 예를 들어 방금 복원에 썼던 연결이 아직
+    # 안 닫혔거나 pgAdmin이 새 DB를 미리 열람해둔 경우도 자동으로 정리된다.
+    for target in (db, new_db):
+        idle_conns = find_idle_connections(maintenance_conn, target)
+        if not idle_conns:
+            continue
         apps = ", ".join(app or "(알 수 없음)" for _, app in idle_conns)
-        print(f"   '{db}'에 idle 상태 연결 {len(idle_conns)}개 발견: {apps}")
+        print(f"   '{target}'에 idle 상태 연결 {len(idle_conns)}개 발견: {apps}")
         if auto_yes:
             print("   (--yes로 자동 종료)")
             terminate_idle_connections(maintenance_conn, [pid for pid, _ in idle_conns])
         else:
-            answer = input("   idle 연결을 종료하고 진행할까요? [y/N]: ")
+            answer = input(f"   '{target}'의 idle 연결을 종료하고 진행할까요? [y/N]: ")
             if answer.strip().lower() == "y":
                 terminate_idle_connections(
                     maintenance_conn, [pid for pid, _ in idle_conns]

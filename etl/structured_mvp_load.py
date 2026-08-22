@@ -19,9 +19,12 @@ setDefaultDatabase()에는 원자적 충돌 감지가 없어서, 두 세션이 �
 (PostgreSQL에는 없는, Neo4j만의 추가 위험) - 그래서 호출자가 작업 시작
 시점에 확인해둔 "그때의 기본 데이터베이스" 이름을 넘기면, 승격 직전에 실제
 기본 데이터베이스가 그 사이 바뀌지 않았는지 재확인한다(낙관적 동시성 제어).
-이 두 확인과 승격 자체, 실패 메시지를 retry_promote() 함수 하나로 묶어서
-정상 흐름(run_structured_mvp_sync.py)과 재시도 CLI(--retry-promote) 둘 다
-어긋나지 않게 한다 - PostgreSQL postgres_restore.retry_swap()과 같은
+마지막으로, new_db가 실제로 존재하는지도 STOP DATABASE 호출 전에 미리
+확인한다 - 존재하지 않는 이름을 그냥 넘기면 기존 기본 데이터베이스를 이미
+멈춘 뒤에야 승격이 실패해서 기본 데이터베이스가 아예 없는 상태로 남을 수
+있다. 이 세 확인과 승격 자체, 실패 메시지를 retry_promote() 함수 하나로
+묶어서 정상 흐름(run_structured_mvp_sync.py)과 재시도 CLI(--retry-promote)
+둘 다 어긋나지 않게 한다 - PostgreSQL postgres_restore.retry_swap()과 같은
 설계다.
 """
 
@@ -79,6 +82,24 @@ def get_default_database(driver: Driver) -> str:
         result = session.run("SHOW DEFAULT DATABASE").single()
         assert result is not None
         return str(result["name"])
+
+
+def database_exists(driver: Driver, db_name: str) -> bool:
+    """db_name이 실제로 존재하는 데이터베이스인지 확인한다.
+
+    retry_promote()가 STOP DATABASE를 호출하기 전에 반드시 확인해야 한다 -
+    존재하지 않는 이름을 확인 없이 넘기면, 기존 기본 데이터베이스를 이미
+    멈춘 뒤에야 setDefaultDatabase()가 실패해서 기본 데이터베이스가 없는
+    상태로 남을 수 있다(PostgreSQL retry_swap()의 target_database_exists
+    사전 확인과 같은 이유).
+    """
+    with driver.session(database="system") as session:
+        result = session.run(
+            "SHOW DATABASES YIELD name WHERE name = $name RETURN count(name) AS c",
+            name=db_name,
+        ).single()
+        assert result is not None
+        return bool(result["c"] > 0)
 
 
 def find_active_transactions(driver: Driver, db_name: str) -> list[dict[str, Any]]:
@@ -144,6 +165,12 @@ def retry_promote(
     조용히 덮어쓰지 않고 안전하게 거부한다. 넘기지 않으면(예: "작업 시작
     시점"이 따로 없는 단독 --retry-promote 실행) 이 확인은 건너뛴다.
     """
+    if not database_exists(driver, new_db):
+        sys.exit(
+            f"'{new_db}'가 존재하지 않습니다 - 이미 승격을 마쳤거나, 이름을 "
+            "잘못 입력했을 수 있습니다."
+        )
+
     actual_default = get_default_database(driver)
 
     if (
