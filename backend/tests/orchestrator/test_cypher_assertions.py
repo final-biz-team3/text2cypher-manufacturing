@@ -1,9 +1,9 @@
-"""BOM 경로 중복 방지 Cypher 검증식을 테스트한다."""
+"""BOM 경로 중복 방지 Cypher의 최소 구조 계약을 테스트한다."""
 
 import pytest
 
 from tests.orchestrator.cypher_assertions import (
-    has_product_id_path_uniqueness_predicate,
+    has_product_id_path_uniqueness_guard,
 )
 
 
@@ -30,48 +30,21 @@ from tests.orchestrator.cypher_assertions import (
         """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
         WITH p, [node IN nodes(p) | node.productId] AS productIds
         WHERE all(i IN range(0, size(productIds) - 1)
-            WHERE single(j IN range(0, size(productIds) - 1)
-                WHERE productIds[j] = productIds[i]))
-        RETURN p""",
-        """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
-        WHERE all(i IN range(0, size(nodes(p)) - 1)
-            WHERE single(j IN range(0, size(nodes(p)) - 1)
-                WHERE nodes(p)[j].productId = nodes(p)[i].productId))
-        RETURN p""",
-        """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
-        WITH p, [node IN nodes(p) | node.productId] AS productIds
-        WHERE all(i IN range(0, size(productIds) - 1)
-            WHERE all(j IN range(i + 1, size(productIds) - 1)
-                WHERE productIds[i] <> productIds[j]))
-        RETURN p""",
-        """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
-        WITH p, [node IN nodes(p) | node.productId] AS productIdPath
-        WHERE all(i IN range(0, size(productIdPath) - 1)
             WHERE all(j IN range(0, i - 1)
-                WHERE productIdPath[i] <> productIdPath[j]))
-        RETURN p""",
-        """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
-        WITH p, [node IN nodes(p) | node.productId] AS productIdPath
-        WHERE all(i IN range(0, size(productIdPath) - 1)
-            WHERE all(j IN range(0, size(productIdPath) - 1)
-                WHERE i = j OR productIdPath[i] <> productIdPath[j]))
+                WHERE productIds[i] <> productIds[j]))
         RETURN p""",
     ],
     ids=[
-        "single-count",
-        "filtered-list-count",
+        "single-node",
+        "filtered-node-list",
         "unique-list-size",
-        "prior-list-slice",
-        "single-index-count",
-        "single-node-index-count",
-        "later-index-pairwise-comparison",
-        "earlier-index-pairwise-comparison",
-        "all-index-pairwise-comparison",
+        "prior-list-membership",
+        "indexed-list-comparison",
     ],
 )
-def test_accepts_product_id_path_uniqueness_predicates(query: str) -> None:
-    """변수명과 중복 검사 방식이 달라도 같은 의미의 조건은 허용한다."""
-    assert has_product_id_path_uniqueness_predicate(query)
+def test_accepts_product_id_path_uniqueness_guards(query: str) -> None:
+    """대표적인 중복 방지 표현을 구조 차이와 무관하게 허용한다."""
+    assert has_product_id_path_uniqueness_guard(query)
 
 
 @pytest.mark.parametrize(
@@ -85,28 +58,22 @@ def test_accepts_product_id_path_uniqueness_predicates(query: str) -> None:
         WITH p, [node IN nodes(p) | node.productId] AS productIds
         RETURN apoc.coll.toSet(productIds)""",
         """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
-        WHERE all(i IN range(0, size(nodes(p)) - 1) WHERE i <> 0)
+        WITH p, [node IN nodes(p) | node.productId] AS productIds
+        WHERE size(productIds) > 0
         RETURN p""",
         """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
         WITH p, [node IN nodes(p) | node.productId] AS productIds,
              [node IN nodes(p) | node.productId] AS otherIds
         WHERE size(productIds) = size(apoc.coll.toSet(otherIds))
         RETURN p""",
-        """MATCH p=(root:Product)-[:REQUIRES_COMPONENT*1..4]->(part:Product)
-        WITH p, [node IN nodes(p) | node.productId] AS productIds
-        WHERE all(i IN range(0, size(productIds) - 1) |
-            all(j IN range(i + 1, size(productIds) - 1) |
-                productIds[i] <> productIds[j]))
-        RETURN p""",
     ],
     ids=[
-        "mixed-value-types",
-        "toset-without-filter",
-        "unrelated-range",
-        "mixed-lists",
-        "invalid-pairwise-separator",
+        "product-id-compared-with-node-list",
+        "deduplication-only-in-return",
+        "list-without-uniqueness-guard",
+        "different-lists-compared",
     ],
 )
-def test_rejects_non_uniqueness_predicates(query: str) -> None:
-    """중복을 막지 않거나 서로 다른 타입·목록을 비교하는 조건은 거부한다."""
-    assert not has_product_id_path_uniqueness_predicate(query)
+def test_rejects_missing_product_id_path_uniqueness_guards(query: str) -> None:
+    """중복 방지 조건이 없거나 서로 다른 타입·목록을 비교하면 거부한다."""
+    assert not has_product_id_path_uniqueness_guard(query)

@@ -20,7 +20,7 @@ from core.openai_client import get_openai_client  # noqa: E402
 from core.postgres import get_connection  # noqa: E402
 from orchestrator.graph import build_orchestrator_graph  # noqa: E402
 from tests.orchestrator.cypher_assertions import (  # noqa: E402
-    has_product_id_path_uniqueness_predicate,
+    has_product_id_path_uniqueness_guard,
 )
 
 pytestmark = pytest.mark.integration
@@ -136,7 +136,7 @@ def _assert_bom_path_contract(query: str | None) -> None:
 def _assert_no_repeated_product_in_path(query: str | None) -> None:
     """한 경로 안에서 동일 Product를 다시 방문하지 않는 조건을 확인한다."""
     assert query is not None
-    assert has_product_id_path_uniqueness_predicate(query)
+    assert has_product_id_path_uniqueness_guard(query)
 
 
 def _assert_start_and_destination_fields(query: str | None) -> None:
