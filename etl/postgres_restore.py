@@ -40,6 +40,20 @@ DB(`{db}_restore_<타임스탬프>`)를 만들어 그쪽에 복원·검증하고
 2026-08-20). 두 RENAME을 한 트랜잭션으로 묶어서, 실패하면 아무 것도 안
 바뀐 채로 롤백되고 새로 복원된 DB는 그대로 남는다 - 나중에 다시
 시도하거나 사람이 직접 처리하면 된다.
+
+원격 공유 서버에서 실제로 겪은 문제(2026-08-21): pgAdmin 컨테이너가
+idle 상태 연결을 계속 물고 있어서 교체가 반복적으로 거부됐다. 이건
+"활성 연결이 있으면 거부"라는 안전장치가 정상 작동한 것이지만, idle
+연결(진행 중인 작업이 없는 연결)까지 사람이 매번 수동으로
+pg_terminate_backend해야 하는 건 불편하다. 그래서 교체 직전에 대상
+DB의 idle 연결만 찾아서(활성 트랜잭션이 있는 연결은 절대 건드리지
+않음) 종료할지 물어보고(--yes면 자동 진행), 그래도 실패하면(활성
+연결이 있거나 동시에 다른 세션이 먼저 교체를 끝낸 경우) 사유를
+구분해서 알려준다. 복원·검증까지는 끝났는데 교체만 실패한 경우
+처음부터 다시 복원할 필요 없이 `--retry-swap <새 DB 이름>`으로 교체
+단계만 재시도할 수 있다 - 이 로직(idle 정리, 확인, 교체, 실패 메시지)은
+정상 흐름의 4단계와 --retry-swap 둘 다 retry_swap() 함수 하나를
+공유해서 두 경로가 어긋나지 않게 했다.
 """
 
 import argparse
@@ -178,18 +192,24 @@ def create_database(conn, db_name: str) -> None:
 
 def swap_databases(
     conn, *, live_db: str, new_db: str, previous_db_name: str | None
-) -> bool:
+) -> str:
     """new_db를 live_db 이름으로 승격한다(기존 live_db가 있으면 previous_db_name으로 보존).
 
     두 RENAME을 한 트랜잭션으로 묶어서 실행한다(conn.autocommit=False여야
     함, 호출자 책임) - 대상 DB에 다른 활성 연결이 있으면 PostgreSQL이
     ObjectInUse로 문장 실행 자체를 실패시키므로, 강제로 연결을 끊지 않아도
-    "지금은 안 됨"으로 안전하게 끝난다.
+    안전하게 거부된다.
 
-    반환값: 성공하면 True. 다른 세션이 사용 중이라 실패했으면(ObjectInUse)
-    롤백하고 False를 반환한다(호출자가 재시도를 안내하도록) - 이 경우
-    live_db·new_db 둘 다 그대로 보존된다. 그 외 예상 못 한 오류는 그대로
-    예외로 전파한다.
+    반환값(문자열로 사유를 구분 - 호출자가 서로 다른 안내를 보여줄 수 있게):
+    - "ok": 성공.
+    - "in_use": 대상 DB에 활성 연결이 있어 실패(ObjectInUse). 롤백하고
+      live_db·new_db 둘 다 그대로 보존된다.
+    - "race": 그 사이 다른 세션이 먼저 교체를 끝내서 이름 상태가 예상과
+      달라짐(UndefinedDatabase: live_db가 이미 이름이 바뀌어 없음 /
+      DuplicateDatabase: live_db 이름이 이미 다른 DB가 차지함). PostgreSQL
+      RENAME엔 원자적 충돌 감지가 없어서 이 두 예외로 간접 판별한다.
+
+    그 외 예상 못 한 오류는 그대로 예외로 전파한다.
     """
     try:
         with conn.cursor() as cursor:
@@ -205,10 +225,142 @@ def swap_databases(
                 )
             )
         conn.commit()
-        return True
+        return "ok"
     except psycopg2.errors.ObjectInUse:
         conn.rollback()
-        return False
+        return "in_use"
+    except (psycopg2.errors.UndefinedDatabase, psycopg2.errors.DuplicateDatabase):
+        conn.rollback()
+        return "race"
+
+
+def build_swap_failure_message(reason: str, *, db: str, new_db: str) -> str:
+    """swap_databases()의 실패 사유(reason)에 맞는 안내 메시지를 만든다."""
+    if reason == "in_use":
+        return (
+            f"교체 실패 - '{db}' 또는 '{new_db}'에서 활성 연결(트랜잭션 등)이 "
+            f"사용 중이라 안전하게 교체할 수 없습니다. 복원된 데이터는 "
+            f"'{new_db}'에 안전하게 남아있으니, 작업이 끝난 뒤 "
+            f"'python etl/postgres_restore.py --retry-swap {new_db}'로 다시 "
+            "시도하세요."
+        )
+    if reason == "race":
+        return (
+            f"교체 실패 - 그 사이 다른 세션이 이미 '{db}' 교체를 끝냈습니다. "
+            f"복원된 데이터는 '{new_db}'에 안전하게 남아있으니, 필요하면 "
+            "확인 후 직접 처리하세요."
+        )
+    return f"교체 실패 - 알 수 없는 사유({reason})입니다. 상태를 직접 확인하세요."
+
+
+def find_idle_connections(conn, db: str) -> list[tuple[int, str | None]]:
+    """db에 idle 상태로 연결된 세션의 (pid, application_name) 목록을 반환한다.
+
+    자기 자신(conn)은 제외한다. 활성 트랜잭션이 있는 연결은 대상이 아니다
+    - swap_databases()가 ObjectInUse로 알아서 안전하게 거부해주므로, 여기서는
+    "진행 중인 작업이 없어 끊어도 안전한" idle 연결만 자동 정리 후보로 다룬다.
+    """
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT pid, application_name FROM pg_stat_activity "
+            "WHERE datname = %s AND state = 'idle' AND pid <> pg_backend_pid()",
+            (db,),
+        )
+        return cursor.fetchall()
+
+
+def terminate_idle_connections(conn, pids: list[int]) -> None:
+    """주어진 pid들을 pg_terminate_backend로 종료한다(호출자가 idle임을 확인한 뒤 호출)."""
+    with conn.cursor() as cursor:
+        for pid in pids:
+            cursor.execute("SELECT pg_terminate_backend(%s)", (pid,))
+
+
+def retry_swap(
+    *,
+    host: str,
+    port: str,
+    user: str,
+    password: str,
+    db: str,
+    new_db: str,
+    auto_yes: bool,
+) -> None:
+    """복원·검증까지 끝난 new_db를 db로 승격한다(교체 단계만 실행/재시도).
+
+    정상 흐름의 4단계(교체)와 --retry-swap CLI 옵션(복원을 처음부터 다시
+    하지 않고 교체만 재시도) 둘 다 이 함수 하나를 쓴다 - idle 연결 정리,
+    이름 확인 프롬프트, 교체, 실패 메시지가 두 곳에 따로 있으면 나중에
+    한쪽만 고쳐서 어긋나기 쉽기 때문이다. 실패하면 이 함수 안에서
+    sys.exit()로 끝낸다(호출자가 반환값을 따로 처리할 필요 없음).
+    """
+    maintenance_conn = psycopg2.connect(
+        host=host, port=port, dbname="postgres", user=user, password=password
+    )
+    maintenance_conn.autocommit = True
+
+    if not target_database_exists(maintenance_conn, new_db):
+        maintenance_conn.close()
+        sys.exit(
+            f"'{new_db}'가 존재하지 않습니다 - 이미 교체를 마쳤거나, 이름을 "
+            "잘못 입력했을 수 있습니다."
+        )
+
+    live_db_exists = target_database_exists(maintenance_conn, db)
+    previous_db_name = (
+        build_previous_database_name(db, generate_restore_timestamp())
+        if live_db_exists
+        else None
+    )
+    if previous_db_name is not None:
+        print(f"   기존 '{db}'는 지우지 않고 '{previous_db_name}'로 보존합니다.")
+    else:
+        print(f"   '{db}'가 아직 없어서 새로 만듭니다.")
+
+    idle_conns = find_idle_connections(maintenance_conn, db)
+    if idle_conns:
+        apps = ", ".join(app or "(알 수 없음)" for _, app in idle_conns)
+        print(f"   '{db}'에 idle 상태 연결 {len(idle_conns)}개 발견: {apps}")
+        if auto_yes:
+            print("   (--yes로 자동 종료)")
+            terminate_idle_connections(maintenance_conn, [pid for pid, _ in idle_conns])
+        else:
+            answer = input("   idle 연결을 종료하고 진행할까요? [y/N]: ")
+            if answer.strip().lower() == "y":
+                terminate_idle_connections(
+                    maintenance_conn, [pid for pid, _ in idle_conns]
+                )
+            else:
+                print(
+                    "   idle 연결을 종료하지 않고 진행합니다(교체가 실패할 수 있습니다)."
+                )
+
+    if auto_yes:
+        print("   (--yes로 확인 생략)")
+    else:
+        user_input = input(f"계속하려면 데이터베이스 이름을 그대로 입력하세요 [{db}]: ")
+        if not restore_confirmed(user_input, db):
+            maintenance_conn.close()
+            sys.exit(
+                "입력한 이름이 일치하지 않아 교체를 중단합니다. 복원된 데이터는 "
+                f"'{new_db}'에 그대로 남아있습니다."
+            )
+
+    maintenance_conn.autocommit = False
+    result = swap_databases(
+        maintenance_conn, live_db=db, new_db=new_db, previous_db_name=previous_db_name
+    )
+    maintenance_conn.close()
+
+    if result != "ok":
+        sys.exit(build_swap_failure_message(result, db=db, new_db=new_db))
+
+    print(f"   교체 완료. '{db}'가 '{new_db}'의 데이터를 가리킵니다.")
+    if previous_db_name is not None:
+        print(
+            f"   기존 데이터는 '{previous_db_name}'로 보존됨 - 확인 후 필요 없으면 "
+            "직접 삭제하세요."
+        )
 
 
 def main() -> None:
@@ -223,11 +375,16 @@ def main() -> None:
         action="store_true",
         help="확인 프롬프트 없이 진행한다(자동화/CI 전용, 매번 명시적으로 넘겨야 함).",
     )
+    parser.add_argument(
+        "--retry-swap",
+        metavar="NEW_DB_NAME",
+        help=(
+            "복원·검증까지는 끝났지만 교체(마지막 단계)만 실패한 경우, 처음부터 "
+            "다시 복원하지 않고 이 단계만 재시도한다. 값은 이미 존재하는 새 DB "
+            "이름(예: adventureworks_restore_20260821T090349Z)."
+        ),
+    )
     args = parser.parse_args()
-
-    dump_path = Path(args.dump_path)
-    if not dump_path.exists():
-        sys.exit(f"덤프 파일이 없습니다: {dump_path}")
 
     missing_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
     if missing_vars:
@@ -239,6 +396,23 @@ def main() -> None:
     user = os.environ["POSTGRES_USER"]
     password = os.environ.get("POSTGRES_PASSWORD", "")
     print(f"대상: {host}:{port}/{db}")
+
+    if args.retry_swap:
+        print(f"교체 재시도 전용 모드: '{args.retry_swap}' -> '{db}'")
+        retry_swap(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            db=db,
+            new_db=args.retry_swap,
+            auto_yes=args.yes,
+        )
+        return
+
+    dump_path = Path(args.dump_path)
+    if not dump_path.exists():
+        sys.exit(f"덤프 파일이 없습니다: {dump_path}")
 
     print("0) 덤프 파일 확인 (사전 검증)")
     sql_text = dump_path.read_text(encoding="utf-8")
@@ -257,9 +431,9 @@ def main() -> None:
         host=host, port=port, dbname="postgres", user=user, password=password
     )
     maintenance_conn.autocommit = True
-    live_db_exists = target_database_exists(maintenance_conn, db)
     print(f"1) 새 DB '{new_db}' 생성 (기존 '{db}'는 아직 건드리지 않음)")
     create_database(maintenance_conn, new_db)
+    maintenance_conn.close()
 
     print(f"2) 복원 실행 (새 DB '{new_db}', 기존 '{db}'는 그대로)")
     restore_conn = psycopg2.connect(
@@ -273,7 +447,9 @@ def main() -> None:
             f"복원 실패 ({exc}) - 새 DB '{new_db}'는 조사를 위해 남겨뒀습니다. "
             "확인 후 필요 없으면 직접 삭제하세요."
         )
-    print(f"   복원 완료 (문장 {statement_count}개 실행, 테이블 {len(expected_tables)}개)")
+    print(
+        f"   복원 완료 (문장 {statement_count}개 실행, 테이블 {len(expected_tables)}개)"
+    )
 
     print(f"3) 사후 검증 (새 DB '{new_db}' 대상, 테이블 존재 + 픽스처 값 대조)")
     from postgres_restore_validate import (
@@ -306,40 +482,15 @@ def main() -> None:
     print(f"   테이블 {len(expected_tables)}개 전체 확인, 픽스처 유실/손상 없음")
 
     print(f"4) '{db}' <- '{new_db}' 교체")
-    previous_db_name = build_previous_database_name(db, timestamp) if live_db_exists else None
-    if previous_db_name is not None:
-        print(f"   기존 '{db}'는 지우지 않고 '{previous_db_name}'로 보존합니다.")
-    else:
-        print(f"   '{db}'가 아직 없어서 새로 만듭니다.")
-    if args.yes:
-        print("   (--yes로 확인 생략)")
-    else:
-        user_input = input(f"계속하려면 데이터베이스 이름을 그대로 입력하세요 [{db}]: ")
-        if not restore_confirmed(user_input, db):
-            sys.exit(
-                "입력한 이름이 일치하지 않아 교체를 중단합니다. 복원된 데이터는 "
-                f"'{new_db}'에 그대로 남아있습니다."
-            )
-
-    maintenance_conn.autocommit = False
-    swapped = swap_databases(
-        maintenance_conn, live_db=db, new_db=new_db, previous_db_name=previous_db_name
+    retry_swap(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        db=db,
+        new_db=new_db,
+        auto_yes=args.yes,
     )
-    maintenance_conn.close()
-
-    if not swapped:
-        sys.exit(
-            f"교체 실패 - 다른 세션이 '{db}' 또는 '{new_db}'에 접속 중입니다. "
-            f"복원된 데이터는 '{new_db}'에 안전하게 남아있으니, 나중에 다시 "
-            "실행하거나 직접 ALTER DATABASE로 교체하세요."
-        )
-
-    print(f"   교체 완료. '{db}'가 이번에 복원한 데이터를 가리킵니다.")
-    if previous_db_name is not None:
-        print(
-            f"   기존 데이터는 '{previous_db_name}'로 보존됨 - 확인 후 필요 없으면 "
-            "직접 삭제하세요."
-        )
 
 
 if __name__ == "__main__":

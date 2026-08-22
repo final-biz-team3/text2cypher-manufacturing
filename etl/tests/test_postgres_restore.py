@@ -9,6 +9,7 @@ from pathlib import Path
 from postgres_restore import (
     build_new_database_name,
     build_previous_database_name,
+    build_swap_failure_message,
     parse_created_tables,
     restore_confirmed,
     restore_sql_file,
@@ -177,3 +178,30 @@ def test_build_previous_database_name_appends_previous_and_timestamp() -> None:
         build_previous_database_name("adventureworks", "20260820T120000Z")
         == "adventureworks_previous_20260820T120000Z"
     )
+
+
+def test_build_swap_failure_message_in_use_mentions_retry_swap_option() -> None:
+    message = build_swap_failure_message(
+        "in_use", db="adventureworks", new_db="adventureworks_restore_x"
+    )
+
+    assert "adventureworks" in message
+    assert "adventureworks_restore_x" in message
+    assert "--retry-swap" in message
+
+
+def test_build_swap_failure_message_race_mentions_other_session() -> None:
+    message = build_swap_failure_message(
+        "race", db="adventureworks", new_db="adventureworks_restore_x"
+    )
+
+    assert "다른 세션" in message
+    assert "adventureworks_restore_x" in message
+
+
+def test_build_swap_failure_message_unknown_reason_falls_back() -> None:
+    message = build_swap_failure_message(
+        "mystery", db="adventureworks", new_db="adventureworks_restore_x"
+    )
+
+    assert "mystery" in message
