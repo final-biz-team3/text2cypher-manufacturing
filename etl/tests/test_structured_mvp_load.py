@@ -4,7 +4,11 @@
 
 import re
 
-from structured_mvp_load import chunk_rows, generate_database_name
+from structured_mvp_load import (
+    build_promotion_failure_message,
+    chunk_rows,
+    generate_database_name,
+)
 
 
 def test_chunk_rows_splits_into_batches_of_given_size() -> None:
@@ -35,3 +39,35 @@ def test_generate_database_name_matches_neo4j_naming_rules() -> None:
 
 def test_generate_database_name_uses_given_prefix() -> None:
     assert generate_database_name("customprefix").startswith("customprefix-")
+
+
+def test_build_promotion_failure_message_transactions_in_use_names_target_db() -> None:
+    message = build_promotion_failure_message(
+        "transactions_in_use", previous_default="mvpgraph-old", new_db="mvpgraph-new"
+    )
+
+    assert "mvpgraph-old" in message
+    assert "트랜잭션을 이용 중입니다" in message
+    assert "mvpgraph-new" in message
+
+
+def test_build_promotion_failure_message_race_names_both_defaults() -> None:
+    message = build_promotion_failure_message(
+        "race",
+        previous_default="mvpgraph-expected",
+        new_db="mvpgraph-new",
+        actual_default="mvpgraph-actual",
+    )
+
+    assert "mvpgraph-expected" in message
+    assert "mvpgraph-actual" in message
+    assert "다른 세션" in message
+    assert "mvpgraph-new" in message
+
+
+def test_build_promotion_failure_message_unknown_reason_falls_back() -> None:
+    message = build_promotion_failure_message(
+        "mystery", previous_default="mvpgraph-old", new_db="mvpgraph-new"
+    )
+
+    assert "mystery" in message
