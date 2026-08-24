@@ -16,7 +16,9 @@ _MAX_CANDIDATES = 5
 
 _SYSTEM_PROMPT = (
     "사용자 질의에 특정 대상을 지칭하는 이름이 있으면 "
-    "extract_entity를 호출한다. 없으면 아무 도구도 호출하지 않는다."
+    "extract_entity를 호출한다. 없으면 아무 도구도 호출하지 않는다. "
+    "이름에 쉼표로 이어지는 색상·크기 등 수식어가 있으면 잘라내지 않고 "
+    "쉼표 이후 부분까지 이름 전체를 통째로 추출한다."
 )
 
 
@@ -39,7 +41,12 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
                     },
                     "entityName": {
                         "type": "string",
-                        "description": "질의에 등장하는 이름 문자열 그대로",
+                        "description": (
+                            "질의에 등장하는 이름 문자열 그대로. 쉼표로 이어지는 "
+                            "색상·크기 등 수식어가 있으면 잘라내지 말고 쉼표 이후 "
+                            "부분까지 포함해 통째로 추출한다 "
+                            "(예: 'Touring-1000 Yellow, 54')."
+                        ),
                     },
                 },
                 "required": ["entityType", "entityName"],
