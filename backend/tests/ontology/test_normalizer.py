@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ontology.loader import load_term_dictionary
 from ontology.normalizer import normalize_query
 
@@ -61,3 +63,24 @@ def test_english_terms_match_case_insensitively_as_whole_words() -> None:
     assert result["normalized_query"] == "공급업체의 부품을 show"
     assert len(result["matched_terms"]) == 2
     assert result["detected_actions"][0]["action_type"] == "READ"
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("자품 목록을 보여줘", "부품 목록을 보여줘"),
+        ("하위품 목록을 보여줘", "부품 목록을 보여줘"),
+        ("모품 목록을 보여줘", "완제품 목록을 보여줘"),
+        ("상위품 목록을 보여줘", "완제품 목록을 보여줘"),
+        ("작업오더 17747을 보여줘", "작업지시 17747을 보여줘"),
+        ("WO 17747을 보여줘", "작업지시 17747을 보여줘"),
+        ("스크랩 사유를 알려줘", "폐기사유를 알려줘"),
+        ("현재고를 알려줘", "재고를 알려줘"),
+        ("실재고를 알려줘", "재고를 알려줘"),
+    ],
+)
+def test_normalizes_project_manufacturing_terms(query: str, expected: str) -> None:
+    result = normalize_query(query, _DICTIONARY)
+
+    assert result["normalized_query"] == expected
+    assert len(result["matched_terms"]) == 1

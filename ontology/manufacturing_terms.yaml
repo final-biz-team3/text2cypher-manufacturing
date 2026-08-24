@@ -11,19 +11,19 @@ concepts:
     conceptType: BUSINESS
     canonical: 부품
     targetType: Product
-    terms: [부품, 자재, 구성품, component]
+    terms: [부품, 자재, 구성품, 자품, 하위품, component]
 
   - conceptId: finished_product
     conceptType: BUSINESS
     canonical: 완제품
     targetType: Product
-    terms: [완제품, 최종 제품, finished product, finished good]
+    terms: [완제품, 최종 제품, 모품, 상위품, finished product, finished good]
 
   - conceptId: work_order
     conceptType: BUSINESS
     canonical: 작업지시
     targetType: WorkOrder
-    terms: [작업지시, 생산 작업지시, 생산지시, work order, workorder]
+    terms: [작업지시, 생산 작업지시, 생산지시, 작업오더, WO, work order, workorder]
 
   - conceptId: routing_operation
     conceptType: BUSINESS
@@ -41,13 +41,13 @@ concepts:
     conceptType: BUSINESS
     canonical: 폐기사유
     targetType: ScrapReason
-    terms: [폐기사유, 폐기 사유, 폐기 원인, 불량 사유, scrap reason]
+    terms: [폐기사유, 폐기 사유, 폐기 원인, 불량 사유, 스크랩 사유, scrap reason]
 
   - conceptId: inventory
     conceptType: BUSINESS
     canonical: 재고
     targetType: null
-    terms: [재고, 재고량, inventory, stock]
+    terms: [재고, 재고량, 현재고, 실재고, inventory, stock]
 
   - conceptId: safety_stock
     conceptType: BUSINESS
