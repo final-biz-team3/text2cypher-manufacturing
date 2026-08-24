@@ -1,8 +1,11 @@
 """그래프 스키마에서 이름으로 검색 가능한 엔티티 타입 목록을 만든다."""
 
+import logging
 from dataclasses import dataclass
 
 from agents.cypher.schema.models import GraphSchema
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -24,14 +27,39 @@ def list_named_entity_types(schema: GraphSchema) -> list[NamedEntityType]:
     for node_name, node in schema.nodes.items():
         if "name" not in node.properties:
             continue
-        if node.source is None or node.unique_key is None:
+        if node.source is None:
+            logger.warning(
+                "list_named_entity_types: node=%r source 없음, 건너뜀", node_name
+            )
+            continue
+        if node.unique_key is None:
+            logger.warning(
+                "list_named_entity_types: node=%r uniqueKey 없음, 건너뜀", node_name
+            )
             continue
         if node.unique_key not in node.properties:
+            logger.warning(
+                "list_named_entity_types: node=%r uniqueKey=%r 속성 없음, 건너뜀",
+                node_name,
+                node.unique_key,
+            )
             continue
 
         id_source_column = node.properties[node.unique_key].source_column
         name_source_column = node.properties["name"].source_column
-        if id_source_column is None or name_source_column is None:
+        if id_source_column is None:
+            logger.warning(
+                "list_named_entity_types: node=%r uniqueKey=%r sourceColumn 없음, "
+                "건너뜀",
+                node_name,
+                node.unique_key,
+            )
+            continue
+        if name_source_column is None:
+            logger.warning(
+                "list_named_entity_types: node=%r name.sourceColumn 없음, 건너뜀",
+                node_name,
+            )
             continue
 
         entity_type = node_name[0].lower() + node_name[1:]

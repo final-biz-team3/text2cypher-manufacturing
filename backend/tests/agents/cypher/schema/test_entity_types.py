@@ -1,6 +1,9 @@
 """그래프 스키마에서 이름으로 검색 가능한 엔티티 타입을 도출하는 동작을 테스트한다."""
 
+import logging
 from pathlib import Path
+
+import pytest
 
 from agents.cypher.schema.entity_types import list_named_entity_types
 from agents.cypher.schema.loader import load_graph_schema
@@ -64,3 +67,32 @@ def test_list_named_entity_types_loads_project_schema() -> None:
     assert entity_types["supplier"].id_field == "supplierId"
     assert entity_types["scrapReason"].table == "production.scrapreason"
     assert entity_types["scrapReason"].name_field == "scrapReasonName"
+
+
+def test_list_named_entity_types_logs_warning_when_node_missing_source(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """name은 있지만 source가 없는 노드는 건너뛰며 경고 로그를 남긴다."""
+    schema = GraphSchema.model_validate(
+        {
+            "nodes": {
+                "Product": {
+                    "uniqueKey": "productId",
+                    "properties": {
+                        "productId": {"type": "INTEGER", "sourceColumn": "productid"},
+                        "name": {"type": "STRING", "sourceColumn": "name"},
+                    },
+                },
+            },
+            "relationships": {},
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        entity_types = list_named_entity_types(schema)
+
+    assert entity_types == []
+    assert any(
+        "Product" in record.getMessage() and "source" in record.getMessage()
+        for record in caplog.records
+    )
