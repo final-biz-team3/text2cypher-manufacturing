@@ -9,9 +9,16 @@ from agents.cypher.schema.models import GraphQueryPolicy
 from agents.cypher.schema.serializer import serialize_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from agents.sql.schema.serializer import serialize_sql_schema
+from guard.natural_language import (
+    make_natural_language_guard_node,
+    route_after_natural_guard,
+)
+from ontology.loader import load_term_dictionary
 from orchestrator.nodes.generate_queries import make_generate_queries_node
+from orchestrator.nodes.normalize_terms import make_normalize_terms_node
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import make_route_query_node
+from orchestrator.nodes.validate_generated_queries import validate_generated_queries
 from orchestrator.state import OrchestratorState
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -32,12 +39,15 @@ def _load_schema_context() -> tuple[str, str, GraphQueryPolicy]:
 
 
 # OpenAI/PostgreSQL 클라이언트를 주입받아 컴파일된 그래프를 반환
-# START -> resolve_entity -> route_query -> generate_queries -> END
+# START -> normalize_terms -> natural guard -> 기존 생성 흐름 -> query guard -> END
 def build_orchestrator_graph(
     openai_client: Any,
     postgres_connection: Any,
 ) -> CompiledStateGraph:
     sql_schema_text, cypher_schema_text, cypher_query_policy = _load_schema_context()
+    term_dictionary = load_term_dictionary(
+        _PROJECT_ROOT / "ontology" / "manufacturing_terms.yaml"
+    )
 
     graph = StateGraph(OrchestratorState)
     # mypy는 factory가 반환하는 `Callable[[OrchestratorState], dict]` 정적 타입을
@@ -45,6 +55,14 @@ def build_orchestrator_graph(
     # call-overload 오류를 낸다(런타임 시그니처는 `_Node`와 정확히 일치). 이는
     # langgraph 1.2.11의 add_node 오버로드/mypy 2.3.0 조합에서 알려진 타입 추론
     # 한계이며, 인자를 top-level 함수로 직접 넘기면 재현되지 않는다.
+    graph.add_node(
+        "normalize_terms",
+        make_normalize_terms_node(term_dictionary),  # type: ignore[call-overload]
+    )
+    graph.add_node(
+        "validate_natural_language",
+        make_natural_language_guard_node(openai_client),  # type: ignore[call-overload]
+    )
     graph.add_node(
         "resolve_entity",
         make_resolve_entity_node(openai_client, postgres_connection),  # type: ignore[call-overload]
@@ -61,8 +79,16 @@ def build_orchestrator_graph(
             cypher_query_policy=cypher_query_policy,
         ),  # type: ignore[call-overload]
     )
-    graph.add_edge(START, "resolve_entity")
+    graph.add_node("validate_generated_queries", validate_generated_queries)
+    graph.add_edge(START, "normalize_terms")
+    graph.add_edge("normalize_terms", "validate_natural_language")
+    graph.add_conditional_edges(
+        "validate_natural_language",
+        route_after_natural_guard,
+        {"continue": "resolve_entity", "stop": END},
+    )
     graph.add_edge("resolve_entity", "route_query")
     graph.add_edge("route_query", "generate_queries")
-    graph.add_edge("generate_queries", END)
+    graph.add_edge("generate_queries", "validate_generated_queries")
+    graph.add_edge("validate_generated_queries", END)
     return graph.compile()

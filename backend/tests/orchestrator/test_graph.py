@@ -88,3 +88,43 @@ def test_graph_generates_sql_without_entity_for_aggregate_query() -> None:
     assert result["tool_plan"] == ["sql"]
     assert result["sql_query"] == "SELECT COUNT(*) FROM production.product"
     assert result["cypher_query"] is None
+
+
+def test_graph_normalizes_synonyms_before_existing_nodes() -> None:
+    """동의어는 표준 용어로 바뀐 뒤 기존 엔티티·라우팅·생성 노드로 전달된다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("[]"),
+        make_content_response('["graph"]'),
+        make_content_response(
+            "MATCH (s:Supplier)-[:SUPPLIES]->(p:Product) RETURN s, p"
+        ),
+    )
+    graph = build_orchestrator_graph(
+        openai_client, MockPostgresConnection(rows_by_name={})
+    )
+
+    result = graph.invoke({"query": "협력사가 공급하는 자재를 보여줘."})
+
+    assert result["query"] == "협력사가 공급하는 자재를 보여줘."
+    assert result["normalized_query"] == "공급업체가 공급하는 부품를 보여줘."
+    assert result["tool_plan"] == ["graph"]
+    assert result["query_guard"]["decision"] == "PASSED"
+    assert result["execution_allowed"] is True
+    assert "공급업체가 공급하는 부품" in openai_client.calls[0]["messages"][1][
+        "content"
+    ]
+
+
+def test_graph_stops_before_llm_when_user_requests_write() -> None:
+    """명확한 쓰기 요청은 기존 LLM 기반 노드를 호출하지 않는다."""
+    openai_client = MockOpenAIClient()
+    graph = build_orchestrator_graph(
+        openai_client, MockPostgresConnection(rows_by_name={})
+    )
+
+    result = graph.invoke({"query": "모든 제품을 삭제해줘."})
+
+    assert result["natural_guard"]["decision"] == "BLOCK_WRITE"
+    assert result["execution_allowed"] is False
+    assert result.get("tool_plan") is None
+    assert openai_client.calls == []
