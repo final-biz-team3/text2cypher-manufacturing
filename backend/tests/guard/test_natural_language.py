@@ -1,5 +1,12 @@
+import json
+from pathlib import Path
+
 from guard.natural_language import make_natural_language_guard_node
+from ontology.loader import load_term_dictionary
+from ontology.normalizer import normalize_query
 from tests.mocks.openai import MockOpenAIClient, make_content_response
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_clear_read_request_is_allowed_without_llm_call() -> None:
@@ -60,3 +67,26 @@ def test_ambiguous_request_uses_llm_structured_classification(
     assert result["execution_allowed"] is False
     assert result["natural_guard"]["decision"] == "NEEDS_CLARIFICATION"
     assert len(client.calls) == 1
+
+
+def test_all_twenty_contract_questions_pass_as_read_requests() -> None:
+    contracts = json.loads(
+        (_PROJECT_ROOT / "queries" / "query_contracts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    questions = contracts["questions"]
+    dictionary = load_term_dictionary(
+        _PROJECT_ROOT / "ontology" / "manufacturing_terms.yaml"
+    )
+    client = MockOpenAIClient()
+    node = make_natural_language_guard_node(client)
+
+    assert len(questions) == 20
+    for contract in questions:
+        query = contract["sampleQuestion"]
+        normalized = normalize_query(query, dictionary)
+        result = node({"query": query, **normalized})
+        assert result["natural_guard"]["decision"] == "ALLOW_READ", contract["id"]
+
+    assert client.calls == []
