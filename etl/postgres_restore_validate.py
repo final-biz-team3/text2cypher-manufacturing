@@ -2,7 +2,7 @@
 
 두 단계로 검증한다.
 1. 테이블 단위: postgres_restore.parse_created_tables()가 plain SQL 덤프
-   텍스트에서 뽑은 "CREATE TABLE로 만들어질 테이블 목록"과 실제 DB의 테이블
+   파일에서 뽑은 "CREATE TABLE로 만들어질 테이블 목록"과 실제 DB의 테이블
    목록을 비교한다(find_missing_tables).
 2. 값 단위: queries/query_parameters.json의 entities에 있는 정확한
    정답값(제품명, 재고 수량, 작업지시 폐기수량 등)이 실제 DB 조회 결과와
@@ -216,7 +216,7 @@ def main() -> None:
     print("1) 덤프 파일 재확인")
     if not dump_path.exists():
         sys.exit(f"덤프 파일이 없습니다: {dump_path}")
-    expected_tables = parse_created_tables(dump_path.read_text(encoding="utf-8"))
+    expected_tables = parse_created_tables(dump_path)
     if not expected_tables:
         sys.exit(
             "덤프 파일에서 CREATE TABLE 문을 하나도 찾지 못했습니다 - "

@@ -67,20 +67,23 @@ BATCH_CHAR_LIMIT = 2_000_000
 CREATE_TABLE_LINE = re.compile(r"^CREATE TABLE (\S+)\.(\S+) \($")
 
 
-def parse_created_tables(sql_text: str) -> set[str]:
-    """plain SQL 덤프 텍스트에서 CREATE TABLE로 만들어질 테이블 이름을 뽑는다.
+def parse_created_tables(sql_path: Path) -> set[str]:
+    """plain SQL 덤프 파일에서 CREATE TABLE로 만들어질 테이블 이름을 뽑는다.
 
-    반환값은 "schema.table" 형태의 집합이며, 복원 후 실제 DB에 같은 테이블이
-    존재하는지 사후 검증(postgres_restore_validate.py)에서 대조하는 기준이 된다.
-    pg_dump --format=plain 출력은 "CREATE TABLE schema.table (" 형태로 한
-    줄에 딱 한 번씩 남기므로 정규식 하나로 충분하다.
+    파일 전체를 메모리에 올리지 않고 한 줄씩 읽는다(restore_sql_file()과 같은
+    이유 - 덤프가 커도 안전하게 처리하기 위함). 반환값은 "schema.table" 형태의
+    집합이며, 복원 후 실제 DB에 같은 테이블이 존재하는지 사후 검증
+    (postgres_restore_validate.py)에서 대조하는 기준이 된다. pg_dump
+    --format=plain 출력은 "CREATE TABLE schema.table (" 형태로 한 줄에 딱
+    한 번씩 남기므로 정규식 하나로 충분하다.
     """
     tables: set[str] = set()
-    for line in sql_text.splitlines():
-        match = CREATE_TABLE_LINE.match(line)
-        if match:
-            schema, table = match.groups()
-            tables.add(f"{schema}.{table}")
+    with sql_path.open(encoding="utf-8") as f:
+        for line in f:
+            match = CREATE_TABLE_LINE.match(line)
+            if match:
+                schema, table = match.groups()
+                tables.add(f"{schema}.{table}")
     return tables
 
 
@@ -406,8 +409,7 @@ def main() -> None:
         sys.exit(f"덤프 파일이 없습니다: {dump_path}")
 
     print("0) 덤프 파일 확인 (사전 검증)")
-    sql_text = dump_path.read_text(encoding="utf-8")
-    expected_tables = parse_created_tables(sql_text)
+    expected_tables = parse_created_tables(dump_path)
     if not expected_tables:
         sys.exit(
             "덤프 파일에서 CREATE TABLE 문을 하나도 찾지 못했습니다 - "
