@@ -268,3 +268,30 @@ def test_graph_schema_rejects_missing_relationships_field() -> None:
                 },
             }
         )
+
+
+def test_node_schema_captures_source_and_unique_key_for_internal_use() -> None:
+    """source·uniqueKey·sourceColumn을 파싱하되 model_dump에는 포함하지 않는다."""
+    schema = GraphSchema.model_validate(
+        {
+            "nodes": {
+                "Product": {
+                    "uniqueKey": "productId",
+                    "source": {"schema": "production", "table": "product"},
+                    "properties": {
+                        "productId": {"type": "INTEGER", "sourceColumn": "productid"},
+                    },
+                },
+            },
+            "relationships": {},
+        }
+    )
+
+    node = schema.nodes["Product"]
+    assert node.unique_key == "productId"
+    assert node.source is not None
+    assert node.source.schema_name == "production"
+    assert node.source.table == "product"
+    assert node.properties["productId"].source_column == "productid"
+    assert "unique_key" not in schema.model_dump()["nodes"]["Product"]
+    assert "source" not in schema.model_dump()["nodes"]["Product"]

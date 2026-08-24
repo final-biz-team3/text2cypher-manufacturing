@@ -5,7 +5,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agents.cypher.schema.loader import load_graph_schema
-from agents.cypher.schema.models import GraphQueryPolicy
+from agents.cypher.schema.models import GraphSchema
 from agents.cypher.schema.serializer import serialize_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from agents.sql.schema.serializer import serialize_sql_schema
@@ -24,8 +24,8 @@ from orchestrator.state import OrchestratorState
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load_schema_context() -> tuple[str, str, GraphQueryPolicy]:
-    """SQL/Cypher 스키마와 BOM 쿼리 정책을 프로젝트 YAML에서 읽는다."""
+def _load_schema_context() -> tuple[str, str, GraphSchema]:
+    """SQL/Cypher 스키마를 프로젝트 YAML에서 읽는다."""
     sql_schema = load_sql_schema(_PROJECT_ROOT / "schema" / "sql_schema.yaml")
     cypher_schema = load_graph_schema(_PROJECT_ROOT / "schema" / "graph_schema.yaml")
     if cypher_schema.query_policy is None:
@@ -34,7 +34,7 @@ def _load_schema_context() -> tuple[str, str, GraphQueryPolicy]:
     return (
         serialize_sql_schema(sql_schema),
         serialize_graph_schema(cypher_schema),
-        cypher_schema.query_policy,
+        cypher_schema,
     )
 
 
@@ -44,7 +44,9 @@ def build_orchestrator_graph(
     openai_client: Any,
     postgres_connection: Any,
 ) -> CompiledStateGraph:
-    sql_schema_text, cypher_schema_text, cypher_query_policy = _load_schema_context()
+    sql_schema_text, cypher_schema_text, cypher_schema = _load_schema_context()
+    cypher_query_policy = cypher_schema.query_policy
+    assert cypher_query_policy is not None
     term_dictionary = load_term_dictionary(
         _PROJECT_ROOT / "ontology" / "manufacturing_terms.yaml"
     )
@@ -65,7 +67,9 @@ def build_orchestrator_graph(
     )
     graph.add_node(
         "resolve_entity",
-        make_resolve_entity_node(openai_client, postgres_connection),  # type: ignore[call-overload]
+        make_resolve_entity_node(
+            openai_client, postgres_connection, cypher_schema
+        ),  # type: ignore[call-overload]
     )
     graph.add_node(
         "route_query", make_route_query_node(openai_client)  # type: ignore[call-overload]
