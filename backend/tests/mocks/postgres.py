@@ -26,11 +26,11 @@ class MockPostgresConnection:
         self,
         rows_by_name: dict[str, tuple[Any, ...]],
         similar_rows_by_name: dict[str, list[tuple[Any, ...]]] | None = None,
-        similarity_unavailable: bool = False,
+        similarity_error: Exception | None = None,
     ) -> None:
         self._rows_by_name = rows_by_name
         self._similar_rows_by_name = similar_rows_by_name or {}
-        self._similarity_unavailable = similarity_unavailable
+        self._similarity_error = similarity_error
         self.last_query: tuple[str, tuple[Any, ...]] | None = None
         self.rollback_called = False
 
@@ -39,8 +39,8 @@ class MockPostgresConnection:
         if not params:
             return _MockCursor(None, [])
         if "similarity(" in query:
-            if self._similarity_unavailable:
-                raise RuntimeError("function similarity(text, text) does not exist")
+            if self._similarity_error is not None:
+                raise self._similarity_error
             name = params[0]
             return _MockCursor(None, self._similar_rows_by_name.get(name, []))
         if len(params) == 2:

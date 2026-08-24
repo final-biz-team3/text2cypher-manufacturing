@@ -1,5 +1,6 @@
 """resolve_entity 노드가 엔티티를 확정하거나 통과시키는 동작을 테스트한다."""
 
+import psycopg
 import pytest
 
 from agents.cypher.schema.models import GraphSchema
@@ -216,7 +217,10 @@ def test_resolve_entity_raises_not_found_when_pg_trgm_unavailable() -> None:
         )
     )
     postgres_connection = MockPostgresConnection(
-        rows_by_name={}, similarity_unavailable=True
+        rows_by_name={},
+        similarity_error=psycopg.errors.UndefinedFunction(
+            "function similarity(text, text) does not exist"
+        ),
     )
     node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
 
@@ -224,6 +228,26 @@ def test_resolve_entity_raises_not_found_when_pg_trgm_unavailable() -> None:
         node({"query": "존재하지 않는 제품의 정가를 알려줘."})
 
     assert postgres_connection.rollback_called
+
+
+def test_resolve_entity_propagates_non_pg_trgm_database_errors() -> None:
+    """pg_trgm 미설치가 아닌 일반 DB 예외는 삼키지 않고 그대로 전파한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "존재하지 않는 제품"},
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={},
+        similarity_error=psycopg.OperationalError("connection lost"),
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    with pytest.raises(psycopg.OperationalError):
+        node({"query": "존재하지 않는 제품의 정가를 알려줘."})
+
+    assert not postgres_connection.rollback_called
 
 
 def test_resolve_entity_raises_ambiguous_with_similar_candidates() -> None:

@@ -4,6 +4,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+import psycopg
+
 from agents.cypher.schema.models import GraphSchema
 from orchestrator.entity_types import NamedEntityType, list_named_entity_types
 from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
@@ -124,7 +126,7 @@ def _find_similar_entities(
             f"ORDER BY score DESC LIMIT %s",
             (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
         )
-    except Exception:
+    except psycopg.errors.UndefinedFunction:
         postgres_connection.rollback()
         logger.warning(
             "resolve_entity: pg_trgm 유사도 검색을 사용할 수 없어 후보 없음으로 처리"
