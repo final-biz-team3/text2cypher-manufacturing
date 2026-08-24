@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from pydantic import ValidationError
 
 import api.chat as chat_module
 from api.chat import ChatRequest, chat
@@ -44,3 +45,14 @@ def test_chat_passes_confirmed_entity_to_orchestrator(
         "productName": "Touring-1000 Yellow, 54",
     }
     assert len(openai_client.calls) == 2
+
+
+def test_chat_request_rejects_unknown_field() -> None:
+    """confirmedEntity처럼 오타난 필드는 조용히 무시되지 않고 검증 에러가 난다."""
+    with pytest.raises(ValidationError):
+        ChatRequest.model_validate(
+            {
+                "query": "그 제품 정가 알려줘.",
+                "confirmedEntity": {"productId": 956},
+            }
+        )

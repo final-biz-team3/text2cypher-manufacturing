@@ -65,7 +65,13 @@ def _extract_entity(
     if not tool_calls:
         return None
     arguments = json.loads(tool_calls[0].function.arguments)
-    return arguments["entityType"], arguments["entityName"]
+    try:
+        return arguments["entityType"], arguments["entityName"]
+    except KeyError:
+        logger.warning(
+            "resolve_entity: extract_entity 인자 누락 arguments=%r", arguments
+        )
+        return None
 
 
 def _entity_type_config(
@@ -119,9 +125,32 @@ def _find_similar_entities(
             "name": row[1],
             "entityType": entity_type,
             "score": row[2],
+            "entity": {config.id_field: row[0], config.name_field: row[1]},
         }
         for row in cursor.fetchall()
     ]
+
+
+def _is_valid_confirmed_entity(
+    confirmed_entity: Any, entity_types: list[NamedEntityType]
+) -> bool:
+    """confirmed_entity가 알려진 엔티티 타입의 shape와 정확히 일치하는지 확인한다."""
+    if not isinstance(confirmed_entity, dict):
+        return False
+
+    for config in entity_types:
+        if set(confirmed_entity) != {config.id_field, config.name_field}:
+            continue
+        id_value = confirmed_entity[config.id_field]
+        name_value = confirmed_entity[config.name_field]
+        if (
+            isinstance(id_value, int)
+            and not isinstance(id_value, bool)
+            and isinstance(name_value, str)
+        ):
+            return True
+
+    return False
 
 
 def make_resolve_entity_node(
@@ -134,12 +163,19 @@ def make_resolve_entity_node(
     def resolve_entity(state: OrchestratorState) -> dict:
         confirmed_entity = state.get("confirmed_entity")
         if confirmed_entity is not None:
-            logger.info(
-                "resolve_entity: query=%r -> confirmed_entity=%s (재진입)",
+            if _is_valid_confirmed_entity(confirmed_entity, entity_types):
+                logger.info(
+                    "resolve_entity: query=%r -> confirmed_entity=%s (재진입)",
+                    state["query"],
+                    confirmed_entity,
+                )
+                return {"entity": confirmed_entity}
+            logger.warning(
+                "resolve_entity: query=%r -> confirmed_entity=%r 형식이 올바르지 않음 "
+                "(무시하고 재추출)",
                 state["query"],
                 confirmed_entity,
             )
-            return {"entity": confirmed_entity}
 
         extraction = _extract_entity(state["query"], openai_client, extract_tool)
         if extraction is None:
@@ -149,9 +185,17 @@ def make_resolve_entity_node(
             return {"entity": None}
 
         entity_type, entity_name = extraction
-        entity = _find_entity_by_name(
-            entity_type, entity_name, postgres_connection, entity_types
-        )
+        try:
+            entity = _find_entity_by_name(
+                entity_type, entity_name, postgres_connection, entity_types
+            )
+        except ValueError:
+            logger.warning(
+                "resolve_entity: query=%r -> 알 수 없는 entityType=%r (entity=None 처리)",
+                state["query"],
+                entity_type,
+            )
+            return {"entity": None}
         if entity is None:
             candidates = _find_similar_entities(
                 entity_type, entity_name, postgres_connection, entity_types

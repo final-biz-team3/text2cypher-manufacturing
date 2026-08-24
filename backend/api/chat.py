@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from core.openai_client import get_openai_client
 from core.postgres import get_connection
@@ -9,6 +9,8 @@ router = APIRouter()
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str
     confirmed_entity: dict | None = None
 
