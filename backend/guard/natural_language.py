@@ -25,6 +25,10 @@ _WRITE_COMMAND_PATTERNS = (
         r"register|alter|truncate|grant|revoke)\b",
         re.I,
     ),
+    # 채팅에서는 "새 제품도 등록"처럼 요청형 어미 없이 쓰기 동작만으로
+    # 명령을 끝내기도 한다. "등록된 제품"처럼 뒤에 수식어가 이어지는 표현은
+    # 매칭하지 않고, 문장 끝에 놓인 쓰기 동작만 명확한 명령으로 처리한다.
+    re.compile(r"(삭제|제거|수정|변경|갱신|추가|등록|생성)\s*[.!?]?\s*$", re.I),
 )
 _READ_REQUEST_PATTERN = re.compile(
     r"(알려|보여|조회|검색|찾아|확인|계산|비교|분석|몇\s*개|얼마|"
@@ -42,7 +46,9 @@ _SYSTEM_PROMPT = """당신은 읽기 전용 제조 데이터 챗봇의 요청 �
 
 
 def _action_intent(actions: list[DetectedAction]) -> NaturalIntent:
-    blocked = [item["action_type"] for item in actions if item["default_policy"] == "BLOCK"]
+    blocked = [
+        item["action_type"] for item in actions if item["default_policy"] == "BLOCK"
+    ]
     return blocked[0] if blocked else "UNKNOWN"
 
 
@@ -81,13 +87,17 @@ def _classify_with_llm(
         decision: Literal["ALLOW_READ", "BLOCK_WRITE", "NEEDS_CLARIFICATION"] = (
             "ALLOW_READ"
         )
-    elif intent in {
-        "CREATE",
-        "UPDATE",
-        "DELETE",
-        "SCHEMA_CHANGE",
-        "PERMISSION_CHANGE",
-    } and confidence >= 0.8:
+    elif (
+        intent
+        in {
+            "CREATE",
+            "UPDATE",
+            "DELETE",
+            "SCHEMA_CHANGE",
+            "PERMISSION_CHANGE",
+        }
+        and confidence >= 0.8
+    ):
         decision = "BLOCK_WRITE"
     else:
         intent = "UNKNOWN"
@@ -107,6 +117,7 @@ def make_natural_language_guard_node(
         original = state["query"]
         normalized = state.get("normalized_query") or original
         actions = state.get("detected_actions", [])
+        has_blocked_action = any(item["default_policy"] == "BLOCK" for item in actions)
 
         if any(pattern.search(original) for pattern in _WRITE_COMMAND_PATTERNS):
             intent = _action_intent(actions)
@@ -118,7 +129,7 @@ def make_natural_language_guard_node(
                 "reason": "데이터 또는 스키마 변경을 요청한 문장입니다.",
                 "confidence": 1.0,
             }
-        elif _READ_REQUEST_PATTERN.search(original):
+        elif _READ_REQUEST_PATTERN.search(original) and not has_blocked_action:
             result = {
                 "decision": "ALLOW_READ",
                 "intent": "READ",
@@ -126,9 +137,17 @@ def make_natural_language_guard_node(
                 "confidence": 1.0,
             }
         else:
+            # "삭제된 제품을 보여줘"처럼 쓰기 단어가 상태 설명으로 사용되는
+            # 경우와, 조회·쓰기 표현이 섞인 문장은 단어만으로 확정하지 않는다.
             try:
                 result = _classify_with_llm(original, normalized, openai_client)
-            except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            except (
+                AttributeError,
+                KeyError,
+                TypeError,
+                ValueError,
+                json.JSONDecodeError,
+            ):
                 result = {
                     "decision": "NEEDS_CLARIFICATION",
                     "intent": "UNKNOWN",
