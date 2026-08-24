@@ -24,7 +24,9 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_driver()
-    get_connection()
+    connection = get_connection()
+    connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    connection.commit()
     yield
     close_driver()
     close_connection()
