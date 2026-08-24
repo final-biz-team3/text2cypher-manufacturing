@@ -4,6 +4,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+import psycopg
+
 from agents.cypher.schema.models import GraphSchema
 from orchestrator.entity_types import NamedEntityType, list_named_entity_types
 from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
@@ -92,13 +94,11 @@ def _entity_type_config(
 
 
 def _find_entity_by_name(
-    entity_type: str,
+    config: NamedEntityType,
     name: str,
     postgres_connection: Any,
-    entity_types: list[NamedEntityType],
 ) -> dict | None:
     """엔티티 타입별 테이블·컬럼으로 이름을 정확 일치 조회한다."""
-    config = _entity_type_config(entity_type, entity_types)
     cursor = postgres_connection.execute(
         f"SELECT {config.id_column}, {config.name_column} "
         f"FROM {config.table} WHERE {config.name_column} = %s",
@@ -111,36 +111,32 @@ def _find_entity_by_name(
 
 
 def _find_similar_entities(
-    entity_type: str,
+    config: NamedEntityType,
     name: str,
     postgres_connection: Any,
-    entity_types: list[NamedEntityType],
 ) -> list[dict]:
-    """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다."""
-    extension_cursor = postgres_connection.execute(
-        "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')"
-    )
-    extension_row = extension_cursor.fetchone()
-    if extension_row is None or not extension_row[0]:
+    """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다.
+    pg_trgm을 쓸 수 없으면 롤백 후 후보 없음으로 처리한다."""
+    try:
+        cursor = postgres_connection.execute(
+            f"SELECT {config.id_column}, {config.name_column}, "
+            f"similarity({config.name_column}, %s) AS score "
+            f"FROM {config.table} "
+            f"WHERE similarity({config.name_column}, %s) >= %s "
+            f"ORDER BY score DESC LIMIT %s",
+            (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
+        )
+    except psycopg.errors.UndefinedFunction:
+        postgres_connection.rollback()
         logger.warning(
-            "resolve_entity: pg_trgm을 사용할 수 없어 유사 이름 검색을 건너뜀"
+            "resolve_entity: pg_trgm 유사도 검색을 사용할 수 없어 후보 없음으로 처리"
         )
         return []
-
-    config = _entity_type_config(entity_type, entity_types)
-    cursor = postgres_connection.execute(
-        f"SELECT {config.id_column}, {config.name_column}, "
-        f"similarity({config.name_column}, %s) AS score "
-        f"FROM {config.table} "
-        f"WHERE similarity({config.name_column}, %s) >= %s "
-        f"ORDER BY score DESC LIMIT %s",
-        (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
-    )
     return [
         {
             "id": row[0],
             "name": row[1],
-            "entityType": entity_type,
+            "entityType": config.entity_type,
             "score": row[2],
             "entity": {config.id_field: row[0], config.name_field: row[1]},
         }
@@ -151,7 +147,7 @@ def _find_similar_entities(
 def _confirmed_entity_config(
     confirmed_entity: Any, entity_types: list[NamedEntityType]
 ) -> NamedEntityType | None:
-    """confirmed_entity 형식과 일치하는 엔티티 설정을 반환한다."""
+    """confirmed_entity의 shape과 일치하는 엔티티 타입 설정을 찾는다."""
     if not isinstance(confirmed_entity, dict):
         return None
 
@@ -170,28 +166,16 @@ def _confirmed_entity_config(
     return None
 
 
-def _find_confirmed_entity(
-    confirmed_entity: Any,
-    postgres_connection: Any,
-    entity_types: list[NamedEntityType],
-) -> dict | None:
-    """사용자가 확인한 ID와 이름이 PostgreSQL의 같은 행인지 검증한다."""
-    config = _confirmed_entity_config(confirmed_entity, entity_types)
-    if config is None:
-        return None
-
-    id_value = confirmed_entity[config.id_field]
-    name_value = confirmed_entity[config.name_field]
+def _confirmed_entity_exists(
+    confirmed_entity: dict, config: NamedEntityType, postgres_connection: Any
+) -> bool:
+    """confirmed_entity의 id·name이 실제 DB 행과 일치하는지 확인한다."""
     cursor = postgres_connection.execute(
-        f"SELECT {config.id_column}, {config.name_column} "
-        f"FROM {config.table} "
+        f"SELECT 1 FROM {config.table} "
         f"WHERE {config.id_column} = %s AND {config.name_column} = %s",
-        (id_value, name_value),
+        (confirmed_entity[config.id_field], confirmed_entity[config.name_field]),
     )
-    row = cursor.fetchone()
-    if row is None:
-        return None
-    return {config.id_field: row[0], config.name_field: row[1]}
+    return cursor.fetchone() is not None
 
 
 def make_resolve_entity_node(
@@ -199,25 +183,29 @@ def make_resolve_entity_node(
 ) -> Callable[[OrchestratorState], dict]:
     """OpenAI/PostgreSQL 클라이언트와 그래프 스키마를 주입받은 resolve_entity 노드를 만든다."""
     entity_types = list_named_entity_types(graph_schema)
+    if not entity_types:
+        raise ValueError(
+            "그래프 스키마에 이름으로 검색 가능한 엔티티 타입이 하나도 없습니다."
+        )
     extract_tool = _build_extract_entity_tool(entity_types)
 
     def resolve_entity(state: OrchestratorState) -> dict:
         query = get_effective_query(state)
         confirmed_entity = state.get("confirmed_entity")
         if confirmed_entity is not None:
-            verified_entity = _find_confirmed_entity(
-                confirmed_entity, postgres_connection, entity_types
-            )
-            if verified_entity is not None:
+            confirmed_config = _confirmed_entity_config(confirmed_entity, entity_types)
+            if confirmed_config is not None and _confirmed_entity_exists(
+                confirmed_entity, confirmed_config, postgres_connection
+            ):
                 logger.info(
                     "resolve_entity: query=%r -> confirmed_entity=%s (재진입)",
                     query,
-                    verified_entity,
+                    confirmed_entity,
                 )
-                return {"entity": verified_entity}
+                return {"entity": confirmed_entity}
             logger.warning(
-                "resolve_entity: query=%r -> confirmed_entity=%r가 DB와 일치하지 않음 "
-                "또는 형식이 올바르지 않음 (무시하고 재추출)",
+                "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
+                "(무시하고 재추출)",
                 query,
                 confirmed_entity,
             )
@@ -229,9 +217,7 @@ def make_resolve_entity_node(
 
         entity_type, entity_name = extraction
         try:
-            entity = _find_entity_by_name(
-                entity_type, entity_name, postgres_connection, entity_types
-            )
+            config = _entity_type_config(entity_type, entity_types)
         except ValueError:
             logger.warning(
                 "resolve_entity: query=%r -> 알 수 없는 entityType=%r (entity=None 처리)",
@@ -239,9 +225,11 @@ def make_resolve_entity_node(
                 entity_type,
             )
             return {"entity": None}
+
+        entity = _find_entity_by_name(config, entity_name, postgres_connection)
         if entity is None:
             candidates = _find_similar_entities(
-                entity_type, entity_name, postgres_connection, entity_types
+                config, entity_name, postgres_connection
             )
             if candidates:
                 logger.info(

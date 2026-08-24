@@ -1,11 +1,16 @@
 """그래프 스키마에서 이름으로 검색 가능한 엔티티 타입 목록을 만든다."""
 
 import logging
+import re
 from dataclasses import dataclass
 
 from agents.cypher.schema.models import GraphSchema
 
 logger = logging.getLogger(__name__)
+
+_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+_COLUMN_PATTERN = re.compile(rf"^{_IDENTIFIER}$")
+_TABLE_PATTERN = re.compile(rf"^{_IDENTIFIER}\.{_IDENTIFIER}$")
 
 
 @dataclass(frozen=True)
@@ -62,12 +67,29 @@ def list_named_entity_types(schema: GraphSchema) -> list[NamedEntityType]:
             )
             continue
 
+        table = f"{node.source.schema_name}.{node.source.table}"
+        if not _TABLE_PATTERN.match(table):
+            logger.warning(
+                "list_named_entity_types: node=%r table=%r 식별자 형식이 아님, 건너뜀",
+                node_name,
+                table,
+            )
+            continue
+        if not _COLUMN_PATTERN.match(id_source_column) or not _COLUMN_PATTERN.match(
+            name_source_column
+        ):
+            logger.warning(
+                "list_named_entity_types: node=%r 컬럼명이 식별자 형식이 아님, 건너뜀",
+                node_name,
+            )
+            continue
+
         entity_type = node_name[0].lower() + node_name[1:]
 
         entity_types.append(
             NamedEntityType(
                 entity_type=entity_type,
-                table=f"{node.source.schema_name}.{node.source.table}",
+                table=table,
                 id_column=id_source_column,
                 name_column=name_source_column,
                 id_field=node.unique_key,

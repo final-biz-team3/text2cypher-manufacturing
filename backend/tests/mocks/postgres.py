@@ -26,29 +26,28 @@ class MockPostgresConnection:
         self,
         rows_by_name: dict[str, tuple[Any, ...]],
         similar_rows_by_name: dict[str, list[tuple[Any, ...]]] | None = None,
-        pg_trgm_available: bool = True,
+        similarity_error: Exception | None = None,
     ) -> None:
         self._rows_by_name = rows_by_name
         self._similar_rows_by_name = similar_rows_by_name or {}
-        self._pg_trgm_available = pg_trgm_available
+        self._similarity_error = similarity_error
         self.last_query: tuple[str, tuple[Any, ...]] | None = None
-        self.queries: list[tuple[str, tuple[Any, ...]]] = []
+        self.rollback_called = False
 
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> _MockCursor:
         self.last_query = (query, params)
-        self.queries.append((query, params))
-        if "FROM pg_extension" in query:
-            return _MockCursor((self._pg_trgm_available,), [])
         if not params:
             return _MockCursor(None, [])
         if "similarity(" in query:
+            if self._similarity_error is not None:
+                raise self._similarity_error
             name = params[0]
             return _MockCursor(None, self._similar_rows_by_name.get(name, []))
         if len(params) == 2:
-            entity_id, name = params
-            row = self._rows_by_name.get(name)
-            if row is not None and row[0] == entity_id and row[1] == name:
-                return _MockCursor(row, [])
-            return _MockCursor(None, [])
+            exists = params in self._rows_by_name.values()
+            return _MockCursor((1,) if exists else None, [])
         name = params[0]
         return _MockCursor(self._rows_by_name.get(name), [])
+
+    def rollback(self) -> None:
+        self.rollback_called = True

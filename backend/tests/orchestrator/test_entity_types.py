@@ -69,6 +69,66 @@ def test_list_named_entity_types_loads_project_schema() -> None:
     assert entity_types["scrapReason"].name_field == "scrapReasonName"
 
 
+def test_list_named_entity_types_skips_node_with_unsafe_table_identifier(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """table 값이 안전한 식별자 형식이 아니면 건너뛰며 경고 로그를 남긴다."""
+    schema = GraphSchema.model_validate(
+        {
+            "nodes": {
+                "Product": {
+                    "uniqueKey": "productId",
+                    "source": {
+                        "schema": "production",
+                        "table": "product; DROP TABLE x;--",
+                    },
+                    "properties": {
+                        "productId": {"type": "INTEGER", "sourceColumn": "productid"},
+                        "name": {"type": "STRING", "sourceColumn": "name"},
+                    },
+                },
+            },
+            "relationships": {},
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        entity_types = list_named_entity_types(schema)
+
+    assert entity_types == []
+    assert any("Product" in record.getMessage() for record in caplog.records)
+
+
+def test_list_named_entity_types_skips_node_with_unsafe_column_identifier(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """컬럼명이 안전한 식별자 형식이 아니면 건너뛰며 경고 로그를 남긴다."""
+    schema = GraphSchema.model_validate(
+        {
+            "nodes": {
+                "Product": {
+                    "uniqueKey": "productId",
+                    "source": {"schema": "production", "table": "product"},
+                    "properties": {
+                        "productId": {"type": "INTEGER", "sourceColumn": "productid"},
+                        "name": {
+                            "type": "STRING",
+                            "sourceColumn": "name; DROP TABLE x;--",
+                        },
+                    },
+                },
+            },
+            "relationships": {},
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        entity_types = list_named_entity_types(schema)
+
+    assert entity_types == []
+    assert any("Product" in record.getMessage() for record in caplog.records)
+
+
 def test_list_named_entity_types_logs_warning_when_node_missing_source(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

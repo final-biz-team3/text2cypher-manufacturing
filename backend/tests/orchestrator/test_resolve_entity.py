@@ -1,5 +1,6 @@
 """resolve_entity 노드가 엔티티를 확정하거나 통과시키는 동작을 테스트한다."""
 
+import psycopg
 import pytest
 
 from agents.cypher.schema.models import GraphSchema
@@ -40,6 +41,34 @@ def _graph_schema() -> GraphSchema:
             "relationships": {},
         }
     )
+
+
+def test_make_resolve_entity_node_raises_when_no_named_entity_types() -> None:
+    """이름 검색 가능한 엔티티 타입이 없는 스키마면 즉시 실패한다."""
+    schema = GraphSchema.model_validate(
+        {
+            "nodes": {
+                "WorkOrder": {
+                    "uniqueKey": "workOrderId",
+                    "source": {"schema": "production", "table": "workorder"},
+                    "properties": {
+                        "workOrderId": {
+                            "type": "INTEGER",
+                            "sourceColumn": "workorderid",
+                        },
+                    },
+                },
+            },
+            "relationships": {},
+        }
+    )
+
+    with pytest.raises(ValueError):
+        make_resolve_entity_node(
+            MockOpenAIClient(make_no_tool_call_response()),
+            MockPostgresConnection(rows_by_name={}),
+            schema,
+        )
 
 
 def test_resolve_entity_returns_entity_when_product_found() -> None:
@@ -126,8 +155,8 @@ def test_resolve_entity_requires_openai_model(
     assert openai_client.calls == []
 
 
-def test_resolve_entity_returns_confirmed_entity_after_database_verification() -> None:
-    """confirmed_entity가 DB의 ID·이름과 일치하면 LLM 재추출 없이 확정한다."""
+def test_resolve_entity_returns_confirmed_entity_when_it_matches_db() -> None:
+    """confirmed_entity가 DB 행과 일치하면 매칭 없이 그대로 확정한다."""
     openai_client = MockOpenAIClient(make_no_tool_call_response())
     postgres_connection = MockPostgresConnection(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
@@ -148,8 +177,77 @@ def test_resolve_entity_returns_confirmed_entity_after_database_verification() -
         "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     }
     assert openai_client.calls == []
-    assert postgres_connection.last_query is not None
-    assert postgres_connection.last_query[1] == (956, "Touring-1000 Yellow, 54")
+
+
+def test_resolve_entity_falls_through_when_confirmed_entity_not_in_db() -> None:
+    """confirmed_entity 형태는 맞지만 DB에 없는 값이면 무시하고 재추출한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node(
+        {
+            "query": "Touring-1000 Yellow, 54의 정가를 알려줘.",
+            "confirmed_entity": {
+                "productId": 999999,
+                "productName": "존재하지 않는 제품",
+            },
+        }
+    )
+
+    assert result == {
+        "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
+    }
+    assert len(openai_client.calls) == 1
+
+
+def test_resolve_entity_raises_not_found_when_pg_trgm_unavailable() -> None:
+    """pg_trgm을 쓸 수 없으면 후보 없음으로 처리하고 EntityNotFoundError를 발생시킨다."""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "존재하지 않는 제품"},
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={},
+        similarity_error=psycopg.errors.UndefinedFunction(
+            "function similarity(text, text) does not exist"
+        ),
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    with pytest.raises(EntityNotFoundError):
+        node({"query": "존재하지 않는 제품의 정가를 알려줘."})
+
+    assert postgres_connection.rollback_called
+
+
+def test_resolve_entity_propagates_non_pg_trgm_database_errors() -> None:
+    """pg_trgm 미설치가 아닌 일반 DB 예외는 삼키지 않고 그대로 전파한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "존재하지 않는 제품"},
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={},
+        similarity_error=psycopg.OperationalError("connection lost"),
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    with pytest.raises(psycopg.OperationalError):
+        node({"query": "존재하지 않는 제품의 정가를 알려줘."})
+
+    assert not postgres_connection.rollback_called
 
 
 def test_resolve_entity_raises_ambiguous_with_similar_candidates() -> None:
@@ -233,55 +331,6 @@ def test_resolve_entity_candidate_entity_round_trips_as_confirmed_entity() -> No
 
     assert result == {"entity": candidate_entity}
     assert reentry_openai_client.calls == []
-    assert reentry_postgres_connection.last_query is not None
-
-
-def test_resolve_entity_reextracts_when_confirmed_entity_does_not_exist() -> None:
-    """클라이언트가 임의 confirmed_entity를 보내면 DB 검증 후 다시 추출한다."""
-    openai_client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
-        )
-    )
-    postgres_connection = MockPostgresConnection(
-        rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
-    )
-    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
-
-    result = node(
-        {
-            "query": "Touring-1000 Yellow, 54의 정가를 알려줘.",
-            "confirmed_entity": {
-                "productId": 999999,
-                "productName": "존재하지 않는 제품",
-            },
-        }
-    )
-
-    assert result == {
-        "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
-    }
-    assert len(openai_client.calls) == 1
-
-
-def test_resolve_entity_skips_similarity_when_pg_trgm_is_unavailable() -> None:
-    """pg_trgm이 없으면 similarity 함수를 호출하지 않고 NOT_FOUND로 처리한다."""
-    openai_client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "product", "entityName": "존재하지 않는 제품"},
-        )
-    )
-    postgres_connection = MockPostgresConnection(
-        rows_by_name={}, pg_trgm_available=False
-    )
-    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
-
-    with pytest.raises(EntityNotFoundError):
-        node({"query": "존재하지 않는 제품의 정가를 알려줘."})
-
-    assert not any("similarity(" in query for query, _ in postgres_connection.queries)
 
 
 def test_resolve_entity_falls_through_when_confirmed_entity_has_wrong_keys() -> None:
