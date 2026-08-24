@@ -63,3 +63,16 @@ def test_route_query_requires_openai_model(monkeypatch: pytest.MonkeyPatch) -> N
         node({"query": "제품의 정가를 알려줘.", "entity": None})
 
     assert openai_client.calls == []
+
+
+@pytest.mark.parametrize(
+    "tool_plan_json",
+    ["[]", '["unknown"]', '"sql"'],
+)
+def test_route_query_rejects_invalid_plan(tool_plan_json: str) -> None:
+    """빈 계획, 지원하지 않는 도구, 리스트가 아닌 값은 거부한다."""
+    openai_client = MockOpenAIClient(make_content_response(tool_plan_json))
+    node = make_route_query_node(openai_client)
+
+    with pytest.raises(ValueError):
+        node({"query": "질의", "entity": None})
