@@ -115,7 +115,7 @@ def build_orchestrator_graph(
     graph = StateGraph(OrchestratorState)
     # mypy는 factory가 반환하는 `Callable[[OrchestratorState], dict]` 정적 타입을
     # add_node의 `_Node[NodeInputT] | ...` 오버로드 Union과 단일화하지 못해
-    # call-overload 오류를 낸다(런타임 시그니처는 `_Node`와 정확히 일치). 이는
+    # arg-type 오류를 낸다(런타임 시그니처는 `_Node`와 정확히 일치). 이는
     # langgraph 1.2.11의 add_node 오버로드/mypy 2.3.0 조합에서 알려진 타입 추론
     # 한계이며, 인자를 top-level 함수로 직접 넘기면 재현되지 않는다.
     graph.add_node(

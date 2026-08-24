@@ -1,5 +1,6 @@
 """SQL을 한 번 생성하고 한 번 실행을 시도하는 뼈대 SubGraph를 만든다."""
 
+import logging
 from collections.abc import Callable
 from typing import Any, TypedDict
 
@@ -7,6 +8,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from agents.sql.generator import generate_sql
+
+logger = logging.getLogger(__name__)
 
 
 class SQLAgentState(TypedDict):
@@ -39,6 +42,7 @@ def make_sql_agent_subgraph(
         try:
             result = execute_sql(sql)
         except Exception as exc:
+            logger.warning("sql_agent: SQL 실행 실패: %s", exc, exc_info=True)
             return {"error": str(exc), "result": None}
         return {"result": result, "error": None}
 
