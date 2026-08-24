@@ -25,7 +25,9 @@ def test_chat_passes_confirmed_entity_to_orchestrator(
     monkeypatch.setattr(
         chat_module,
         "get_connection",
-        lambda: MockPostgresConnection(rows_by_name={}),
+        lambda: MockPostgresConnection(
+            rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
+        ),
     )
 
     result = asyncio.run(

@@ -26,16 +26,29 @@ class MockPostgresConnection:
         self,
         rows_by_name: dict[str, tuple[Any, ...]],
         similar_rows_by_name: dict[str, list[tuple[Any, ...]]] | None = None,
+        pg_trgm_available: bool = True,
     ) -> None:
         self._rows_by_name = rows_by_name
         self._similar_rows_by_name = similar_rows_by_name or {}
+        self._pg_trgm_available = pg_trgm_available
         self.last_query: tuple[str, tuple[Any, ...]] | None = None
+        self.queries: list[tuple[str, tuple[Any, ...]]] = []
 
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> _MockCursor:
         self.last_query = (query, params)
+        self.queries.append((query, params))
+        if "FROM pg_extension" in query:
+            return _MockCursor((self._pg_trgm_available,), [])
         if not params:
             return _MockCursor(None, [])
-        name = params[0]
         if "similarity(" in query:
+            name = params[0]
             return _MockCursor(None, self._similar_rows_by_name.get(name, []))
+        if len(params) == 2:
+            entity_id, name = params
+            row = self._rows_by_name.get(name)
+            if row is not None and row[0] == entity_id and row[1] == name:
+                return _MockCursor(row, [])
+            return _MockCursor(None, [])
+        name = params[0]
         return _MockCursor(self._rows_by_name.get(name), [])
