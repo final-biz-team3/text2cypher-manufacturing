@@ -33,6 +33,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-sql:/docker-entrypoint-initdb.d  # 덤프 파일 자동 실행
+      # pg_trgm 확장 필요 (유사 이름 검색) - 앱 시작 시 backend/main.py의 lifespan이 보장한다
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-adventureworks}"]
       interval: 10s

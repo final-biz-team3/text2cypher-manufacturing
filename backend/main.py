@@ -20,13 +20,20 @@ logging.basicConfig(
     level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s"
 )
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     get_driver()
     connection = get_connection()
-    connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-    connection.commit()
+    try:
+        connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        connection.commit()
+    except Exception:
+        logger.warning(
+            "pg_trgm 확장을 준비하지 못했습니다 — 유사 이름 검색이 비활성화됩니다"
+        )
     yield
     close_driver()
     close_connection()
