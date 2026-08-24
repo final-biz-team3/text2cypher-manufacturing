@@ -1,0 +1,104 @@
+version: "1.0"
+
+concepts:
+  - conceptId: supplier
+    conceptType: BUSINESS
+    canonical: 공급업체
+    targetType: Supplier
+    terms: [공급업체, 공급사, 협력사, 납품업체, supplier, vendor]
+
+  - conceptId: component
+    conceptType: BUSINESS
+    canonical: 부품
+    targetType: Product
+    terms: [부품, 자재, 구성품, component, part]
+
+  - conceptId: finished_product
+    conceptType: BUSINESS
+    canonical: 완제품
+    targetType: Product
+    terms: [완제품, 최종 제품, finished product, finished good]
+
+  - conceptId: work_order
+    conceptType: BUSINESS
+    canonical: 작업지시
+    targetType: WorkOrder
+    terms: [작업지시, 생산 작업지시, 생산지시, work order, workorder]
+
+  - conceptId: routing_operation
+    conceptType: BUSINESS
+    canonical: 공정
+    targetType: RoutingOperation
+    terms: [공정, 작업 공정, 라우팅 공정, routing operation]
+
+  - conceptId: location
+    conceptType: BUSINESS
+    canonical: 작업장
+    targetType: Location
+    terms: [작업장, 공정 위치, work center]
+
+  - conceptId: scrap_reason
+    conceptType: BUSINESS
+    canonical: 폐기사유
+    targetType: ScrapReason
+    terms: [폐기사유, 폐기 사유, 폐기 원인, 불량 사유, scrap reason]
+
+  - conceptId: inventory
+    conceptType: BUSINESS
+    canonical: 재고
+    targetType: null
+    terms: [재고, 재고량, inventory, stock]
+
+  - conceptId: safety_stock
+    conceptType: BUSINESS
+    canonical: 안전재고
+    targetType: null
+    terms: [안전재고, 안전재고 수준, safety stock, safety stock level]
+
+  - conceptId: bom
+    conceptType: BUSINESS
+    canonical: BOM
+    targetType: REQUIRES_COMPONENT
+    terms: [BOM, 자재명세서, 부품 구성표, bill of materials]
+
+  - conceptId: action_read
+    conceptType: ACTION
+    canonical: 조회
+    actionType: READ
+    defaultPolicy: ALLOW
+    terms: [조회, 검색, 보여줘, 알려줘, 찾아줘, 확인, 계산, 비교, 분석, select, show, find, search, get, list]
+
+  - conceptId: action_create
+    conceptType: ACTION
+    canonical: 생성
+    actionType: CREATE
+    defaultPolicy: BLOCK
+    terms: [생성, 추가, 등록, 만들어줘, create, insert, add, register]
+
+  - conceptId: action_update
+    conceptType: ACTION
+    canonical: 수정
+    actionType: UPDATE
+    defaultPolicy: BLOCK
+    terms: [수정, 변경, 갱신, 바꿔줘, update, modify, edit, change]
+
+  - conceptId: action_delete
+    conceptType: ACTION
+    canonical: 삭제
+    actionType: DELETE
+    defaultPolicy: BLOCK
+    terms: [삭제, 제거, 지워줘, 없애줘, delete, remove, erase]
+
+  - conceptId: action_schema_change
+    conceptType: ACTION
+    canonical: 스키마 변경
+    actionType: SCHEMA_CHANGE
+    defaultPolicy: BLOCK
+    terms: [구조 변경, 테이블 생성, 인덱스 생성, alter, truncate, create index, drop table]
+
+  - conceptId: action_permission_change
+    conceptType: ACTION
+    canonical: 권한 변경
+    actionType: PERMISSION_CHANGE
+    defaultPolicy: BLOCK
+    terms: [권한 부여, 권한 제거, grant, revoke]
