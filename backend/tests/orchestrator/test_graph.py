@@ -13,7 +13,8 @@ def test_graph_resolves_entity_then_routes_to_sql() -> None:
     """제품명이 있는 SQL형 질의는 entity 확정 후 sql로 라우팅된다."""
     openai_client = MockOpenAIClient(
         make_tool_call_response(
-            "extract_product_name", {"productName": "Touring-1000 Yellow, 54"}
+            "extract_entity",
+            {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
         ),
         make_content_response('["sql"]'),
         make_content_response(
@@ -46,7 +47,7 @@ def test_graph_routes_to_graph_for_relationship_query() -> None:
     """부품 사용처를 묻는 질의는 entity 확정 후 graph로 라우팅된다."""
     openai_client = MockOpenAIClient(
         make_tool_call_response(
-            "extract_product_name", {"productName": "Paint - Black"}
+            "extract_entity", {"entityType": "product", "entityName": "Paint - Black"}
         ),
         make_content_response('["graph"]'),
         make_content_response(

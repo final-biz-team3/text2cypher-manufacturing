@@ -31,6 +31,14 @@ class PropertySchema(_SchemaModel):
 
     data_type: PropertyDataType = Field(alias="type")
     aliases: list[str] = Field(default_factory=list)
+    source_column: str | None = Field(default=None, alias="sourceColumn", exclude=True)
+
+
+class NodeSource(_SchemaModel):
+    """노드가 매핑되는 PostgreSQL 스키마·테이블을 표현한다."""
+
+    schema_name: str = Field(alias="schema")
+    table: str
 
 
 class NodeSchema(_SchemaModel):
@@ -38,6 +46,8 @@ class NodeSchema(_SchemaModel):
 
     aliases: list[str] = Field(default_factory=list)
     properties: dict[str, PropertySchema]
+    unique_key: str | None = Field(default=None, alias="uniqueKey", exclude=True)
+    source: NodeSource | None = Field(default=None, exclude=True)
 
 
 class RelationshipSchema(_SchemaModel):

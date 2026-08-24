@@ -12,7 +12,9 @@
 #
 # 참고: backend/agents/cypher/schema의 로더(models.py, extra="ignore")는 노드·관계·속성의
 # aliases와 nodes.*.properties.*.type,
-# relationships.*.{from,to,properties.*.type}만 읽고 나머지는 전부 무시한다.
+# relationships.*.{from,to,properties.*.type}를 프롬프트 직렬화에 읽는다.
+# nodes.*.uniqueKey/source/properties.*.sourceColumn은 entity_types.py가 엔티티 리졸브용으로
+# 별도로 읽는다(프롬프트 직렬화에는 쓰이지 않음). 그 외 필드는 전부 무시한다.
 #
 # 제약조건은 이 yaml에서 자동 생성하지 않는다(Enterprise 전용 문법을 쓰는
 # etl/graph_constraints.py는 이번 스키마엔 적용하지 않기로 결정 — 대신
