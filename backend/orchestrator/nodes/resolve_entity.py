@@ -6,10 +6,13 @@ from typing import Any
 
 from agents.cypher.schema.entity_types import NamedEntityType, list_named_entity_types
 from agents.cypher.schema.models import GraphSchema
-from orchestrator.errors import EntityNotFoundError
+from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
 from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
+
+_SIMILARITY_THRESHOLD = 0.3
+_MAX_CANDIDATES = 5
 
 _SYSTEM_PROMPT = (
     "사용자 질의에 특정 대상을 지칭하는 이름이 있으면 "
@@ -94,6 +97,33 @@ def _find_entity_by_name(
     return {config.id_field: row[0], config.name_field: row[1]}
 
 
+def _find_similar_entities(
+    entity_type: str,
+    name: str,
+    postgres_connection: Any,
+    entity_types: list[NamedEntityType],
+) -> list[dict]:
+    """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다."""
+    config = _entity_type_config(entity_type, entity_types)
+    cursor = postgres_connection.execute(
+        f"SELECT {config.id_column}, {config.name_column}, "
+        f"similarity({config.name_column}, %s) AS score "
+        f"FROM {config.table} "
+        f"WHERE similarity({config.name_column}, %s) >= %s "
+        f"ORDER BY score DESC LIMIT %s",
+        (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
+    )
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "entityType": entity_type,
+            "score": row[2],
+        }
+        for row in cursor.fetchall()
+    ]
+
+
 def make_resolve_entity_node(
     openai_client: Any, postgres_connection: Any, graph_schema: GraphSchema
 ) -> Callable[[OrchestratorState], dict]:
@@ -114,6 +144,19 @@ def make_resolve_entity_node(
             entity_type, entity_name, postgres_connection, entity_types
         )
         if entity is None:
+            candidates = _find_similar_entities(
+                entity_type, entity_name, postgres_connection, entity_types
+            )
+            if candidates:
+                logger.info(
+                    "resolve_entity: query=%r -> entityName=%r 후보 %d개 "
+                    "(EntityAmbiguousError)",
+                    state["query"],
+                    entity_name,
+                    len(candidates),
+                )
+                raise EntityAmbiguousError(candidates)
+
             logger.info(
                 "resolve_entity: query=%r -> entityType=%r entityName=%r 조회 실패 "
                 "(EntityNotFoundError)",

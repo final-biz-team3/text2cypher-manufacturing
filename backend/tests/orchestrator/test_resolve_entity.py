@@ -3,7 +3,7 @@
 import pytest
 
 from agents.cypher.schema.models import GraphSchema
-from orchestrator.errors import EntityNotFoundError
+from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from tests.mocks.openai import (
     MockOpenAIClient,
@@ -124,3 +124,41 @@ def test_resolve_entity_requires_openai_model(
         node({"query": "제품의 정가를 알려줘."})
 
     assert openai_client.calls == []
+
+
+def test_resolve_entity_raises_ambiguous_with_similar_candidates() -> None:
+    """정확 일치가 없고 유사한 이름이 있으면 EntityAmbiguousError로 후보를 제시한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "터치링 자전거"},
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={},
+        similar_rows_by_name={
+            "터치링 자전거": [
+                (956, "Touring-1000 Yellow, 54", 0.62),
+                (957, "Touring-2000 Blue, 60", 0.41),
+            ]
+        },
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    with pytest.raises(EntityAmbiguousError) as excinfo:
+        node({"query": "터치링 자전거 정가 알려줘."})
+
+    assert excinfo.value.candidates == [
+        {
+            "id": 956,
+            "name": "Touring-1000 Yellow, 54",
+            "entityType": "product",
+            "score": 0.62,
+        },
+        {
+            "id": 957,
+            "name": "Touring-2000 Blue, 60",
+            "entityType": "product",
+            "score": 0.41,
+        },
+    ]
