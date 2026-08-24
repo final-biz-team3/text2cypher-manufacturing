@@ -2,7 +2,7 @@
 
 두 단계로 검증한다.
 1. 테이블 단위: postgres_restore.parse_created_tables()가 plain SQL 덤프
-   텍스트에서 뽑은 "CREATE TABLE로 만들어질 테이블 목록"과 실제 DB의 테이블
+   파일에서 뽑은 "CREATE TABLE로 만들어질 테이블 목록"과 실제 DB의 테이블
    목록을 비교한다(find_missing_tables).
 2. 값 단위: queries/query_parameters.json의 entities에 있는 정확한
    정답값(제품명, 재고 수량, 작업지시 폐기수량 등)이 실제 DB 조회 결과와
@@ -11,6 +11,7 @@
    과정에서 데이터가 깨졌거나 유실됐다는 뜻이다.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -193,11 +194,21 @@ def main() -> None:
     """postgres_restore.py로 복원한 DB에 대해 테이블·픽스처 사후 검증을 실행한다.
 
     사용법(리포 루트 기준): python etl/postgres_restore_validate.py
+    --dump-path 기본값은 postgres_restore.py와 동일하다 - postgres_restore.py를
+    --dump-path로 다른 덤프 파일을 지정해 실행했다면, 이 스크립트도 같은 값을
+    넘겨야 실제로 적재에 쓴 파일과 같은 파일을 기준으로 검증한다(기본값만
+    믿으면 두 스크립트가 서로 다른 파일을 보게 될 수 있다).
     """
     load_dotenv(ROOT_DIR / ".env")
 
     import psycopg2
     from postgres_restore import REQUIRED_ENV_VARS, parse_created_tables
+
+    parser = argparse.ArgumentParser(
+        description="postgres_restore.py로 복원한 DB를 사후 검증한다."
+    )
+    parser.add_argument("--dump-path", default="etl/data/AdventureWorksPG.sql")
+    args = parser.parse_args()
 
     missing_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
     if missing_vars:
@@ -210,13 +221,13 @@ def main() -> None:
     password = os.environ.get("POSTGRES_PASSWORD", "")
     print(f"대상: {host}:{port}/{db}")
 
-    dump_path = ROOT_DIR / "etl" / "data" / "AdventureWorksPG.sql"
+    dump_path = Path(args.dump_path)
     parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
 
     print("1) 덤프 파일 재확인")
     if not dump_path.exists():
         sys.exit(f"덤프 파일이 없습니다: {dump_path}")
-    expected_tables = parse_created_tables(dump_path.read_text(encoding="utf-8"))
+    expected_tables = parse_created_tables(dump_path)
     if not expected_tables:
         sys.exit(
             "덤프 파일에서 CREATE TABLE 문을 하나도 찾지 못했습니다 - "

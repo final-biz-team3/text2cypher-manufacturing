@@ -69,14 +69,22 @@ INSERT INTO production.product VALUES (2, 'Bearing Ball; sold in pairs');
 """
 
 
-def test_parse_created_tables_extracts_schema_table_pairs() -> None:
-    names = parse_created_tables(SAMPLE_SQL)
+def test_parse_created_tables_extracts_schema_table_pairs(tmp_path: Path) -> None:
+    sql_path = tmp_path / "dump.sql"
+    sql_path.write_text(SAMPLE_SQL, encoding="utf-8")
+
+    names = parse_created_tables(sql_path)
 
     assert names == {"production.product", "purchasing.vendor"}
 
 
-def test_parse_created_tables_returns_empty_set_when_no_create_table() -> None:
-    assert parse_created_tables("SELECT 1;\n") == set()
+def test_parse_created_tables_returns_empty_set_when_no_create_table(
+    tmp_path: Path,
+) -> None:
+    sql_path = tmp_path / "dump.sql"
+    sql_path.write_text("SELECT 1;\n", encoding="utf-8")
+
+    assert parse_created_tables(sql_path) == set()
 
 
 def test_restore_sql_file_executes_all_statements(tmp_path: Path) -> None:
