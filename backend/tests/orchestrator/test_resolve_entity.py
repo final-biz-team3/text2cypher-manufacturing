@@ -42,6 +42,34 @@ def _graph_schema() -> GraphSchema:
     )
 
 
+def test_make_resolve_entity_node_raises_when_no_named_entity_types() -> None:
+    """이름 검색 가능한 엔티티 타입이 없는 스키마면 즉시 실패한다."""
+    schema = GraphSchema.model_validate(
+        {
+            "nodes": {
+                "WorkOrder": {
+                    "uniqueKey": "workOrderId",
+                    "source": {"schema": "production", "table": "workorder"},
+                    "properties": {
+                        "workOrderId": {
+                            "type": "INTEGER",
+                            "sourceColumn": "workorderid",
+                        },
+                    },
+                },
+            },
+            "relationships": {},
+        }
+    )
+
+    with pytest.raises(ValueError):
+        make_resolve_entity_node(
+            MockOpenAIClient(make_no_tool_call_response()),
+            MockPostgresConnection(rows_by_name={}),
+            schema,
+        )
+
+
 def test_resolve_entity_returns_entity_when_product_found() -> None:
     """질의에서 추출한 제품명이 DB에 있으면 productId를 확정한다."""
     openai_client = MockOpenAIClient(

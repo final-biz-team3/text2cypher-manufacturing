@@ -92,13 +92,11 @@ def _entity_type_config(
 
 
 def _find_entity_by_name(
-    entity_type: str,
+    config: NamedEntityType,
     name: str,
     postgres_connection: Any,
-    entity_types: list[NamedEntityType],
 ) -> dict | None:
     """엔티티 타입별 테이블·컬럼으로 이름을 정확 일치 조회한다."""
-    config = _entity_type_config(entity_type, entity_types)
     cursor = postgres_connection.execute(
         f"SELECT {config.id_column}, {config.name_column} "
         f"FROM {config.table} WHERE {config.name_column} = %s",
@@ -111,13 +109,11 @@ def _find_entity_by_name(
 
 
 def _find_similar_entities(
-    entity_type: str,
+    config: NamedEntityType,
     name: str,
     postgres_connection: Any,
-    entity_types: list[NamedEntityType],
 ) -> list[dict]:
     """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다."""
-    config = _entity_type_config(entity_type, entity_types)
     cursor = postgres_connection.execute(
         f"SELECT {config.id_column}, {config.name_column}, "
         f"similarity({config.name_column}, %s) AS score "
@@ -130,7 +126,7 @@ def _find_similar_entities(
         {
             "id": row[0],
             "name": row[1],
-            "entityType": entity_type,
+            "entityType": config.entity_type,
             "score": row[2],
             "entity": {config.id_field: row[0], config.name_field: row[1]},
         }
@@ -165,6 +161,10 @@ def make_resolve_entity_node(
 ) -> Callable[[OrchestratorState], dict]:
     """OpenAI/PostgreSQL 클라이언트와 그래프 스키마를 주입받은 resolve_entity 노드를 만든다."""
     entity_types = list_named_entity_types(graph_schema)
+    if not entity_types:
+        raise ValueError(
+            "그래프 스키마에 이름으로 검색 가능한 엔티티 타입이 하나도 없습니다."
+        )
     extract_tool = _build_extract_entity_tool(entity_types)
 
     def resolve_entity(state: OrchestratorState) -> dict:
@@ -193,9 +193,7 @@ def make_resolve_entity_node(
 
         entity_type, entity_name = extraction
         try:
-            entity = _find_entity_by_name(
-                entity_type, entity_name, postgres_connection, entity_types
-            )
+            config = _entity_type_config(entity_type, entity_types)
         except ValueError:
             logger.warning(
                 "resolve_entity: query=%r -> 알 수 없는 entityType=%r (entity=None 처리)",
@@ -203,9 +201,11 @@ def make_resolve_entity_node(
                 entity_type,
             )
             return {"entity": None}
+
+        entity = _find_entity_by_name(config, entity_name, postgres_connection)
         if entity is None:
             candidates = _find_similar_entities(
-                entity_type, entity_name, postgres_connection, entity_types
+                config, entity_name, postgres_connection
             )
             if candidates:
                 logger.info(
