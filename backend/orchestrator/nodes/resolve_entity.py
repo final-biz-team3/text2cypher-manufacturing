@@ -113,15 +113,23 @@ def _find_similar_entities(
     name: str,
     postgres_connection: Any,
 ) -> list[dict]:
-    """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다."""
-    cursor = postgres_connection.execute(
-        f"SELECT {config.id_column}, {config.name_column}, "
-        f"similarity({config.name_column}, %s) AS score "
-        f"FROM {config.table} "
-        f"WHERE similarity({config.name_column}, %s) >= %s "
-        f"ORDER BY score DESC LIMIT %s",
-        (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
-    )
+    """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다.
+    pg_trgm을 쓸 수 없으면 롤백 후 후보 없음으로 처리한다."""
+    try:
+        cursor = postgres_connection.execute(
+            f"SELECT {config.id_column}, {config.name_column}, "
+            f"similarity({config.name_column}, %s) AS score "
+            f"FROM {config.table} "
+            f"WHERE similarity({config.name_column}, %s) >= %s "
+            f"ORDER BY score DESC LIMIT %s",
+            (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
+        )
+    except Exception:
+        postgres_connection.rollback()
+        logger.warning(
+            "resolve_entity: pg_trgm 유사도 검색을 사용할 수 없어 후보 없음으로 처리"
+        )
+        return []
     return [
         {
             "id": row[0],
@@ -134,12 +142,12 @@ def _find_similar_entities(
     ]
 
 
-def _is_valid_confirmed_entity(
+def _confirmed_entity_config(
     confirmed_entity: Any, entity_types: list[NamedEntityType]
-) -> bool:
-    """confirmed_entity가 알려진 엔티티 타입의 shape와 정확히 일치하는지 확인한다."""
+) -> NamedEntityType | None:
+    """confirmed_entity의 shape과 일치하는 엔티티 타입 설정을 찾는다."""
     if not isinstance(confirmed_entity, dict):
-        return False
+        return None
 
     for config in entity_types:
         if set(confirmed_entity) != {config.id_field, config.name_field}:
@@ -151,9 +159,21 @@ def _is_valid_confirmed_entity(
             and not isinstance(id_value, bool)
             and isinstance(name_value, str)
         ):
-            return True
+            return config
 
-    return False
+    return None
+
+
+def _confirmed_entity_exists(
+    confirmed_entity: dict, config: NamedEntityType, postgres_connection: Any
+) -> bool:
+    """confirmed_entity의 id·name이 실제 DB 행과 일치하는지 확인한다."""
+    cursor = postgres_connection.execute(
+        f"SELECT 1 FROM {config.table} "
+        f"WHERE {config.id_column} = %s AND {config.name_column} = %s",
+        (confirmed_entity[config.id_field], confirmed_entity[config.name_field]),
+    )
+    return cursor.fetchone() is not None
 
 
 def make_resolve_entity_node(
@@ -170,7 +190,10 @@ def make_resolve_entity_node(
     def resolve_entity(state: OrchestratorState) -> dict:
         confirmed_entity = state.get("confirmed_entity")
         if confirmed_entity is not None:
-            if _is_valid_confirmed_entity(confirmed_entity, entity_types):
+            confirmed_config = _confirmed_entity_config(confirmed_entity, entity_types)
+            if confirmed_config is not None and _confirmed_entity_exists(
+                confirmed_entity, confirmed_config, postgres_connection
+            ):
                 logger.info(
                     "resolve_entity: query=%r -> confirmed_entity=%s (재진입)",
                     state["query"],
@@ -178,7 +201,7 @@ def make_resolve_entity_node(
                 )
                 return {"entity": confirmed_entity}
             logger.warning(
-                "resolve_entity: query=%r -> confirmed_entity=%r 형식이 올바르지 않음 "
+                "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
                 "(무시하고 재추출)",
                 state["query"],
                 confirmed_entity,
