@@ -50,7 +50,8 @@ def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert result["sql_query"] == (
         "SELECT listprice FROM production.product WHERE productid = 956"
     )
-    assert result["final_answer"] is not None
+    assert "self-correction 구현에서 채운다" in result["final_answer"]
+    assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
     assert len(openai_client.calls) == 2
 
 

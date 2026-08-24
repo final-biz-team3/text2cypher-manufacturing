@@ -6,7 +6,8 @@ from orchestrator.state import OrchestratorState
 
 
 def make_generate_answer_node() -> Callable[[OrchestratorState], dict]:
-    """LLM 호출 없이 sql_result/graph_result를 final_answer 문자열로 합치는 노드를 만든다."""
+    """LLM 호출 없이 sql_result/graph_result를 final_answer 문자열로 합치는 노드를 만든다.
+    실제 자연어 생성은 다음 작업에서 구현한다."""
 
     def generate_answer(state: OrchestratorState) -> dict:
         parts = []

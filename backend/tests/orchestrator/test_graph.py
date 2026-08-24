@@ -98,5 +98,4 @@ def test_graph_builds_final_answer_from_sql_result() -> None:
     assert result["entity"] is None
     assert result["tool_plan"] == ["sql"]
     assert result["sql_query"] == "SELECT COUNT(*) FROM production.product"
-    assert result["final_answer"] is not None
-    assert "SQL:" in result["final_answer"]
+    assert "self-correction 구현에서 채운다" in result["final_answer"]

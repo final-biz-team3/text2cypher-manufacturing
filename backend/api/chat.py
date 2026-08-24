@@ -27,5 +27,7 @@ async def chat(request: ChatRequest):
         "tool_plan": result.get("tool_plan"),
         "sql_query": result.get("sql_query"),
         "cypher_query": result.get("cypher_query"),
+        "sql_result": result.get("sql_result"),
+        "graph_result": result.get("graph_result"),
         "final_answer": result.get("final_answer"),
     }
