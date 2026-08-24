@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from graph_schema.models import GraphSchema
+from agents.cypher.schema.models import GraphSchema
 
 
 def load_graph_schema(path: str | Path) -> GraphSchema:

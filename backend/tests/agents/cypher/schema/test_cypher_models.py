@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from graph_schema.models import GraphSchema
+from agents.cypher.schema.models import GraphSchema
 
 
 def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
@@ -12,6 +12,7 @@ def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
         {
             "nodes": {
                 "Supplier": {
+                    "aliases": ["공급업체", "업체"],
                     "properties": {
                         "supplierId": {"type": "INTEGER"},
                     },
@@ -26,8 +27,12 @@ def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
                 "SUPPLIES": {
                     "from": "Supplier",
                     "to": "Product",
+                    "aliases": ["공급 관계"],
                     "properties": {
-                        "standardPrice": {"type": "FLOAT"},
+                        "standardPrice": {
+                            "type": "FLOAT",
+                            "aliases": ["표준 가격"],
+                        },
                     },
                 },
             },
@@ -38,14 +43,21 @@ def test_graph_schema_maps_valid_yaml_relationship_fields() -> None:
 
     assert relationship.from_node == "Supplier"
     assert relationship.to_node == "Product"
+    assert relationship.aliases == ["공급 관계"]
+    assert schema.nodes["Supplier"].aliases == ["공급업체", "업체"]
     assert relationship.properties["standardPrice"].data_type == "FLOAT"
+    assert relationship.properties["standardPrice"].aliases == ["표준 가격"]
 
 
-def test_graph_schema_ignores_metadata_outside_prompt_contract() -> None:
-    """프롬프트 계약에 포함되지 않는 스키마 메타데이터는 무시한다."""
+def test_graph_schema_maps_query_policy_and_ignores_other_metadata() -> None:
+    """BOM 쿼리 정책은 매핑하고 나머지 스키마 메타데이터는 무시한다."""
     schema = GraphSchema.model_validate(
         {
-            "meta": {"nodeCount": 1},
+            "meta": {
+                "bomAsOfDate": "2014-08-08",
+                "bomMaxDepth": 4,
+                "nodeCount": 1,
+            },
             "nodes": {
                 "Product": {
                     "group": "master",
@@ -63,16 +75,48 @@ def test_graph_schema_ignores_metadata_outside_prompt_contract() -> None:
         }
     )
 
+    assert schema.query_policy is not None
+    assert schema.query_policy.bom_as_of_date == "2014-08-08"
+    assert schema.query_policy.bom_max_depth == 4
     assert schema.model_dump() == {
         "nodes": {
             "Product": {
+                "aliases": [],
                 "properties": {
-                    "productId": {"data_type": "INTEGER"},
+                    "productId": {
+                        "data_type": "INTEGER",
+                        "aliases": [],
+                    },
                 },
             },
         },
         "relationships": {},
     }
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [
+        pytest.param(
+            {"bomAsOfDate": "2014-13-40", "bomMaxDepth": 4},
+            id="invalid-date",
+        ),
+        pytest.param(
+            {"bomAsOfDate": "2014-08-08", "bomMaxDepth": 0},
+            id="invalid-depth",
+        ),
+    ],
+)
+def test_graph_schema_rejects_invalid_bom_query_policy(meta: dict[str, object]) -> None:
+    """BOM 기준일이 잘못됐거나 최대 깊이가 1보다 작으면 거부한다."""
+    with pytest.raises(ValidationError):
+        GraphSchema.model_validate(
+            {
+                "meta": meta,
+                "nodes": {"Product": {"properties": {}}},
+                "relationships": {},
+            }
+        )
 
 
 def test_graph_schema_rejects_empty_nodes() -> None:
@@ -96,6 +140,22 @@ def test_property_schema_rejects_unsupported_data_type() -> None:
                         "properties": {
                             "name": {"type": "TEXT"},
                         },
+                    },
+                },
+                "relationships": {},
+            }
+        )
+
+
+def test_graph_schema_rejects_aliases_that_are_not_a_list() -> None:
+    """alias는 하나뿐이어도 문자열 목록으로만 입력받는다."""
+    with pytest.raises(ValidationError):
+        GraphSchema.model_validate(
+            {
+                "nodes": {
+                    "Product": {
+                        "aliases": "제품",
+                        "properties": {},
                     },
                 },
                 "relationships": {},

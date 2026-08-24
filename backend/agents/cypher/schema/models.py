@@ -1,8 +1,9 @@
-"""프롬프트 생성에 필요한 그래프 스키마 입력 모델을 정의한다."""
+"""Text-to-Cypher 프롬프트에 필요한 그래프 스키마 입력 모델을 정의한다."""
 
+from datetime import date
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PropertyDataType = Literal[
     "BOOLEAN",
@@ -29,11 +30,13 @@ class PropertySchema(_SchemaModel):
     """노드 또는 관계 속성의 데이터 타입을 표현한다."""
 
     data_type: PropertyDataType = Field(alias="type")
+    aliases: list[str] = Field(default_factory=list)
 
 
 class NodeSchema(_SchemaModel):
     """노드가 가지는 속성을 표현한다."""
 
+    aliases: list[str] = Field(default_factory=list)
     properties: dict[str, PropertySchema]
 
 
@@ -42,7 +45,22 @@ class RelationshipSchema(_SchemaModel):
 
     from_node: str = Field(alias="from")
     to_node: str = Field(alias="to")
+    aliases: list[str] = Field(default_factory=list)
     properties: dict[str, PropertySchema]
+
+
+class GraphQueryPolicy(_SchemaModel):
+    """BOM 탐색에 적용할 기준일과 최대 깊이를 표현한다."""
+
+    bom_as_of_date: str = Field(alias="bomAsOfDate")
+    bom_max_depth: int = Field(alias="bomMaxDepth", gt=0)
+
+    @field_validator("bom_as_of_date")
+    @classmethod
+    def validate_bom_as_of_date(cls, value: str) -> str:
+        """BOM 기준일이 ISO 날짜 형식인지 검사한다."""
+        date.fromisoformat(value)
+        return value
 
 
 class GraphSchema(_SchemaModel):
@@ -50,6 +68,11 @@ class GraphSchema(_SchemaModel):
 
     nodes: dict[str, NodeSchema] = Field(min_length=1)
     relationships: dict[str, RelationshipSchema]
+    query_policy: GraphQueryPolicy | None = Field(
+        default=None,
+        alias="meta",
+        exclude=True,
+    )
 
     @model_validator(mode="after")
     def validate_relationship_references(self) -> Self:
