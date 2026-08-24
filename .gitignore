@@ -5,6 +5,8 @@ backend/**/__pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.pytest-tmp/
+.pre-commit-cache/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
