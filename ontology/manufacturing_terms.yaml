@@ -11,7 +11,7 @@ concepts:
     conceptType: BUSINESS
     canonical: 부품
     targetType: Product
-    terms: [부품, 자재, 구성품, component, part]
+    terms: [부품, 자재, 구성품, component]
 
   - conceptId: finished_product
     conceptType: BUSINESS

@@ -106,13 +106,13 @@ def test_graph_normalizes_synonyms_before_existing_nodes() -> None:
     result = graph.invoke({"query": "협력사가 공급하는 자재를 보여줘."})
 
     assert result["query"] == "협력사가 공급하는 자재를 보여줘."
-    assert result["normalized_query"] == "공급업체가 공급하는 부품를 보여줘."
+    assert result["normalized_query"] == "공급업체가 공급하는 부품을 보여줘."
     assert result["tool_plan"] == ["graph"]
     assert result["query_guard"]["decision"] == "PASSED"
     assert result["execution_allowed"] is True
-    assert "공급업체가 공급하는 부품" in openai_client.calls[0]["messages"][1][
-        "content"
-    ]
+    assert (
+        "공급업체가 공급하는 부품" in openai_client.calls[0]["messages"][1]["content"]
+    )
 
 
 def test_graph_stops_before_llm_when_user_requests_write() -> None:

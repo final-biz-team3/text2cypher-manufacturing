@@ -14,6 +14,44 @@ def _term_pattern(term: str) -> re.Pattern[str]:
     return re.compile(escaped, re.I)
 
 
+def _has_final_consonant(word: str) -> bool:
+    """마지막 한글 음절에 받침이 있는지 반환한다."""
+    if not word:
+        return False
+    codepoint = ord(word[-1])
+    return 0xAC00 <= codepoint <= 0xD7A3 and (codepoint - 0xAC00) % 28 != 0
+
+
+def _adjust_particle(query: str, end: int, canonical: str) -> tuple[int, str]:
+    """치환 직후의 한글 조사를 표준어 받침에 맞춘다."""
+    pairs = {"은": "는", "이": "가", "을": "를", "과": "와"}
+    if end >= len(query):
+        return end, ""
+    particle = query[end]
+    all_particles = set(pairs) | set(pairs.values())
+    if particle not in all_particles:
+        return end, ""
+    if _has_final_consonant(canonical):
+        adjusted = next(
+            (
+                consonant
+                for consonant, vowel in pairs.items()
+                if particle in {consonant, vowel}
+            ),
+            particle,
+        )
+    else:
+        adjusted = next(
+            (
+                vowel
+                for consonant, vowel in pairs.items()
+                if particle in {consonant, vowel}
+            ),
+            particle,
+        )
+    return end + 1, adjusted
+
+
 def normalize_query(query: str, dictionary: TermDictionary) -> NormalizationResult:
     """업무 용어를 치환하고 행동 용어는 별도 목록으로 반환한다."""
     normalized = query
@@ -60,7 +98,12 @@ def normalize_query(query: str, dictionary: TermDictionary) -> NormalizationResu
                     "target_type": concept.target_type,
                 }
             )
-            replacements.append((span[0], span[1], concept.canonical))
+            replacement_end, particle = _adjust_particle(
+                query, span[1], concept.canonical
+            )
+            replacements.append(
+                (span[0], replacement_end, concept.canonical + particle)
+            )
 
     # 원문의 위치를 기준으로 뒤에서부터 바꿔 offset 변화를 피한다.
     for start, end, canonical in sorted(replacements, reverse=True):

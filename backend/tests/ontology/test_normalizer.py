@@ -12,7 +12,7 @@ _DICTIONARY = load_term_dictionary(
 def test_normalizes_business_terms_and_preserves_action_wording() -> None:
     result = normalize_query("협력사가 자재를 삭제해줘", _DICTIONARY)
 
-    assert result["normalized_query"] == "공급업체가 부품를 삭제해줘"
+    assert result["normalized_query"] == "공급업체가 부품을 삭제해줘"
     assert result["matched_terms"] == [
         {
             "original": "협력사",
@@ -58,6 +58,6 @@ def test_longer_term_wins_over_shorter_term() -> None:
 def test_english_terms_match_case_insensitively_as_whole_words() -> None:
     result = normalize_query("VENDOR의 COMPONENT를 show", _DICTIONARY)
 
-    assert result["normalized_query"] == "공급업체의 부품를 show"
+    assert result["normalized_query"] == "공급업체의 부품을 show"
     assert len(result["matched_terms"]) == 2
     assert result["detected_actions"][0]["action_type"] == "READ"
