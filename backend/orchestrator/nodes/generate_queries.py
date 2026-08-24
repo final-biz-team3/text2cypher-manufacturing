@@ -6,7 +6,7 @@ from typing import Any
 from agents.cypher.generator import generate_cypher
 from agents.cypher.schema.models import GraphQueryPolicy
 from agents.sql.generator import generate_sql
-from orchestrator.state import OrchestratorState
+from orchestrator.state import OrchestratorState, get_effective_query
 
 _SUPPORTED_TOOLS = {"sql", "graph"}
 
@@ -21,6 +21,7 @@ def make_generate_queries_node(
     """스키마를 재사용하며 필요한 언어의 쿼리만 생성하는 노드를 만든다."""
 
     def generate_queries(state: OrchestratorState) -> dict[str, str | None]:
+        query = get_effective_query(state)
         tool_plan = state.get("tool_plan")
         if not tool_plan:
             raise ValueError("Query generation requires a non-empty tool plan.")
@@ -37,7 +38,7 @@ def make_generate_queries_node(
         if "sql" in tool_plan:
             generated["sql_query"] = generate_sql(
                 openai_client,
-                query=state["query"],
+                query=query,
                 entity=state.get("entity"),
                 schema_text=sql_schema_text,
             )
@@ -45,7 +46,7 @@ def make_generate_queries_node(
         if "graph" in tool_plan:
             generated["cypher_query"] = generate_cypher(
                 openai_client,
-                query=state["query"],
+                query=query,
                 entity=state.get("entity"),
                 schema_text=cypher_schema_text,
                 query_policy=cypher_query_policy,

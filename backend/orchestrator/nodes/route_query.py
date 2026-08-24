@@ -4,7 +4,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from orchestrator.state import OrchestratorState
+from orchestrator.state import OrchestratorState, get_effective_query
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,10 @@ A: ["sql", "graph"]
 # OpenAI 클라이언트를 주입받은 route_query 노드 함수를 생성
 def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], dict]:
     def route_query(state: OrchestratorState) -> dict:
+        query = get_effective_query(state)
         # 질의 원문 + 확정된 entity를 few-shot 프롬프트의 입력 형식으로 구성
         entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
-        user_content = f"Q: {state['query']}\nentity: {entity_json}\nA:"
+        user_content = f"Q: {query}\nentity: {entity_json}\nA:"
 
         response = openai_client.chat.completions.create(
             model=os.environ["OPENAI_MODEL"],
@@ -50,7 +51,7 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], d
         )
         # LLM 응답(JSON 배열 문자열)을 tool_plan으로 파싱
         tool_plan = json.loads(response.choices[0].message.content)
-        logger.info("route_query: query=%r -> tool_plan=%s", state["query"], tool_plan)
+        logger.info("route_query: query=%r -> tool_plan=%s", query, tool_plan)
         return {"tool_plan": tool_plan}
 
     return route_query
