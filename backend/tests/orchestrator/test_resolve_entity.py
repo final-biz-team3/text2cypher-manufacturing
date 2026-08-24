@@ -126,6 +126,29 @@ def test_resolve_entity_requires_openai_model(
     assert openai_client.calls == []
 
 
+def test_resolve_entity_returns_confirmed_entity_without_matching() -> None:
+    """confirmed_entity가 있으면 매칭 없이 그대로 확정한다."""
+    openai_client = MockOpenAIClient(make_no_tool_call_response())
+    postgres_connection = MockPostgresConnection(rows_by_name={})
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node(
+        {
+            "query": "그 제품 정가 알려줘.",
+            "confirmed_entity": {
+                "productId": 956,
+                "productName": "Touring-1000 Yellow, 54",
+            },
+        }
+    )
+
+    assert result == {
+        "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
+    }
+    assert openai_client.calls == []
+    assert postgres_connection.last_query is None
+
+
 def test_resolve_entity_raises_ambiguous_with_similar_candidates() -> None:
     """정확 일치가 없고 유사한 이름이 있으면 EntityAmbiguousError로 후보를 제시한다."""
     openai_client = MockOpenAIClient(

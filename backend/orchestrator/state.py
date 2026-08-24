@@ -11,6 +11,9 @@ class OrchestratorState(TypedDict):
     # resolve_entity가 확정한 엔티티 (productId, productName)
     entity: NotRequired[dict | None]
 
+    # 이전 턴에 사용자가 확인한 entity (있으면 resolve_entity가 매칭을 건너뜀)
+    confirmed_entity: NotRequired[dict | None]
+
     # route_query가 결정한 실행 계획 (["sql"] / ["graph"] / ["sql", "graph"])
     tool_plan: NotRequired[list[str]]
 

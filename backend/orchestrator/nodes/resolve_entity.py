@@ -132,6 +132,15 @@ def make_resolve_entity_node(
     extract_tool = _build_extract_entity_tool(entity_types)
 
     def resolve_entity(state: OrchestratorState) -> dict:
+        confirmed_entity = state.get("confirmed_entity")
+        if confirmed_entity is not None:
+            logger.info(
+                "resolve_entity: query=%r -> confirmed_entity=%s (재진입)",
+                state["query"],
+                confirmed_entity,
+            )
+            return {"entity": confirmed_entity}
+
         extraction = _extract_entity(state["query"], openai_client, extract_tool)
         if extraction is None:
             logger.info(
