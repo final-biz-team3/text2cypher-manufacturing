@@ -4,8 +4,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from agents.cypher.schema.entity_types import NamedEntityType, list_named_entity_types
 from agents.cypher.schema.models import GraphSchema
+from orchestrator.entity_types import NamedEntityType, list_named_entity_types
 from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
 from orchestrator.state import OrchestratorState
 
