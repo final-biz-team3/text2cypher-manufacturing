@@ -19,6 +19,14 @@ def test_sql_schema_maps_valid_tables_columns_joins_and_aliases() -> None:
                             "primaryKey": True,
                             "nullable": False,
                         },
+                        "makeflag": {
+                            "type": "BOOLEAN",
+                            "nullable": False,
+                            "aliases": ["자체 생산 여부"],
+                        },
+                        "sellenddate": {
+                            "type": "TIMESTAMP",
+                        },
                     },
                 },
                 "production.productinventory": {
@@ -53,6 +61,12 @@ def test_sql_schema_maps_valid_tables_columns_joins_and_aliases() -> None:
     join = schema.joins[0]
 
     assert schema.tables["production.product"].aliases == ["제품"]
+    product_columns = schema.tables["production.product"].columns
+    assert product_columns["makeflag"].data_type == "BOOLEAN"
+    assert product_columns["makeflag"].nullable is False
+    assert product_columns["makeflag"].aliases == ["자체 생산 여부"]
+    assert product_columns["sellenddate"].data_type == "TIMESTAMP"
+    assert product_columns["sellenddate"].nullable is True
     assert inventory_columns["productid"].primary_key is True
     assert inventory_columns["locationid"].primary_key is True
     assert inventory_columns["quantity"].data_type == "SMALLINT"

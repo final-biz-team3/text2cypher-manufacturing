@@ -43,13 +43,37 @@ def test_load_sql_schema_loads_project_schema() -> None:
     """프로젝트의 기준 YAML 파일을 SQL 스키마 모델로 읽는다."""
     schema = load_sql_schema(PROJECT_SCHEMA_PATH)
 
-    assert len(schema.tables) == 3
-    assert sum(len(table.columns) for table in schema.tables.values()) == 12
-    assert len(schema.joins) == 2
+    assert len(schema.tables) == 14
+    assert sum(len(table.columns) for table in schema.tables.values()) == 54
+    assert len(schema.joins) == 15
+
+    product_columns = schema.tables["production.product"].columns
     inventory_columns = schema.tables["production.productinventory"].columns
+    location_columns = schema.tables["production.location"].columns
+    sales_columns = schema.tables["sales.salesorderdetail"].columns
+    purchasing_columns = schema.tables["purchasing.purchaseorderdetail"].columns
+    product_vendor_columns = schema.tables["purchasing.productvendor"].columns
+    bom_columns = schema.tables["production.billofmaterials"].columns
+    routing_columns = schema.tables["production.workorderrouting"].columns
+
+    assert product_columns["makeflag"].data_type == "BOOLEAN"
+    assert product_columns["sellenddate"].data_type == "TIMESTAMP"
     assert inventory_columns["productid"].primary_key is True
     assert inventory_columns["locationid"].primary_key is True
-    assert schema.tables["production.location"].aliases == ["재고 위치"]
+    assert location_columns["locationid"].data_type == "INTEGER"
+    assert sales_columns["salesorderid"].primary_key is True
+    assert sales_columns["salesorderdetailid"].primary_key is True
+    assert purchasing_columns["purchaseorderid"].primary_key is True
+    assert purchasing_columns["purchaseorderdetailid"].primary_key is True
+    assert product_vendor_columns["productid"].primary_key is True
+    assert product_vendor_columns["businessentityid"].primary_key is True
+    assert bom_columns["productassemblyid"].nullable is True
+    assert bom_columns["startdate"].data_type == "TIMESTAMP"
+    assert bom_columns["perassemblyqty"].data_type == "NUMERIC"
+    assert routing_columns["workorderid"].primary_key is True
+    assert routing_columns["productid"].primary_key is True
+    assert routing_columns["operationsequence"].primary_key is True
+    assert schema.tables["production.location"].aliases == ["재고 위치", "작업장"]
 
 
 def test_load_sql_schema_raises_when_file_does_not_exist(tmp_path: Path) -> None:
