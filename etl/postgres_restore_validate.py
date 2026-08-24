@@ -11,6 +11,7 @@
    과정에서 데이터가 깨졌거나 유실됐다는 뜻이다.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -193,11 +194,21 @@ def main() -> None:
     """postgres_restore.py로 복원한 DB에 대해 테이블·픽스처 사후 검증을 실행한다.
 
     사용법(리포 루트 기준): python etl/postgres_restore_validate.py
+    --dump-path 기본값은 postgres_restore.py와 동일하다 - postgres_restore.py를
+    --dump-path로 다른 덤프 파일을 지정해 실행했다면, 이 스크립트도 같은 값을
+    넘겨야 실제로 적재에 쓴 파일과 같은 파일을 기준으로 검증한다(기본값만
+    믿으면 두 스크립트가 서로 다른 파일을 보게 될 수 있다).
     """
     load_dotenv(ROOT_DIR / ".env")
 
     import psycopg2
     from postgres_restore import REQUIRED_ENV_VARS, parse_created_tables
+
+    parser = argparse.ArgumentParser(
+        description="postgres_restore.py로 복원한 DB를 사후 검증한다."
+    )
+    parser.add_argument("--dump-path", default="etl/data/AdventureWorksPG.sql")
+    args = parser.parse_args()
 
     missing_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
     if missing_vars:
@@ -210,7 +221,7 @@ def main() -> None:
     password = os.environ.get("POSTGRES_PASSWORD", "")
     print(f"대상: {host}:{port}/{db}")
 
-    dump_path = ROOT_DIR / "etl" / "data" / "AdventureWorksPG.sql"
+    dump_path = Path(args.dump_path)
     parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
 
     print("1) 덤프 파일 재확인")
