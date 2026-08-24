@@ -11,10 +11,11 @@ from tests.mocks.openai import MockOpenAIClient, make_content_response
 from tests.mocks.postgres import MockPostgresConnection
 
 
-def test_chat_passes_confirmed_entity_to_orchestrator(
+def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """confirmed_entity가 있으면 매칭 없이 바로 라우팅으로 넘어간다."""
+    """confirmed_entity가 있으면 매칭 없이 바로 라우팅으로 넘어가고, sql_agent가
+    한 번 생성·실행을 시도한 뒤 200으로 정상 종료한다."""
     openai_client = MockOpenAIClient(
         make_content_response('["sql"]'),
         make_content_response(
@@ -46,6 +47,10 @@ def test_chat_passes_confirmed_entity_to_orchestrator(
         "productId": 956,
         "productName": "Touring-1000 Yellow, 54",
     }
+    assert result["sql_query"] == (
+        "SELECT listprice FROM production.product WHERE productid = 956"
+    )
+    assert result["final_answer"] is not None
     assert len(openai_client.calls) == 2
 
 
