@@ -208,7 +208,8 @@ def verify_work_order_17747_fixture(
     """
     failures: list[str] = []
     with driver.session(database=database) as session:
-        result = session.run("""
+        result = session.run(
+            """
             MATCH (wo:WorkOrder {workOrderId: 17747})-[r1:HAS_OPERATION]->(ro:RoutingOperation)
                   -[r2:PERFORMED_AT]->(loc:Location)
             WHERE $syncRunId IS NULL OR (
@@ -240,14 +241,14 @@ def verify_bom_680_to_492_quantity(
     492로 가는 필요수량이 10개 생산 기준 80이어야 한다(bomAsOfDate=2014-08-08
     유효 경로만). RQ19 businessRules: "같은 componentId에 도달하는 모든 경로
     필요수량을 합산한다" - 680->492 사이에 유효 경로가 여러 개면 그 전부를
-    더해야 한다(PR #16 리뷰 P2 항목, 예전엔 최댓값 경로 1개만 봤음). 실제
-    데이터로 확인한 결과 680->492는 유효 경로가 1개뿐이라 합산해도 기존 기댓값
-    80은 그대로다.
+    더해야 한다(680->492는 실제로 유효 경로가 1개뿐이라 합산해도 기댓값은
+    80 그대로다).
 
     database/sync_run_id 의미는 count_nodes_by_label과 동일하다.
     """
     with driver.session(database=database) as session:
-        result = session.run("""
+        result = session.run(
+            """
             MATCH path = (start:Product {productId: 680})-[r:REQUIRES_COMPONENT*1..4]->
                          (end:Product {productId: 492})
             WHERE all(rel IN r WHERE

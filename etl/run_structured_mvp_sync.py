@@ -1,6 +1,6 @@
 """구조화 MVP 전체 동기화 진입점.
 
-실행 순서(PR #16 리뷰 josephuk77 3차 대응으로 전면 재구성, 2026-08-20):
+실행 순서:
 1) PostgreSQL에서 노드·관계 6종씩 전부 추출(Neo4j에는 아직 한 글자도 안 씀)
 2) 추출 결과만으로 쓰기 전 검증 - 0건 / 필수 키 NULL / 중복 키 / 참조 무결성
    (하나라도 실패하면 여기서 끝, Neo4j는 완전히 그대로다)
@@ -9,25 +9,25 @@
 5) 통과했을 때만 새 데이터베이스를 기본 데이터베이스로 승격 - 기존 기본
    데이터베이스는 지우지 않고 멈춘 채로 보존한다.
 
-왜 이렇게 바뀌었나: 예전 구조는 스펙 하나를 추출하자마자 바로 라이브 그래프에
-적재했다. 그러면 예를 들어 Product·Supplier까지 적재된 뒤 WorkOrder 추출이나
-적재가 실패해도, 이미 라이브 그래프에는 Product·Supplier의 새 데이터가
-커밋돼버린 상태로 남는다(부분 갱신) - 리뷰에서 정확히 지적된 문제다. 지금
-구조는 (a) 쓰기 시작 전에 모든 걸 검증해서 로직/데이터 문제로 인한 실패는
-Neo4j에 아무 흔적도 안 남기고, (b) 그래도 남는 "쓰기 도중 실패" 위험은 격리된
-새 데이터베이스에만 쓰고 검증까지 통과했을 때만 승격하는 방식으로 없앤다 -
-실패하면 라이브 데이터베이스는 한 번도 안 건드려진 채로 그대로다.
-
-이 구조에서는 prune이 필요 없다 - 매 실행이 완전히 새 빈 데이터베이스에서
-시작하므로 "이전 실행의 stale 데이터"라는 개념 자체가 없다.
+왜 이렇게 설계했나: 스펙 하나를 추출하자마자 바로 라이브 그래프에 적재하는
+방식은, 예를 들어 Product·Supplier까지 적재된 뒤 WorkOrder 추출이나 적재가
+실패해도 이미 라이브 그래프에는 Product·Supplier의 새 데이터가 커밋돼버린
+상태로 남는다(부분 갱신). 지금 구조는 (a) 쓰기 시작 전에 모든 걸 검증해서
+로직/데이터 문제로 인한 실패는 Neo4j에 아무 흔적도 안 남기고, (b) 그래도
+남는 "쓰기 도중 실패" 위험은 격리된 새 데이터베이스에만 쓰고 검증까지
+통과했을 때만 승격하는 방식으로 없앤다 - 실패하면 라이브 데이터베이스는
+한 번도 안 건드려진 채로 그대로다. 매 실행이 완전히 새 빈 데이터베이스에서
+시작하므로 이전 실행의 stale 데이터를 지우는 별도 로직(prune)도 필요 없다.
 
 사용법(리포 루트 기준):
     python etl/run_structured_mvp_sync.py
+    python etl/run_structured_mvp_sync.py --retry-promote <새 DB 이름>  # 승격만 재시도
 
 .env에 POSTGRES_HOST/PORT/DB/USER, NEO4J_URI/USER/PASSWORD가 이미
 있어야 한다(자동 로드, 기본값 없음 - 로컬 DB가 있다고 가정하지 않는다).
 """
 
+import argparse
 import json
 import os
 import sys
@@ -43,8 +43,9 @@ from structured_mvp_load import (
     apply_constraints,
     create_neo4j_database,
     generate_database_name,
+    get_default_database,
     load_rows,
-    promote_neo4j_database,
+    retry_promote,
 )
 from structured_mvp_spec import NODE_SPECS, RELATIONSHIP_SPECS
 from structured_mvp_validate import (
@@ -97,27 +98,26 @@ def main() -> None:
 
     load_dotenv(ROOT_DIR / ".env")
 
-    missing_vars = [
-        name
-        for name in [*REQUIRED_ENV_VARS, *NEO4J_REQUIRED_ENV_VARS]
-        if not os.environ.get(name)
-    ]
-    if missing_vars:
-        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_vars)}")
-
-    pg_host = os.environ["POSTGRES_HOST"]
-    pg_port = os.environ["POSTGRES_PORT"]
-    pg_db = os.environ["POSTGRES_DB"]
-    pg_user = os.environ["POSTGRES_USER"]
-    pg_password = os.environ.get("POSTGRES_PASSWORD", "")
-    print(f"PostgreSQL 대상: {pg_host}:{pg_port}/{pg_db}")
-    print(f"Neo4j 대상: {os.environ['NEO4J_URI']}")
-
-    pg_conn = psycopg2.connect(
-        host=pg_host, port=pg_port, dbname=pg_db, user=pg_user, password=pg_password
+    parser = argparse.ArgumentParser(
+        description="구조화 MVP를 PostgreSQL에서 Neo4j로 동기화한다."
     )
-    if not target_database_exists(pg_conn, pg_db):
-        sys.exit(f"'{pg_db}' 데이터베이스가 {pg_host}:{pg_port}에 없습니다.")
+    parser.add_argument(
+        "--retry-promote",
+        metavar="NEW_DB_NAME",
+        help=(
+            "적재·검증까지는 끝났지만 승격(마지막 단계)만 실패한 경우, 처음부터 "
+            "다시 추출·적재하지 않고 이 단계만 재시도한다. 값은 이미 존재하는 "
+            "새 Neo4j 데이터베이스 이름(예: mvpgraph-20260821t090349z)."
+        ),
+    )
+    args = parser.parse_args()
+
+    missing_neo4j_vars = [
+        name for name in NEO4J_REQUIRED_ENV_VARS if not os.environ.get(name)
+    ]
+    if missing_neo4j_vars:
+        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_neo4j_vars)}")
+    print(f"Neo4j 대상: {os.environ['NEO4J_URI']}")
 
     driver = GraphDatabase.driver(
         os.environ["NEO4J_URI"],
@@ -128,8 +128,41 @@ def main() -> None:
     except Exception as exc:
         sys.exit(f"Neo4j 접속 실패 ({os.environ['NEO4J_URI']}): {exc}")
 
+    if args.retry_promote:
+        print(f"승격 재시도 전용 모드: '{args.retry_promote}' -> 기본 데이터베이스")
+        try:
+            retry_promote(driver, args.retry_promote)
+        finally:
+            driver.close()
+        return
+
+    missing_pg_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
+    if missing_pg_vars:
+        driver.close()
+        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_pg_vars)}")
+
+    pg_host = os.environ["POSTGRES_HOST"]
+    pg_port = os.environ["POSTGRES_PORT"]
+    pg_db = os.environ["POSTGRES_DB"]
+    pg_user = os.environ["POSTGRES_USER"]
+    pg_password = os.environ.get("POSTGRES_PASSWORD", "")
+    print(f"PostgreSQL 대상: {pg_host}:{pg_port}/{pg_db}")
+
+    pg_conn = psycopg2.connect(
+        host=pg_host, port=pg_port, dbname=pg_db, user=pg_user, password=pg_password
+    )
+    if not target_database_exists(pg_conn, pg_db):
+        pg_conn.close()
+        driver.close()
+        sys.exit(f"'{pg_db}' 데이터베이스가 {pg_host}:{pg_port}에 없습니다.")
+
     sync_run_id = generate_sync_run_id()
     print(f"syncRunId = {sync_run_id}")
+
+    expected_default = get_default_database(driver)
+    print(
+        f"   현재 기본 데이터베이스: '{expected_default}' (승격 직전 재확인용으로 기록)"
+    )
 
     try:
         print("1) PostgreSQL에서 노드·관계 전체 추출 (Neo4j는 아직 안 건드림)")
@@ -269,12 +302,7 @@ def main() -> None:
         print("   적재 후 검증 전부 통과")
 
         print("6) 기본 데이터베이스로 승격")
-        previous_default = promote_neo4j_database(driver, new_db)
-        print(f"   승격 완료. '{new_db}'가 이제 기본 데이터베이스입니다.")
-        print(
-            f"   기존 기본 데이터베이스 '{previous_default}'는 멈춘 채로 보존됨 - "
-            "확인 후 필요 없으면 직접 삭제하세요."
-        )
+        retry_promote(driver, new_db, expected_previous_default=expected_default)
 
         print("동기화 완료")
     finally:

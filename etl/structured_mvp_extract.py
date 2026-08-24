@@ -9,12 +9,11 @@ import psycopg2.extras
 
 
 def coerce_decimals(row: dict[str, Any]) -> dict[str, Any]:
-    """psycopg2가 PostgreSQL numeric(quantityPerAssembly 등)을 돌려줄 때 쓰는
+    """psycopg2가 PostgreSQL numeric(예: quantityPerAssembly)을 돌려줄 때 쓰는
     decimal.Decimal을 float으로 바꾼다.
 
     Neo4j 드라이버(Bolt 패킹)는 Decimal을 지원하지 않아 그대로 넘기면
-    "Values of type <class 'decimal.Decimal'> are not supported"로 실패한다
-    (실행 검증, 2026-08-20, REQUIRES_COMPONENT.quantityPerAssembly에서 발견).
+    "Values of type <class 'decimal.Decimal'> are not supported"로 실패한다.
     """
     return {
         key: float(value) if isinstance(value, decimal.Decimal) else value

@@ -5,13 +5,12 @@ docs/etl/2-structured_mvp_loading_rules.md에서 정의한 매핑을 그대로 �
 extract/load 모듈은 이 스펙만 순회하므로, 새 노드/관계가 생기면 여기 한 줄만
 추가하면 된다.
 
-REQUIRES_COMPONENT의 `WHERE productassemblyid IS NOT NULL`은 실행 검증(
-2026-08-20, 로컬 파이프라인 첫 실행) 중 발견한 예외 처리다. billofmaterials
-2,679행 중 103행이 productassemblyid가 NULL인데, 확인해보니 전부 완제품
-(finishedgoodsflag=true) 자신을 componentid로 가리키는 BOM 루트 앵커
-행이었다 - 실제 "조립품이 부품을 필요로 한다"는 관계가 아니라 시작점 자체가
-없는 행이라 애초에 그래프 관계로 표현이 안 된다. 제외해도 정보 손실은
-없다(해당 완제품 노드 자체는 이미 Product로 적재됨).
+REQUIRES_COMPONENT의 `WHERE productassemblyid IS NOT NULL`: billofmaterials에는
+productassemblyid가 NULL인 행이 있는데, 전부 완제품(finishedgoodsflag=true)
+자신을 componentid로 가리키는 BOM 루트 앵커 행이다 - 실제 "조립품이 부품을
+필요로 한다"는 관계가 아니라 시작점 자체가 없는 행이라 애초에 그래프 관계로
+표현이 안 된다. 제외해도 정보 손실은 없다(해당 완제품 노드 자체는 이미
+Product로 적재됨).
 """
 
 from dataclasses import dataclass, field
