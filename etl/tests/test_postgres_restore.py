@@ -1,26 +1,26 @@
-"""덤프 파일 파싱, 배치 실행 로직, DB 이름/확인 로직을 검증한다.
+"""pg_restore 명령 조립과 TOC(목차) 파싱 로직을 검증한다.
 
-실제 psycopg2 DB 접속은 pytest로 검증하지 않는다(DB가 필요해서). 로컬
-docker 환경에서 직접 실행해 검증한다.
+실제 pg_restore 실행·DB 접속은 pytest로 검증하지 않는다(바이너리·DB가
+필요해서). 로컬 docker 환경에서 직접 실행해 검증한다.
 """
 
 from pathlib import Path
 
 from postgres_restore import (
     build_new_database_name,
+    build_pg_restore_command,
+    build_pg_restore_list_command,
     build_previous_database_name,
-    build_swap_failure_message,
-    parse_created_tables,
+    parse_toc_table_names,
     restore_confirmed,
-    restore_sql_file,
     target_database_exists,
+    wrap_for_docker_exec,
 )
 
 
 class _FakeCursor:
     def __init__(self, row: tuple | None) -> None:
         self._row = row
-        self.executed: list[str] = []
 
     def __enter__(self) -> "_FakeCursor":
         return self
@@ -28,110 +28,139 @@ class _FakeCursor:
     def __exit__(self, *exc_info: object) -> None:
         return None
 
-    def execute(self, sql: str, params: tuple = ()) -> None:
-        self.executed.append(sql)
+    def execute(self, sql: str, params: tuple) -> None:
+        pass
 
     def fetchone(self) -> tuple | None:
         return self._row
 
 
-class _FakeConnection:
-    def __init__(self, cursor: _FakeCursor) -> None:
-        self._cursor = cursor
-        self.commit_count = 0
+def test_build_pg_restore_command_includes_connection_and_dump_path() -> None:
+    dump_path = Path("etl/data/AdventureWorksPG.gz")
 
-    def cursor(self) -> _FakeCursor:
-        return self._cursor
+    command = build_pg_restore_command(
+        dump_path,
+        host="localhost",
+        port="5432",
+        db="adventureworks",
+        user="postgres",
+    )
 
-    def commit(self) -> None:
-        self.commit_count += 1
+    assert command[0] == "pg_restore"
+    assert "--host=localhost" in command
+    assert "--port=5432" in command
+    assert "--dbname=adventureworks" in command
+    assert "--username=postgres" in command
+    assert "--no-owner" in command
+    assert "--no-acl" in command
+    assert "--clean" in command
+    assert "--if-exists" in command
+    assert command[-1] == str(dump_path)
 
 
-SAMPLE_SQL = """--
--- PostgreSQL database dump
---
+def test_build_pg_restore_list_command_has_no_dbname() -> None:
+    """--list는 DB 접속 없이 덤프 파일만 읽으므로 --dbname을 넣지 않는다."""
+    dump_path = Path("etl/data/AdventureWorksPG.gz")
 
-\\restrict abc123
+    command = build_pg_restore_list_command(dump_path)
 
-CREATE TABLE production.product (
-    productid integer NOT NULL,
-    name text
-);
+    assert command == ["pg_restore", "--list", str(dump_path)]
 
-CREATE TABLE purchasing.vendor (
-    businessentityid integer NOT NULL
-);
 
-INSERT INTO production.product VALUES (1, 'Adjustable Race');
-INSERT INTO production.product VALUES (2, 'Bearing Ball; sold in pairs');
-
-\\unrestrict abc123
+SAMPLE_TOC = """;
+; Archive created at 2026-08-19 12:00:00
+;     dbname: adventureworks
+;     TOC Entries: 6
+;     Format: CUSTOM
+;     Dumped from database version: 14.4
+;
+;
+; Selected TOC Entries:
+;
+3521; 1259 16394 TABLE production product postgres
+3522; 1259 16400 TABLE purchasing vendor postgres
+3800; 0 16394 TABLE DATA production product postgres
+3801; 0 16400 TABLE DATA purchasing vendor postgres
+3802; 0 16410 TABLE DATA production workorder postgres
+2600; 1259 16500 SEQUENCE production product_productid_seq postgres
 """
 
 
-def test_parse_created_tables_extracts_schema_table_pairs() -> None:
-    names = parse_created_tables(SAMPLE_SQL)
+def test_parse_toc_table_names_extracts_table_data_entries_only() -> None:
+    """TABLE(스키마 정의)이 아니라 TABLE DATA(실제 데이터 적재 대상) 행만 뽑는다 -
+    데이터가 없는 빈 테이블은 유실 검증 대상에서 의미가 없다."""
+    names = parse_toc_table_names(SAMPLE_TOC)
 
-    assert names == {"production.product", "purchasing.vendor"}
-
-
-def test_parse_created_tables_returns_empty_set_when_no_create_table() -> None:
-    assert parse_created_tables("SELECT 1;\n") == set()
-
-
-def test_restore_sql_file_executes_all_statements(tmp_path: Path) -> None:
-    sql_path = tmp_path / "dump.sql"
-    sql_path.write_text(SAMPLE_SQL, encoding="utf-8")
-    cursor = _FakeCursor(None)
-    conn = _FakeConnection(cursor)
-
-    statement_count = restore_sql_file(conn, sql_path, batch_char_limit=1_000_000)
-
-    # CREATE TABLE 2개 + INSERT 2개 = 4개 문장, 세미콜론이 줄 끝이 아닌
-    # "Bearing Ball; sold in pairs" 데이터 안 세미콜론 때문에 잘못 나뉘지 않아야 한다.
-    assert statement_count == 4
+    assert names == {
+        "production.product",
+        "purchasing.vendor",
+        "production.workorder",
+    }
 
 
-def test_restore_sql_file_skips_psql_meta_commands(tmp_path: Path) -> None:
-    sql_path = tmp_path / "dump.sql"
-    sql_path.write_text(SAMPLE_SQL, encoding="utf-8")
-    cursor = _FakeCursor(None)
-    conn = _FakeConnection(cursor)
+def test_parse_toc_table_names_ignores_sequences_and_comments() -> None:
+    names = parse_toc_table_names(SAMPLE_TOC)
 
-    restore_sql_file(conn, sql_path, batch_char_limit=1_000_000)
-
-    executed_text = "\n".join(cursor.executed)
-    assert "\\restrict" not in executed_text
-    assert "\\unrestrict" not in executed_text
+    assert "production.product_productid_seq" not in names
+    assert len(names) == 3
 
 
-def test_restore_sql_file_does_not_split_on_semicolon_inside_data(
-    tmp_path: Path,
-) -> None:
-    sql_path = tmp_path / "dump.sql"
-    sql_path.write_text(SAMPLE_SQL, encoding="utf-8")
-    cursor = _FakeCursor(None)
-    conn = _FakeConnection(cursor)
+def test_wrap_for_docker_exec_prefixes_docker_exec_with_container_and_env() -> None:
+    """로컬에 pg_restore가 없을 때, 컨테이너 안의 pg_restore를 대신 부르도록
+    명령 앞에 docker exec를 붙인다. env는 -e로 하나씩 넘긴다(호스트
+    환경변수가 컨테이너 안으로 자동으로 안 들어가므로 명시적으로 전달)."""
+    command = ["pg_restore", "--list", "/tmp/AdventureWorksPG.gz"]
 
-    restore_sql_file(conn, sql_path, batch_char_limit=1_000_000)
+    wrapped = wrap_for_docker_exec(
+        command, container="postgres", env={"PGPASSWORD": "secret"}
+    )
 
-    executed_text = "\n".join(cursor.executed)
-    assert "Bearing Ball; sold in pairs" in executed_text
+    assert wrapped == [
+        "docker",
+        "exec",
+        "-e",
+        "PGPASSWORD=secret",
+        "-i",
+        "postgres",
+        "pg_restore",
+        "--list",
+        "/tmp/AdventureWorksPG.gz",
+    ]
 
 
-def test_restore_sql_file_splits_into_multiple_batches_when_over_limit(
-    tmp_path: Path,
-) -> None:
-    sql_path = tmp_path / "dump.sql"
-    sql_path.write_text(SAMPLE_SQL, encoding="utf-8")
-    cursor = _FakeCursor(None)
-    conn = _FakeConnection(cursor)
+def test_wrap_for_docker_exec_with_no_env_omits_dash_e() -> None:
+    command = ["pg_restore", "--list", "/tmp/AdventureWorksPG.gz"]
 
-    # 배치 한도를 아주 작게 잡아서 문장마다 배치가 나뉘도록 강제한다.
-    restore_sql_file(conn, sql_path, batch_char_limit=1)
+    wrapped = wrap_for_docker_exec(command, container="postgres", env={})
 
-    assert len(cursor.executed) == 4
-    assert conn.commit_count == 4
+    assert wrapped == ["docker", "exec", "-i", "postgres", *command]
+
+
+def test_build_pg_restore_command_preserves_forward_slashes_for_container_paths() -> (
+    None
+):
+    """컨테이너 안(Linux) 경로는 str로 그대로 넘겨야 한다 - Windows에서
+    pathlib.Path("/tmp/x")로 감싸면 "/"가 "\\"로 바뀌어 컨테이너 안에서
+    파일을 못 찾는 버그가 실제로 있었다(2026-08-20 실행 검증에서 발견).
+    이 테스트는 str을 그대로 넘겼을 때 슬래시가 안 바뀌는지 확인한다 -
+    누군가 다시 Path()로 감싸는 회귀를 방지한다."""
+    command = build_pg_restore_command(
+        "/tmp/AdventureWorksPG.gz",
+        host="localhost",
+        port="5432",
+        db="adventureworks",
+        user="postgres",
+    )
+
+    assert command[-1] == "/tmp/AdventureWorksPG.gz"
+
+
+def test_build_pg_restore_list_command_preserves_forward_slashes_for_container_paths() -> (
+    None
+):
+    command = build_pg_restore_list_command("/tmp/AdventureWorksPG.gz")
+
+    assert command == ["pg_restore", "--list", "/tmp/AdventureWorksPG.gz"]
 
 
 def test_target_database_exists_true_when_row_found() -> None:
@@ -178,30 +207,3 @@ def test_build_previous_database_name_appends_previous_and_timestamp() -> None:
         build_previous_database_name("adventureworks", "20260820T120000Z")
         == "adventureworks_previous_20260820T120000Z"
     )
-
-
-def test_build_swap_failure_message_in_use_mentions_retry_swap_option() -> None:
-    message = build_swap_failure_message(
-        "in_use", db="adventureworks", new_db="adventureworks_restore_x"
-    )
-
-    assert "adventureworks" in message
-    assert "adventureworks_restore_x" in message
-    assert "--retry-swap" in message
-
-
-def test_build_swap_failure_message_race_mentions_other_session() -> None:
-    message = build_swap_failure_message(
-        "race", db="adventureworks", new_db="adventureworks_restore_x"
-    )
-
-    assert "다른 세션" in message
-    assert "adventureworks_restore_x" in message
-
-
-def test_build_swap_failure_message_unknown_reason_falls_back() -> None:
-    message = build_swap_failure_message(
-        "mystery", db="adventureworks", new_db="adventureworks_restore_x"
-    )
-
-    assert "mystery" in message

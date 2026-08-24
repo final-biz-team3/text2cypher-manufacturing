@@ -1,9 +1,8 @@
 """복원된 PostgreSQL에 유실 없이 데이터가 들어왔는지 사후 검증한다.
 
 두 단계로 검증한다.
-1. 테이블 단위: postgres_restore.parse_created_tables()가 plain SQL 덤프
-   텍스트에서 뽑은 "CREATE TABLE로 만들어질 테이블 목록"과 실제 DB의 테이블
-   목록을 비교한다(find_missing_tables).
+1. 테이블 단위: postgres_restore.parse_toc_table_names()가 덤프 TOC에서 뽑은
+   "데이터가 있는 테이블 목록"과 실제 DB의 테이블 목록을 비교한다(find_missing_tables).
 2. 값 단위: queries/query_parameters.json의 entities에 있는 정확한
    정답값(제품명, 재고 수량, 작업지시 폐기수량 등)이 실제 DB 조회 결과와
    일치하는지 확인한다(build_fixture_checks/run_fixture_checks). 이 값들은
@@ -13,6 +12,8 @@
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Protocol
@@ -197,7 +198,13 @@ def main() -> None:
     load_dotenv(ROOT_DIR / ".env")
 
     import psycopg2
-    from postgres_restore import REQUIRED_ENV_VARS, parse_created_tables
+    from postgres_restore import (
+        REQUIRED_ENV_VARS,
+        build_pg_restore_list_command,
+        copy_dump_into_container,
+        parse_toc_table_names,
+        wrap_for_docker_exec,
+    )
 
     missing_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
     if missing_vars:
@@ -210,19 +217,42 @@ def main() -> None:
     password = os.environ.get("POSTGRES_PASSWORD", "")
     print(f"대상: {host}:{port}/{db}")
 
-    dump_path = ROOT_DIR / "etl" / "data" / "AdventureWorksPG.sql"
+    dump_path = ROOT_DIR / "etl" / "data" / "AdventureWorksPG.gz"
     parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
 
-    print("1) 덤프 파일 재확인")
-    if not dump_path.exists():
-        sys.exit(f"덤프 파일이 없습니다: {dump_path}")
-    expected_tables = parse_created_tables(dump_path.read_text(encoding="utf-8"))
+    via_docker = shutil.which("pg_restore") is None
+    if via_docker:
+        container = os.environ.get("PG_RESTORE_DOCKER_CONTAINER", "postgres")
+        toc_target_path = f"/tmp/{dump_path.name}"
+        copy_dump_into_container(
+            dump_path, container=container, container_path=toc_target_path
+        )
+    else:
+        toc_target_path = dump_path
+
+    print("1) 덤프 TOC 재확인")
+    list_command = build_pg_restore_list_command(toc_target_path)
+    if via_docker:
+        list_command = wrap_for_docker_exec(list_command, container=container, env={})
+    list_result = subprocess.run(
+        list_command,
+        capture_output=True,
+        text=True,
+        check=False,
+        stdin=subprocess.DEVNULL,
+    )
+    if list_result.returncode != 0:
+        sys.exit(
+            f"덤프 목차 조회 실패 (exit code {list_result.returncode}): "
+            f"{list_result.stderr.strip()}"
+        )
+    expected_tables = parse_toc_table_names(list_result.stdout)
     if not expected_tables:
         sys.exit(
-            "덤프 파일에서 CREATE TABLE 문을 하나도 찾지 못했습니다 - "
-            "파일이 손상됐거나 잘못된 파일일 수 있습니다."
+            "덤프 목차에서 데이터가 있는 테이블을 하나도 찾지 못했습니다 - "
+            "덤프 파일이 손상됐거나 명령이 실패했을 수 있습니다."
         )
-    print(f"   덤프에 정의된 테이블 {len(expected_tables)}개")
+    print(f"   덤프 기준 데이터 있는 테이블 {len(expected_tables)}개")
 
     conn = psycopg2.connect(
         host=host, port=port, dbname=db, user=user, password=password
