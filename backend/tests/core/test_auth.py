@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from core.auth import (
     CurrentUser,
+    check_jwt_secret,
     create_access_token,
     decode_access_token,
     get_current_user,
@@ -72,3 +73,20 @@ def test_require_admin_rejects_non_admin_role() -> None:
 def test_require_admin_accepts_admin_role() -> None:
     admin = CurrentUser(username="park.admin", role="admin")
     assert require_admin(user=admin) == admin
+
+
+def test_check_jwt_secret_rejects_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        check_jwt_secret()
+
+
+def test_check_jwt_secret_rejects_short_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "too-short")
+    with pytest.raises(RuntimeError):
+        check_jwt_secret()
+
+
+def test_check_jwt_secret_accepts_long_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
+    check_jwt_secret()
