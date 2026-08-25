@@ -2,6 +2,7 @@
 
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import bcrypt  # type: ignore
 import jwt  # type: ignore
@@ -58,3 +59,31 @@ def require_admin(
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다")
     return user
+
+
+def bootstrap_users(connection: Any) -> None:
+    """app.users 스키마·테이블을 만들고 환경변수의 시드 계정을 채운다."""
+    connection.execute("CREATE SCHEMA IF NOT EXISTS app")
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS app.users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR NOT NULL UNIQUE,
+            password_hash VARCHAR NOT NULL,
+            role VARCHAR NOT NULL CHECK (role IN ('admin', 'user')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """)
+    for username_env, password_env, role in (
+        ("ADMIN_USERNAME", "ADMIN_PASSWORD", "admin"),
+        ("USER_USERNAME", "USER_PASSWORD", "user"),
+    ):
+        username = os.getenv(username_env)
+        password = os.getenv(password_env)
+        if not username or not password:
+            continue
+        connection.execute(
+            "INSERT INTO app.users (username, password_hash, role) "
+            "VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING",
+            (username, hash_password(password), role),
+        )
+    connection.commit()
