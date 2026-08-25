@@ -86,6 +86,11 @@ def make_retry_agent_subgraph(
                 {"role": "assistant", "content": query_text},
             ],
             "attempt_count": state.get("attempt_count", 0) + 1,
+            # RetryAgentState.retryable은 필수 필드지만 그래프 진입 시점의
+            # 초기 상태(graph.py)에는 없을 수 있다. agent는 tools보다 항상
+            # 먼저 실행되므로 여기서 기본값을 채워 should_retry가 첫 턴부터
+            # state["retryable"]을 안전하게 읽을 수 있게 한다.
+            "retryable": state.get("retryable", False),
         }
 
     def tools(state: RetryAgentState) -> dict:
