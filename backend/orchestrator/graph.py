@@ -34,6 +34,34 @@ def _load_schema_context() -> tuple[str, str, GraphSchema]:
     )
 
 
+def _retry_agent_initial_state(
+    query: str, entity: dict | None, schema_text: str
+) -> dict:
+    """sql_agent/cypher_agent SubGraph에 공통으로 넘기는 초기 상태를 만든다."""
+    return {
+        "query": query,
+        "entity": entity,
+        "schema": schema_text,
+        "messages": [],
+        "result": None,
+        "error": None,
+        "attempt_count": 0,
+        "attempts": [],
+        "empty_retried": False,
+        "empty_reason": None,
+    }
+
+
+def _retry_agent_result_summary(result: dict) -> dict:
+    """SubGraph 실행 결과에서 OrchestratorState에 노출할 필드만 뽑는다."""
+    return {
+        "result": result["result"],
+        "error": result["error"],
+        "attempts": result.get("attempts", []),
+        "empty_reason": result.get("empty_reason"),
+    }
+
+
 def _execute_sql_stub(sql: str) -> Any:
     """self-correction 구현자가 실제 SQL 검증·실행 로직으로 교체할 자리."""
     raise NotImplementedError("SQL 실행/검증은 self-correction 구현에서 채운다.")
@@ -54,18 +82,13 @@ def _make_sql_agent_node(
         if "sql" not in (state.get("tool_plan") or []):
             return {"sql_query": None, "sql_result": None}
         result = subgraph.invoke(
-            {
-                "query": state["query"],
-                "entity": state.get("entity"),
-                "schema": sql_schema_text,
-                "messages": [],
-                "result": None,
-                "error": None,
-            }
+            _retry_agent_initial_state(
+                state["query"], state.get("entity"), sql_schema_text
+            )
         )
         return {
             "sql_query": result["messages"][-1]["content"],
-            "sql_result": {"result": result["result"], "error": result["error"]},
+            "sql_result": _retry_agent_result_summary(result),
         }
 
     return sql_agent
@@ -85,18 +108,13 @@ def _make_cypher_agent_node(
         if "graph" not in (state.get("tool_plan") or []):
             return {"cypher_query": None, "graph_result": None}
         result = subgraph.invoke(
-            {
-                "query": state["query"],
-                "entity": state.get("entity"),
-                "schema": cypher_schema_text,
-                "messages": [],
-                "result": None,
-                "error": None,
-            }
+            _retry_agent_initial_state(
+                state["query"], state.get("entity"), cypher_schema_text
+            )
         )
         return {
             "cypher_query": result["messages"][-1]["content"],
-            "graph_result": {"result": result["result"], "error": result["error"]},
+            "graph_result": _retry_agent_result_summary(result),
         }
 
     return cypher_agent
@@ -113,13 +131,9 @@ def build_orchestrator_graph(
     assert cypher_query_policy is not None
 
     graph = StateGraph(OrchestratorState)
-    # mypy는 factory가 반환하는 `Callable[[OrchestratorState], dict]` 정적 타입을
-    # add_node의 `_Node[NodeInputT] | ...` 오버로드 Union과 단일화하지 못해
-    # call-overload 오류를 낸다(런타임 시그니처는 `_Node`와 정확히 일치). 이는
-    # langgraph 1.2.11의 add_node 오버로드/mypy 2.3.0 조합에서 알려진 타입 추론
-    # 한계이며, 인자를 top-level 함수로 직접 넘기면 재현되지 않는다.
-    # (self-correction 뼈대 브랜치 추가 후: 이 5개 노드에서는 실제 mypy 코드가
-    # arg-type으로 나온다 — 아래 ignore 주석은 그 코드 기준.)
+    # mypy가 factory가 반환하는 Callable 타입을 add_node의 오버로드와 맞추지
+    # 못해 arg-type 오류를 낸다(런타임 시그니처는 정확히 일치 - 오탐).
+    # langgraph 1.2.11 + mypy 2.3.0 조합의 알려진 한계라 무시한다.
     graph.add_node(
         "resolve_entity",
         make_resolve_entity_node(

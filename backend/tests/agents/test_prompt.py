@@ -32,6 +32,22 @@ Business rules:
     assert "제품의 재고를 알려줘." in messages[1]["content"]
 
 
+def test_build_prompt_messages_includes_feedback_with_empty_previous_error() -> None:
+    """previous_error가 빈 문자열이어도(메시지 없는 예외) previous_query가 있으면
+    재시도 피드백 섹션을 누락하지 않는다."""
+    messages = build_prompt_messages(
+        instructions="쿼리를 생성하세요.",
+        query="제품 수를 알려줘.",
+        entity=None,
+        schema_text="Product {}",
+        previous_query="SELECT * FROM bad",
+        previous_error="",
+    )
+
+    assert "Previous attempt failed" in messages[0]["content"]
+    assert "SELECT * FROM bad" in messages[0]["content"]
+
+
 def test_build_prompt_messages_omits_empty_business_rules_section() -> None:
     """업무 규칙이 없으면 불필요한 영역을 만들지 않는다."""
     messages = build_prompt_messages(
