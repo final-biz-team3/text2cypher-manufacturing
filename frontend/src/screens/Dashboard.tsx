@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { TopBar } from '@/components/layout/TopBar'
 import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
@@ -10,8 +10,9 @@ import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError } from '@/lib/chat'
-import type { ChatResponse } from '@/lib/schemas'
-import type { HistoryItem, NodeLabel, ResultColumn } from '@/types/query'
+import { fetchHistory } from '@/lib/history'
+import type { ChatResponse, HistoryEntry } from '@/lib/schemas'
+import type { NodeLabel, ResultColumn } from '@/types/query'
 
 const EXAMPLE_QUESTIONS: {
   kind: '경로추적' | '집계'
@@ -41,14 +42,6 @@ const CONNECTED = false
 const CONNECTION_ENDPOINT = 'bolt://prod-kg-01'
 const READ_ONLY = true
 
-function generateHistoryId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  // crypto.randomUUID는 보안 컨텍스트(HTTPS/localhost)에서만 존재한다.
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
 interface DisplayResult {
   answer: string
   cypher: string | null
@@ -56,8 +49,8 @@ interface DisplayResult {
   rows: Record<string, string>[]
 }
 
-// /chat 응답을 화면에 뿌릴 수 있는 형태로 정리한다
-function toDisplayResult(response: ChatResponse): DisplayResult {
+// /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있는 형태로 정리한다
+function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
   const rowsRaw = response.sql_result?.result ?? response.graph_result?.result ?? []
   const columns: ResultColumn[] =
     rowsRaw.length > 0 ? Object.keys(rowsRaw[0]).map((key) => ({ key, label: key })) : []
@@ -80,7 +73,7 @@ export function Dashboard() {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const [queryText, setQueryText] = useState('')
-  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [history, setHistory] = useState<HistoryEntry[]>([])
   const [result, setResult] = useState<DisplayResult | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
   // 화면 단계(activeScreen)와 패널 열림/접힘 상태는 여러 컴포넌트가 공유해야 해서 전역 store에 둔다.
@@ -89,7 +82,14 @@ export function Dashboard() {
   const cypherCollapsed = useUiStore((s) => s.cypherCollapsed)
   const toggleCypherCollapsed = useUiStore((s) => s.toggleCypherCollapsed)
 
-  // 질문 제출: /chat을 호출하고 결과를 이력에 기록한다
+  // 화면이 열릴 때 대화기록을 불러온다
+  useEffect(() => {
+    fetchHistory()
+      .then(setHistory)
+      .catch((err: unknown) => console.error('fetchHistory failed:', err))
+  }, [])
+
+  // 질문 제출: /chat을 호출하고 결과·이력을 갱신한다
   const handleSubmit = async () => {
     const question = queryText.trim()
     if (!question) return
@@ -97,15 +97,21 @@ export function Dashboard() {
     try {
       const response = await sendChatQuery(question)
       setResult(toDisplayResult(response))
-      setHistory((prev) => [
-        { id: generateHistoryId(), question, submittedAt: Date.now() },
-        ...prev,
-      ])
       setActiveScreen('success')
+      fetchHistory()
+        .then(setHistory)
+        .catch((err: unknown) => console.error('fetchHistory failed:', err))
     } catch (err) {
       setErrorMessage(err instanceof ChatError ? err.message : '질의 처리 중 오류가 발생했습니다')
       setActiveScreen('error')
     }
+  }
+
+  // 대화기록 목록에서 항목을 클릭하면 재호출 없이 저장된 내용을 그대로 다시 보여준다
+  const handleSelectHistoryItem = (item: HistoryEntry) => {
+    setQueryText(item.query)
+    setResult(toDisplayResult(item))
+    setActiveScreen('success')
   }
 
   // 홈으로 돌아갈 때는 이전 질문의 잔여 UI 상태(Cypher 패널)도 함께 초기화해서
@@ -136,7 +142,7 @@ export function Dashboard() {
           nodes={SCHEMA_NODES}
           relationships={RELATIONSHIPS}
           history={history}
-          onSelectHistoryItem={setQueryText}
+          onSelectHistoryItem={handleSelectHistoryItem}
         />
         <main className="flex flex-1 flex-col overflow-y-auto p-6">
           {activeScreen === 'idle' && (

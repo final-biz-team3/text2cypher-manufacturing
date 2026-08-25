@@ -44,3 +44,16 @@ export type ChatResponse = z.infer<typeof ChatResponseSchema>
 export const ApiErrorSchema = z.object({
   message: z.string(),
 })
+
+export const HistoryEntrySchema = z.object({
+  id: z.number(),
+  username: z.string(),
+  query: z.string(),
+  final_answer: z.string().nullable(),
+  sql_query: z.string().nullable(),
+  cypher_query: z.string().nullable(),
+  sql_result: QueryOutcomeSchema,
+  graph_result: QueryOutcomeSchema,
+  created_at: z.string(),
+})
+export type HistoryEntry = z.infer<typeof HistoryEntrySchema>
