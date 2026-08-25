@@ -1,4 +1,4 @@
-"""엔티티 확정 -> 라우팅 -> 쿼리 생성의 전체 흐름을 테스트한다."""
+"""엔티티 확정 -> 라우팅 -> self-correction 뼈대까지의 전체 흐름을 테스트한다."""
 
 from orchestrator.graph import build_orchestrator_graph
 from tests.mocks.openai import (
@@ -9,8 +9,9 @@ from tests.mocks.openai import (
 from tests.mocks.postgres import MockPostgresConnection
 
 
-def test_graph_resolves_entity_then_routes_to_sql() -> None:
-    """제품명이 있는 SQL형 질의는 entity 확정 후 sql로 라우팅된다."""
+def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
+    """제품명이 있는 SQL형 질의는 entity 확정 후 sql_agent가 한 번 생성·실행을
+    시도한다(execute_sql이 자리표시라 항상 실패하고 error에 담긴다)."""
     openai_client = MockOpenAIClient(
         make_tool_call_response(
             "extract_entity",
@@ -40,11 +41,16 @@ def test_graph_resolves_entity_then_routes_to_sql() -> None:
         "SELECT listprice, standardcost FROM production.product "
         "WHERE productid = 956"
     )
+    assert result["sql_result"]["result"] is None
+    assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
     assert result["cypher_query"] is None
+    assert result["graph_result"] is None
+    assert len(openai_client.calls) == 3
 
 
-def test_graph_routes_to_graph_for_relationship_query() -> None:
-    """부품 사용처를 묻는 질의는 entity 확정 후 graph로 라우팅된다."""
+def test_graph_routes_to_graph_and_runs_cypher_agent_once() -> None:
+    """부품 사용처를 묻는 질의는 entity 확정 후 graph로 라우팅되고 cypher_agent가
+    한 번 생성·실행을 시도한다."""
     openai_client = MockOpenAIClient(
         make_tool_call_response(
             "extract_entity", {"entityType": "product", "entityName": "Paint - Black"}
@@ -67,14 +73,18 @@ def test_graph_routes_to_graph_for_relationship_query() -> None:
     assert result["entity"] == {"productId": 492, "productName": "Paint - Black"}
     assert result["tool_plan"] == ["graph"]
     assert result["sql_query"] is None
+    assert result["sql_result"] is None
     assert result["cypher_query"] == (
         "MATCH (part:Product)<-[:REQUIRES_COMPONENT*1..4]-(parent:Product) "
         "WHERE part.productId = 492 RETURN parent"
     )
+    assert result["graph_result"]["result"] is None
+    assert "self-correction 구현에서 채운다" in result["graph_result"]["error"]
+    assert len(openai_client.calls) == 3
 
 
-def test_graph_generates_sql_without_entity_for_aggregate_query() -> None:
-    """특정 제품을 지칭하지 않는 집계 질의도 SQL을 생성한다."""
+def test_graph_builds_final_answer_from_sql_result() -> None:
+    """특정 제품을 지칭하지 않는 집계 질의도 sql_agent를 거쳐 final_answer가 채워진다."""
     openai_client = MockOpenAIClient(
         make_content_response("[]"),
         make_content_response('["sql"]'),
@@ -88,4 +98,4 @@ def test_graph_generates_sql_without_entity_for_aggregate_query() -> None:
     assert result["entity"] is None
     assert result["tool_plan"] == ["sql"]
     assert result["sql_query"] == "SELECT COUNT(*) FROM production.product"
-    assert result["cypher_query"] is None
+    assert "self-correction 구현에서 채운다" in result["final_answer"]
