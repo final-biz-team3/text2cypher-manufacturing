@@ -1,6 +1,6 @@
 import type { SchemaNode, SchemaRelationship } from '@/types/query'
 
-// 지식그래프 스키마 노드/관계 타입 정의 — 대시보드와 로그인 화면이 공유한다
+// 지식그래프 스키마 노드/관계 타입 정의
 export const SCHEMA_NODES: SchemaNode[] = [
   {
     label: 'Lot',
