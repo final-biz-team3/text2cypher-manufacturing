@@ -26,7 +26,7 @@ def build_prompt_messages(
         formatted_rules = "\n".join(f"- {rule}" for rule in business_rules)
         system_sections.append(f"Business rules:\n{formatted_rules}")
 
-    if previous_query and previous_error:
+    if previous_query and previous_error is not None:
         system_sections.append(
             "Previous attempt failed. Fix the issue below and generate a "
             "corrected query that avoids the same problem:\n"
