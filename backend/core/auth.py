@@ -1,9 +1,7 @@
 """비밀번호 해싱, JWT 발급/검증, 로그인 사용자 정보를 다룬다."""
 
-import logging
 import os
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import bcrypt
 import jwt
@@ -13,8 +11,6 @@ from pydantic import BaseModel
 COOKIE_NAME = "access_token"
 _ALGORITHM = "HS256"
 _EXPIRE_HOURS = 12
-
-logger = logging.getLogger(__name__)
 
 
 class CurrentUser(BaseModel):
@@ -62,44 +58,3 @@ def require_admin(
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다")
     return user
-
-
-def bootstrap_users(connection: Any) -> None:
-    """app.users 스키마·테이블을 만들고 환경변수의 시드 계정을 채운다."""
-    connection.execute("CREATE SCHEMA IF NOT EXISTS app")
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS app.users (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR NOT NULL UNIQUE,
-            password_hash VARCHAR NOT NULL,
-            role VARCHAR NOT NULL CHECK (role IN ('admin', 'user')),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-        """)
-    for username_env, password_env, role in (
-        ("ADMIN_USERNAME", "ADMIN_PASSWORD", "admin"),
-        ("USER_USERNAME", "USER_PASSWORD", "user"),
-    ):
-        username = os.getenv(username_env)
-        password = os.getenv(password_env)
-        if not username or not password:
-            logger.warning(
-                "%s/%s 환경변수가 없어 %s 역할 계정 시드를 건너뜁니다",
-                username_env,
-                password_env,
-                role,
-            )
-            continue
-        cursor = connection.execute(
-            "INSERT INTO app.users (username, password_hash, role) "
-            "VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING",
-            (username, hash_password(password), role),
-        )
-        rowcount = getattr(cursor, "rowcount", None)
-        if rowcount == 1:
-            logger.info("%s 계정을 새로 생성했습니다", username)
-        elif rowcount == 0:
-            logger.info(
-                "%s 계정이 이미 존재해 비밀번호를 변경하지 않았습니다", username
-            )
-    connection.commit()
