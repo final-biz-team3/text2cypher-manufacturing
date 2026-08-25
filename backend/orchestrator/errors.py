@@ -32,8 +32,8 @@ class EntityAmbiguousError(AppError):
         self.candidates = candidates
 
 
-# self-correction 재시도 횟수를 초과했을 때 발생
-# 이번 범위(self-correction 루프 미구현)에서는 raise되지 않는다
+# self-correction 재시도 횟수 초과용으로 정의됐으나, 재시도 루프는 소진 시에도
+# raise하지 않고 error 필드를 유지한 채 정상 종료하도록 구현돼 실제로는 쓰이지 않는다
 class RetryExceededError(AppError):
     def __init__(self) -> None:
         super().__init__(
