@@ -1,5 +1,4 @@
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -10,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 from api.auth import router as auth_router
 from api.chat import router as chat_router
 from api.health import router as health_router
+from core.auth import check_jwt_secret
 from core.neo4j import close_driver, get_driver
 from core.postgres import close_connection, get_connection
 from orchestrator.errors import AppError
@@ -25,18 +25,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _check_jwt_secret() -> None:
-    """JWT_SECRET_KEY가 32자 이상인지 검사하고 아니면 예외를 던진다."""
-    jwt_secret = os.getenv("JWT_SECRET_KEY", "")
-    if len(jwt_secret) < 32:
-        raise RuntimeError(
-            "JWT_SECRET_KEY must be set to a string of at least 32 characters"
-        )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _check_jwt_secret()
+    check_jwt_secret()
     get_driver()
     connection = get_connection()
     try:
