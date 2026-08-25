@@ -92,26 +92,24 @@ def make_retry_agent_subgraph(
         query_text = state["messages"][-1]["content"]
         attempts = state.get("attempts", [])
 
+        def failure(exc: Exception, *, retryable: bool) -> dict:
+            return {
+                "error": str(exc),
+                "result": None,
+                "attempts": [*attempts, {"query": query_text, "error": str(exc)}],
+                "retryable": retryable,
+            }
+
         try:
             result = execute(query_text)
         except retryable_exceptions as exc:
             logger.warning("%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True)
-            return {
-                "error": str(exc),
-                "result": None,
-                "attempts": [*attempts, {"query": query_text, "error": str(exc)}],
-                "retryable": True,
-            }
+            return failure(exc, retryable=True)
         except connection_exceptions as exc:
             logger.error(
                 "%s: 접속 오류(재시도 대상 아님): %s", label, exc, exc_info=True
             )
-            return {
-                "error": str(exc),
-                "result": None,
-                "attempts": [*attempts, {"query": query_text, "error": str(exc)}],
-                "retryable": False,
-            }
+            return failure(exc, retryable=False)
         except Exception as exc:
             # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망
             logger.error(
@@ -120,12 +118,7 @@ def make_retry_agent_subgraph(
                 exc,
                 exc_info=True,
             )
-            return {
-                "error": str(exc),
-                "result": None,
-                "attempts": [*attempts, {"query": query_text, "error": str(exc)}],
-                "retryable": False,
-            }
+            return failure(exc, retryable=False)
 
         if not result:
             new_attempts = [

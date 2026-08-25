@@ -34,6 +34,34 @@ def _load_schema_context() -> tuple[str, str, GraphSchema]:
     )
 
 
+def _retry_agent_initial_state(
+    query: str, entity: dict | None, schema_text: str
+) -> dict:
+    """sql_agent/cypher_agent SubGraph에 공통으로 넘기는 초기 상태를 만든다."""
+    return {
+        "query": query,
+        "entity": entity,
+        "schema": schema_text,
+        "messages": [],
+        "result": None,
+        "error": None,
+        "attempt_count": 0,
+        "attempts": [],
+        "empty_retried": False,
+        "empty_reason": None,
+    }
+
+
+def _retry_agent_result_summary(result: dict) -> dict:
+    """SubGraph 실행 결과에서 OrchestratorState에 노출할 필드만 뽑는다."""
+    return {
+        "result": result["result"],
+        "error": result["error"],
+        "attempts": result.get("attempts", []),
+        "empty_reason": result.get("empty_reason"),
+    }
+
+
 def _execute_sql_stub(sql: str) -> Any:
     """self-correction 구현자가 실제 SQL 검증·실행 로직으로 교체할 자리."""
     raise NotImplementedError("SQL 실행/검증은 self-correction 구현에서 채운다.")
@@ -54,27 +82,13 @@ def _make_sql_agent_node(
         if "sql" not in (state.get("tool_plan") or []):
             return {"sql_query": None, "sql_result": None}
         result = subgraph.invoke(
-            {
-                "query": state["query"],
-                "entity": state.get("entity"),
-                "schema": sql_schema_text,
-                "messages": [],
-                "result": None,
-                "error": None,
-                "attempt_count": 0,
-                "attempts": [],
-                "empty_retried": False,
-                "empty_reason": None,
-            }
+            _retry_agent_initial_state(
+                state["query"], state.get("entity"), sql_schema_text
+            )
         )
         return {
             "sql_query": result["messages"][-1]["content"],
-            "sql_result": {
-                "result": result["result"],
-                "error": result["error"],
-                "attempts": result.get("attempts", []),
-                "empty_reason": result.get("empty_reason"),
-            },
+            "sql_result": _retry_agent_result_summary(result),
         }
 
     return sql_agent
@@ -94,27 +108,13 @@ def _make_cypher_agent_node(
         if "graph" not in (state.get("tool_plan") or []):
             return {"cypher_query": None, "graph_result": None}
         result = subgraph.invoke(
-            {
-                "query": state["query"],
-                "entity": state.get("entity"),
-                "schema": cypher_schema_text,
-                "messages": [],
-                "result": None,
-                "error": None,
-                "attempt_count": 0,
-                "attempts": [],
-                "empty_retried": False,
-                "empty_reason": None,
-            }
+            _retry_agent_initial_state(
+                state["query"], state.get("entity"), cypher_schema_text
+            )
         )
         return {
             "cypher_query": result["messages"][-1]["content"],
-            "graph_result": {
-                "result": result["result"],
-                "error": result["error"],
-                "attempts": result.get("attempts", []),
-                "empty_reason": result.get("empty_reason"),
-            },
+            "graph_result": _retry_agent_result_summary(result),
         }
 
     return cypher_agent
