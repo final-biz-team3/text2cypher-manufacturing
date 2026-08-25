@@ -103,17 +103,19 @@ def make_retry_agent_subgraph(
         try:
             result = execute(query_text)
         except retryable_exceptions as exc:
-            logger.warning("%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True)
+            logger.warning(
+                "%s: retryable execution error: %s", label, exc, exc_info=True
+            )
             return failure(exc, retryable=True)
         except connection_exceptions as exc:
             logger.error(
-                "%s: 접속 오류(재시도 대상 아님): %s", label, exc, exc_info=True
+                "%s: connection error (not retryable): %s", label, exc, exc_info=True
             )
             return failure(exc, retryable=False)
         except Exception as exc:
             # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망
             logger.error(
-                "%s: 미분류 예외(재시도 대상 아님, 안전망): %s",
+                "%s: unclassified exception (not retryable, safety net): %s",
                 label,
                 exc,
                 exc_info=True,
@@ -130,7 +132,7 @@ def make_retry_agent_subgraph(
                 and state.get("attempt_count", 0) < MAX_ATTEMPTS
             )
             if can_retry_empty:
-                logger.info("%s: 결과 없음 - 1회 한정 재시도", label)
+                logger.info("%s: empty result - retrying once", label)
                 return {
                     "error": EMPTY_RESULT_ERROR,
                     "result": result,
@@ -139,7 +141,7 @@ def make_retry_agent_subgraph(
                     "empty_retried": True,
                 }
             reason = _classify_empty_result(attempts)
-            logger.info("%s: 결과 없음으로 최종 수용 (%s)", label, reason)
+            logger.info("%s: accepting empty result as final (%s)", label, reason)
             return {
                 "result": result,
                 "error": None,

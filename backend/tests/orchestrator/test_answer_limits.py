@@ -1,5 +1,7 @@
 """generate_answer가 결과를 프롬프트에 넣기 전 적용할 행 수·문자 수 상한을 테스트한다."""
 
+import pytest
+
 from orchestrator.nodes.answer_limits import truncate_result_for_answer
 
 
@@ -60,7 +62,7 @@ def test_truncate_result_for_answer_handles_empty_list() -> None:
 
 
 def test_truncate_result_for_answer_uses_env_configured_defaults_when_omitted(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """max_rows/max_chars를 생략하면 ANSWER_MAX_ROWS/ANSWER_MAX_CHARS 환경변수(또는
     기본값)를 사용한다."""

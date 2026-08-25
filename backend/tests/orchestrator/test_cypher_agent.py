@@ -67,7 +67,7 @@ def test_cypher_agent_retries_after_retryable_error_then_succeeds() -> None:
     )
     calls = []
 
-    def execute_cypher(cypher: str):
+    def execute_cypher(cypher: str) -> list[dict]:
         calls.append(cypher)
         if len(calls) == 1:
             raise CypherSyntaxError("Invalid input 'Unknown'")
@@ -91,7 +91,7 @@ def test_cypher_agent_does_not_retry_on_connection_error() -> None:
         make_content_response("MATCH (n:Product) RETURN n")
     )
 
-    def execute_cypher(cypher: str):
+    def execute_cypher(cypher: str) -> None:
         raise ServiceUnavailable("could not connect to server")
 
     subgraph = make_cypher_agent_subgraph(
@@ -113,7 +113,7 @@ def test_cypher_agent_stops_after_max_attempts_exceeded() -> None:
         make_content_response("MATCH (n:C) RETURN n"),
     )
 
-    def execute_cypher(cypher: str):
+    def execute_cypher(cypher: str) -> None:
         raise CypherSyntaxError("invalid syntax")
 
     subgraph = make_cypher_agent_subgraph(
@@ -136,7 +136,7 @@ def test_cypher_agent_retries_once_on_empty_result_then_accepts() -> None:
         make_content_response("MATCH (n:Product {id: -1}) RETURN n"),
     )
 
-    def execute_cypher(cypher: str):
+    def execute_cypher(cypher: str) -> list:
         return []
 
     subgraph = make_cypher_agent_subgraph(
@@ -162,7 +162,7 @@ def test_cypher_agent_marks_empty_result_inconclusive_after_budget_exhausted() -
     )
     calls = []
 
-    def execute_cypher(cypher: str):
+    def execute_cypher(cypher: str) -> list:
         calls.append(cypher)
         if len(calls) <= 2:
             raise CypherSyntaxError("invalid syntax")

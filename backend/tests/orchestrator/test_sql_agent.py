@@ -62,7 +62,7 @@ def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
     )
     calls = []
 
-    def execute_sql(sql: str):
+    def execute_sql(sql: str) -> list[dict]:
         calls.append(sql)
         if len(calls) == 1:
             raise psycopg.errors.UndefinedColumn("column bad_column does not exist")
@@ -90,7 +90,7 @@ def test_sql_agent_retries_after_query_canceled_then_succeeds() -> None:
     )
     calls = []
 
-    def execute_sql(sql: str):
+    def execute_sql(sql: str) -> list[dict]:
         calls.append(sql)
         if len(calls) == 1:
             raise psycopg.errors.QueryCanceled("canceling statement due to timeout")
@@ -111,7 +111,7 @@ def test_sql_agent_does_not_retry_on_connection_error() -> None:
         make_content_response("SELECT COUNT(*) FROM production.product")
     )
 
-    def execute_sql(sql: str):
+    def execute_sql(sql: str) -> None:
         raise psycopg.OperationalError("connection refused")
 
     subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
@@ -131,7 +131,7 @@ def test_sql_agent_stops_after_max_attempts_exceeded() -> None:
         make_content_response("SELECT c FROM t"),
     )
 
-    def execute_sql(sql: str):
+    def execute_sql(sql: str) -> None:
         raise psycopg.errors.UndefinedColumn("column does not exist")
 
     subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
@@ -152,7 +152,7 @@ def test_sql_agent_retries_once_on_empty_result_then_accepts() -> None:
         make_content_response("SELECT * FROM production.product WHERE 1=0"),
     )
 
-    def execute_sql(sql: str):
+    def execute_sql(sql: str) -> list:
         return []
 
     subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
@@ -176,7 +176,7 @@ def test_sql_agent_marks_empty_result_inconclusive_after_budget_exhausted() -> N
     )
     calls = []
 
-    def execute_sql(sql: str):
+    def execute_sql(sql: str) -> list:
         calls.append(sql)
         if len(calls) <= 2:
             raise psycopg.errors.UndefinedColumn("bad column")
