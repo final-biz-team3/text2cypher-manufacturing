@@ -66,6 +66,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       APP_ENV: ${APP_ENV:-development}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      USER_USERNAME: ${USER_USERNAME}
+      USER_PASSWORD: ${USER_PASSWORD}
     depends_on:
       neo4j:
         condition: service_started

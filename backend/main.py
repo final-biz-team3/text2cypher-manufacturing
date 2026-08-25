@@ -6,8 +6,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from api.auth import router as auth_router
 from api.chat import router as chat_router
 from api.health import router as health_router
+from core.auth import bootstrap_users
 from core.neo4j import close_driver, get_driver
 from core.postgres import close_connection, get_connection
 from orchestrator.errors import AppError
@@ -35,6 +37,7 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "pg_trgm 확장을 준비하지 못했습니다 — 유사 이름 검색이 비활성화됩니다"
         )
+    bootstrap_users(connection)
     yield
     close_driver()
     close_connection()
@@ -55,6 +58,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router, tags=["System"])
+app.include_router(auth_router, tags=["Auth"])
 app.include_router(chat_router, tags=["Chat"])
 
 
