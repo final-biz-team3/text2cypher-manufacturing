@@ -10,6 +10,7 @@ from core.auth import (
     CurrentUser,
     create_access_token,
     get_current_user,
+    hash_password,
     verify_password,
 )
 from core.postgres import get_connection
@@ -17,6 +18,7 @@ from core.postgres import get_connection
 router = APIRouter(prefix="/auth")
 
 _COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60
+_DUMMY_HASH = hash_password("dummy-password-for-timing")
 
 
 class LoginRequest(BaseModel):
@@ -38,7 +40,9 @@ def _find_user_row(connection: Any, username: str) -> tuple[str, str, str] | Non
 def login(request: LoginRequest, response: Response) -> dict[str, str]:
     connection = get_connection()
     row = _find_user_row(connection, request.username)
-    if row is None or not verify_password(request.password, row[1]):
+    password_hash = row[1] if row is not None else _DUMMY_HASH
+    password_ok = verify_password(request.password, password_hash)
+    if row is None or not password_ok:
         raise HTTPException(
             status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다"
         )
