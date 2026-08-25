@@ -29,7 +29,8 @@ export const useAuthStore = create<AuthStore>((set) => ({
     try {
       const user = await fetchMe()
       set({ user, status: 'authenticated' })
-    } catch {
+    } catch (err) {
+      console.error('checkAuth failed:', err)
       set({ user: null, status: 'unauthenticated' })
     }
   },

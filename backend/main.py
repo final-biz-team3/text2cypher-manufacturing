@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -25,8 +26,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _check_jwt_secret() -> None:
+    """JWT_SECRET_KEY가 32자 이상인지 검사하고 아니면 예외를 던진다."""
+    jwt_secret = os.getenv("JWT_SECRET_KEY", "")
+    if len(jwt_secret) < 32:
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set to a string of at least 32 characters"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _check_jwt_secret()
     get_driver()
     connection = get_connection()
     try:

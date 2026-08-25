@@ -73,9 +73,7 @@ def test_chat_request_rejects_unknown_field() -> None:
         )
 
 
-def test_chat_endpoint_rejects_request_without_cookie(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_chat_endpoint_rejects_request_without_cookie() -> None:
     """라우터 레벨에서 인증 없이 /chat을 호출하면 401을 받는다."""
     app = FastAPI()
     app.include_router(chat_module.router)

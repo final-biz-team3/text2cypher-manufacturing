@@ -13,17 +13,10 @@ export function LoginPage() {
   const { rememberId, savedUsername, setRememberId, setSavedUsername } = useLoginPrefsStore()
 
   const [username, setUsername] = useState(savedUsername)
-  const [syncedUsername, setSyncedUsername] = useState(savedUsername)
   const [password, setPassword] = useState('')
   const [pwVisible, setPwVisible] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  // localStorage 하이드레이션으로 savedUsername이 뒤늦게 바뀌면 렌더링 중 username을 맞춘다
-  if (savedUsername !== syncedUsername) {
-    setSyncedUsername(savedUsername)
-    setUsername(savedUsername)
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

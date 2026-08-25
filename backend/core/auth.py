@@ -1,17 +1,20 @@
 """비밀번호 해싱, JWT 발급/검증, 로그인 사용자 정보를 다룬다."""
 
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import bcrypt  # type: ignore
-import jwt  # type: ignore
+import bcrypt
+import jwt
 from fastapi import Cookie, Depends, HTTPException
 from pydantic import BaseModel
 
 COOKIE_NAME = "access_token"
 _ALGORITHM = "HS256"
 _EXPIRE_HOURS = 12
+
+logger = logging.getLogger(__name__)
 
 
 class CurrentUser(BaseModel):
@@ -80,10 +83,23 @@ def bootstrap_users(connection: Any) -> None:
         username = os.getenv(username_env)
         password = os.getenv(password_env)
         if not username or not password:
+            logger.warning(
+                "%s/%s 환경변수가 없어 %s 역할 계정 시드를 건너뜁니다",
+                username_env,
+                password_env,
+                role,
+            )
             continue
-        connection.execute(
+        cursor = connection.execute(
             "INSERT INTO app.users (username, password_hash, role) "
             "VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING",
             (username, hash_password(password), role),
         )
+        rowcount = getattr(cursor, "rowcount", None)
+        if rowcount == 1:
+            logger.info("%s 계정을 새로 생성했습니다", username)
+        elif rowcount == 0:
+            logger.info(
+                "%s 계정이 이미 존재해 비밀번호를 변경하지 않았습니다", username
+            )
     connection.commit()

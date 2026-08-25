@@ -1,5 +1,6 @@
 """로그인/로그아웃/현재 사용자 조회 엔드포인트."""
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -28,6 +29,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+def _cookie_secure() -> bool:
+    """APP_ENV가 development가 아니면 True를 반환한다."""
+    return os.getenv("APP_ENV") != "development"
+
+
 def _find_user_row(connection: Any, username: str) -> tuple[str, str, str] | None:
     cursor = connection.execute(
         "SELECT username, password_hash, role FROM app.users WHERE username = %s",
@@ -52,7 +58,9 @@ def login(request: LoginRequest, response: Response) -> dict[str, str]:
         key=COOKIE_NAME,
         value=token,
         httponly=True,
+        # SameSite=Lax가 CSRF 방어를 겸한다
         samesite="lax",
+        secure=_cookie_secure(),
         max_age=_COOKIE_MAX_AGE_SECONDS,
     )
     return {"username": username, "role": role}
@@ -60,7 +68,12 @@ def login(request: LoginRequest, response: Response) -> dict[str, str]:
 
 @router.post("/logout", status_code=204)
 def logout(response: Response) -> None:
-    response.delete_cookie(COOKIE_NAME)
+    response.delete_cookie(
+        COOKIE_NAME,
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(),
+    )
 
 
 @router.get("/me")
