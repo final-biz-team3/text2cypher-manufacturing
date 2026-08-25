@@ -16,13 +16,19 @@ def generate_cypher(
     schema_text: str,
     query_policy: GraphQueryPolicy,
     business_rules: Sequence[str] = (),
+    previous_query: str | None = None,
+    previous_error: str | None = None,
 ) -> str:
-    """Cypher 프롬프트를 구성해 LLM이 생성한 Neo4j 문을 반환한다."""
+    """Cypher 프롬프트를 구성해 LLM이 생성한 Neo4j 문을 반환한다.
+    previous_query·previous_error는 이전 시도가 실패했을 때 self-correction
+    재시도용 피드백으로 전달한다."""
     messages = build_cypher_prompt(
         query=query,
         entity=entity,
         schema_text=schema_text,
         query_policy=query_policy,
         business_rules=business_rules,
+        previous_query=previous_query,
+        previous_error=previous_error,
     )
     return generate_query(openai_client, messages)

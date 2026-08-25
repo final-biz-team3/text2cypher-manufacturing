@@ -47,6 +47,8 @@ def build_cypher_prompt(
     schema_text: str,
     query_policy: GraphQueryPolicy,
     business_rules: Sequence[str] = (),
+    previous_query: str | None = None,
+    previous_error: str | None = None,
 ) -> list[dict[str, str]]:
     """현재 질의 문맥을 포함한 Neo4j Cypher 생성 메시지를 반환한다."""
     return build_prompt_messages(
@@ -55,4 +57,6 @@ def build_cypher_prompt(
         entity=entity,
         schema_text=schema_text,
         business_rules=(*_build_cypher_domain_rules(query_policy), *business_rules),
+        previous_query=previous_query,
+        previous_error=previous_error,
     )

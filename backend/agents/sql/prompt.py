@@ -31,6 +31,8 @@ def build_sql_prompt(
     entity: dict[str, object] | None,
     schema_text: str,
     business_rules: Sequence[str] = (),
+    previous_query: str | None = None,
+    previous_error: str | None = None,
 ) -> list[dict[str, str]]:
     """현재 질의 문맥을 포함한 PostgreSQL 생성 메시지를 반환한다."""
     return build_prompt_messages(
@@ -39,4 +41,6 @@ def build_sql_prompt(
         entity=entity,
         schema_text=schema_text,
         business_rules=(*_SQL_DOMAIN_RULES, *business_rules),
+        previous_query=previous_query,
+        previous_error=previous_error,
     )

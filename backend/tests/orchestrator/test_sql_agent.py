@@ -1,4 +1,6 @@
-"""SQL Agent SubGraph의 생성-실행 뼈대를 테스트한다."""
+"""SQL Agent SubGraph의 생성-실행과 self-correction 재시도를 테스트한다."""
+
+import psycopg
 
 from orchestrator.subgraphs.sql_agent import make_sql_agent_subgraph
 from tests.mocks.openai import MockOpenAIClient, make_content_response
@@ -50,3 +52,142 @@ def test_sql_agent_returns_error_when_execution_fails() -> None:
     assert result["result"] is None
     assert result["error"] == "column bad_column does not exist"
     assert len(openai_client.calls) == 1
+
+
+def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
+    """실행 오류(화이트리스트)가 나면 쿼리를 재생성해 재시도하고, 성공하면 종료한다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT bad_column FROM production.product"),
+        make_content_response("SELECT COUNT(*) FROM production.product"),
+    )
+    calls = []
+
+    def execute_sql(sql: str) -> list[dict]:
+        calls.append(sql)
+        if len(calls) == 1:
+            raise psycopg.errors.UndefinedColumn("column bad_column does not exist")
+        return [{"count": 10}]
+
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == [{"count": 10}]
+    assert result["error"] is None
+    assert len(openai_client.calls) == 2
+    assert len(result["attempts"]) == 2
+    assert result["attempts"][0]["error"] == "column bad_column does not exist"
+    assert result["attempts"][1]["error"] is None
+
+
+def test_sql_agent_retries_after_query_canceled_then_succeeds() -> None:
+    """QueryCanceled(statement_timeout 등)는 OperationalError의 서브클래스지만
+    실행 오류(재시도 대상)로 분류돼야 하며, 접속 오류로 오분류되어 즉시
+    종료되면 안 된다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT * FROM production.product"),
+        make_content_response("SELECT COUNT(*) FROM production.product"),
+    )
+    calls = []
+
+    def execute_sql(sql: str) -> list[dict]:
+        calls.append(sql)
+        if len(calls) == 1:
+            raise psycopg.errors.QueryCanceled("canceling statement due to timeout")
+        return [{"count": 10}]
+
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == [{"count": 10}]
+    assert result["error"] is None
+    assert len(openai_client.calls) == 2
+
+
+def test_sql_agent_does_not_retry_on_connection_error() -> None:
+    """접속(인프라) 오류는 쿼리를 재생성해도 해결되지 않으므로 재시도하지 않는다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT COUNT(*) FROM production.product")
+    )
+
+    def execute_sql(sql: str) -> None:
+        raise psycopg.OperationalError("connection refused")
+
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] is None
+    assert result["error"] == "connection refused"
+    assert len(openai_client.calls) == 1
+
+
+def test_sql_agent_stops_after_max_attempts_exceeded() -> None:
+    """실행 오류가 계속되면 원본 1회 + 재시도 2회(총 3회)까지만 시도하고 종료한다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT a FROM t"),
+        make_content_response("SELECT b FROM t"),
+        make_content_response("SELECT c FROM t"),
+    )
+
+    def execute_sql(sql: str) -> None:
+        raise psycopg.errors.UndefinedColumn("column does not exist")
+
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] is None
+    assert result["error"] == "column does not exist"
+    assert result["attempt_count"] == 3
+    assert len(openai_client.calls) == 3
+    assert len(result["attempts"]) == 3
+
+
+def test_sql_agent_retries_once_on_empty_result_then_accepts() -> None:
+    """빈 결과는 1회만 재시도하고, 재시도 후에도 비면 정답으로 받아들인다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT * FROM production.product WHERE 1=0"),
+        make_content_response("SELECT * FROM production.product WHERE 1=0"),
+    )
+
+    def execute_sql(sql: str) -> list:
+        return []
+
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == []
+    assert result["error"] is None
+    assert result["empty_reason"] == "NO_DATA"
+    assert len(openai_client.calls) == 2
+
+
+def test_sql_agent_marks_empty_result_inconclusive_after_budget_exhausted() -> None:
+    """실행 오류로 재시도 예산을 다 쓴 뒤 마지막 시도가 빈 결과면, 빈 결과를
+    재시도해볼 기회조차 없었으므로 정답으로 확신하지 않고 INCONCLUSIVE로
+    표시한다(그리고 내부용 EMPTY_RESULT 문자열이 error로 새어나가면 안 된다)."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT bad_column FROM production.product"),
+        make_content_response("SELECT bad_column2 FROM production.product"),
+        make_content_response("SELECT * FROM production.product WHERE 1=0"),
+    )
+    calls = []
+
+    def execute_sql(sql: str) -> list:
+        calls.append(sql)
+        if len(calls) <= 2:
+            raise psycopg.errors.UndefinedColumn("bad column")
+        return []
+
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == []
+    assert result["error"] is None
+    assert result["empty_reason"] == "INCONCLUSIVE"
+    assert result["attempt_count"] == 3
+    assert len(result["attempts"]) == 3
