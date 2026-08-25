@@ -17,6 +17,11 @@ MAX_ATTEMPTS = 3
 
 EMPTY_RESULT_ERROR = "EMPTY_RESULT"
 
+# 빈 결과가 최종 수용될 때, 이전 시도 이력에 실행 오류(EMPTY_RESULT가 아닌 진짜
+# 쿼리 결함)가 있었는지로 원인을 구분한다.
+NO_DATA = "NO_DATA"
+INCONCLUSIVE = "INCONCLUSIVE"
+
 
 class RetryAgentState(TypedDict):
     query: str
@@ -29,6 +34,17 @@ class RetryAgentState(TypedDict):
     attempts: list[dict]
     empty_retried: bool
     retryable: bool
+    empty_reason: str | None
+
+
+def _classify_empty_result(prior_attempts: list[dict]) -> str:
+    """이번 빈 결과 이전 시도 중 실행 오류가 하나라도 있었으면, 그 오류가
+    정말 고쳐졌다는 보장이 없으므로 INCONCLUSIVE로 본다. 전부 깨끗하게
+    실행됐는데 결과만 없었다면 NO_DATA(실제로 데이터가 없음)로 본다."""
+    has_real_error = any(
+        attempt["error"] not in (None, EMPTY_RESULT_ERROR) for attempt in prior_attempts
+    )
+    return INCONCLUSIVE if has_real_error else NO_DATA
 
 
 def make_retry_agent_subgraph(
@@ -111,22 +127,38 @@ def make_retry_agent_subgraph(
                 "retryable": False,
             }
 
-        if not result and not state.get("empty_retried", False):
-            logger.info("%s: 결과 없음 - 1회 한정 재시도", label)
+        if not result:
+            new_attempts = [
+                *attempts,
+                {"query": query_text, "error": EMPTY_RESULT_ERROR},
+            ]
+            can_retry_empty = (
+                not state.get("empty_retried", False)
+                and state.get("attempt_count", 0) < MAX_ATTEMPTS
+            )
+            if can_retry_empty:
+                logger.info("%s: 결과 없음 - 1회 한정 재시도", label)
+                return {
+                    "error": EMPTY_RESULT_ERROR,
+                    "result": result,
+                    "attempts": new_attempts,
+                    "retryable": True,
+                    "empty_retried": True,
+                }
+            reason = _classify_empty_result(attempts)
+            logger.info("%s: 결과 없음으로 최종 수용 (%s)", label, reason)
             return {
-                "error": EMPTY_RESULT_ERROR,
                 "result": result,
-                "attempts": [
-                    *attempts,
-                    {"query": query_text, "error": EMPTY_RESULT_ERROR},
-                ],
-                "retryable": True,
-                "empty_retried": True,
+                "error": None,
+                "empty_reason": reason,
+                "attempts": new_attempts,
+                "retryable": False,
             }
 
         return {
             "result": result,
             "error": None,
+            "empty_reason": None,
             "attempts": [*attempts, {"query": query_text, "error": None}],
             "retryable": False,
         }

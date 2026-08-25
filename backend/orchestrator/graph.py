@@ -64,6 +64,7 @@ def _make_sql_agent_node(
                 "attempt_count": 0,
                 "attempts": [],
                 "empty_retried": False,
+                "empty_reason": None,
             }
         )
         return {
@@ -72,6 +73,7 @@ def _make_sql_agent_node(
                 "result": result["result"],
                 "error": result["error"],
                 "attempts": result.get("attempts", []),
+                "empty_reason": result.get("empty_reason"),
             },
         }
 
@@ -102,6 +104,7 @@ def _make_cypher_agent_node(
                 "attempt_count": 0,
                 "attempts": [],
                 "empty_retried": False,
+                "empty_reason": None,
             }
         )
         return {
@@ -110,6 +113,7 @@ def _make_cypher_agent_node(
                 "result": result["result"],
                 "error": result["error"],
                 "attempts": result.get("attempts", []),
+                "empty_reason": result.get("empty_reason"),
             },
         }
 

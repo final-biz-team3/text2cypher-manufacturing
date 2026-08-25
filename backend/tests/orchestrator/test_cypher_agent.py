@@ -147,4 +147,35 @@ def test_cypher_agent_retries_once_on_empty_result_then_accepts() -> None:
 
     assert result["result"] == []
     assert result["error"] is None
+    assert result["empty_reason"] == "NO_DATA"
     assert len(openai_client.calls) == 2
+
+
+def test_cypher_agent_marks_empty_result_inconclusive_after_budget_exhausted() -> None:
+    """실행 오류로 재시도 예산을 다 쓴 뒤 마지막 시도가 빈 결과면, 빈 결과를
+    재시도해볼 기회조차 없었으므로 정답으로 확신하지 않고 INCONCLUSIVE로
+    표시한다(그리고 내부용 EMPTY_RESULT 문자열이 error로 새어나가면 안 된다)."""
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:A) RETURN n"),
+        make_content_response("MATCH (n:B) RETURN n"),
+        make_content_response("MATCH (n:Product {id: -1}) RETURN n"),
+    )
+    calls = []
+
+    def execute_cypher(cypher: str):
+        calls.append(cypher)
+        if len(calls) <= 2:
+            raise CypherSyntaxError("invalid syntax")
+        return []
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+    )
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == []
+    assert result["error"] is None
+    assert result["empty_reason"] == "INCONCLUSIVE"
+    assert result["attempt_count"] == 3
+    assert len(result["attempts"]) == 3
