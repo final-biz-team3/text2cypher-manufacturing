@@ -29,7 +29,7 @@ class _FakeCursor:
 
 
 def test_login_sets_cookie_and_returns_user(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     monkeypatch.setattr(
         auth_module,
         "get_connection",
@@ -90,7 +90,8 @@ def test_me_returns_current_user() -> None:
 
 def test_auth_router_http_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     """/auth/login → /auth/me → /auth/logout → /auth/me를 실제 HTTP 요청으로 검증한다."""
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
+    monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setattr(
         auth_module,
         "get_connection",

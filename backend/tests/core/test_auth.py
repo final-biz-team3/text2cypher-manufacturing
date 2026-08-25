@@ -30,7 +30,7 @@ def test_verify_password_rejects_wrong_password() -> None:
 def test_create_and_decode_access_token_roundtrip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     token = create_access_token("kim.quality", "admin")
     user = decode_access_token(token)
     assert user == CurrentUser(username="kim.quality", role="admin")
@@ -39,7 +39,7 @@ def test_create_and_decode_access_token_roundtrip(
 def test_decode_access_token_rejects_garbage_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     with pytest.raises(HTTPException) as exc_info:
         decode_access_token("not-a-real-token")
     assert exc_info.value.status_code == 401
@@ -60,7 +60,7 @@ def test_get_current_user_rejects_invalid_token() -> None:
 def test_get_current_user_accepts_valid_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     token = create_access_token("kim.quality", "user")
     user = get_current_user(access_token=token)
     assert user == CurrentUser(username="kim.quality", role="user")

@@ -88,7 +88,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """유효한 access_token 쿠키가 있으면 /chat이 정상 응답한다."""
-    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
@@ -101,12 +101,8 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     app = FastAPI()
     app.include_router(chat_module.router)
     client = TestClient(app)
-    token = create_access_token("kim.quality", "admin")
+    client.cookies.set("access_token", create_access_token("kim.quality", "admin"))
 
-    response = client.post(
-        "/chat",
-        json={"query": "정가 알려줘"},
-        cookies={"access_token": token},
-    )
+    response = client.post("/chat", json={"query": "정가 알려줘"})
 
     assert response.status_code == 200
