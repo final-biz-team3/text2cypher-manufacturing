@@ -86,6 +86,16 @@ def make_sql_agent_subgraph(
 
         try:
             result = execute_sql(sql)
+        except _RETRYABLE_EXCEPTIONS as exc:
+            # psycopg.errors.QueryCanceled는 OperationalError의 서브클래스라
+            # _CONNECTION_EXCEPTIONS보다 먼저 검사해야 접속 오류로 오분류되지 않는다.
+            logger.warning("sql_agent: 실행 오류(재시도 대상): %s", exc, exc_info=True)
+            return {
+                "error": str(exc),
+                "result": None,
+                "attempts": [*attempts, {"query": sql, "error": str(exc)}],
+                "retryable": True,
+            }
         except _CONNECTION_EXCEPTIONS as exc:
             logger.error(
                 "sql_agent: 접속 오류(재시도 대상 아님): %s", exc, exc_info=True
@@ -95,14 +105,6 @@ def make_sql_agent_subgraph(
                 "result": None,
                 "attempts": [*attempts, {"query": sql, "error": str(exc)}],
                 "retryable": False,
-            }
-        except _RETRYABLE_EXCEPTIONS as exc:
-            logger.warning("sql_agent: 실행 오류(재시도 대상): %s", exc, exc_info=True)
-            return {
-                "error": str(exc),
-                "result": None,
-                "attempts": [*attempts, {"query": sql, "error": str(exc)}],
-                "retryable": True,
             }
         except Exception as exc:
             # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망

@@ -80,6 +80,31 @@ def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
     assert result["attempts"][1]["error"] is None
 
 
+def test_sql_agent_retries_after_query_canceled_then_succeeds() -> None:
+    """QueryCanceled(statement_timeout 등)는 OperationalError의 서브클래스지만
+    실행 오류(재시도 대상)로 분류돼야 하며, 접속 오류로 오분류되어 즉시
+    종료되면 안 된다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT * FROM production.product"),
+        make_content_response("SELECT COUNT(*) FROM production.product"),
+    )
+    calls = []
+
+    def execute_sql(sql: str):
+        calls.append(sql)
+        if len(calls) == 1:
+            raise psycopg.errors.QueryCanceled("canceling statement due to timeout")
+        return [{"count": 10}]
+
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == [{"count": 10}]
+    assert result["error"] is None
+    assert len(openai_client.calls) == 2
+
+
 def test_sql_agent_does_not_retry_on_connection_error() -> None:
     """접속(인프라) 오류는 쿼리를 재생성해도 해결되지 않으므로 재시도하지 않는다."""
     openai_client = MockOpenAIClient(
