@@ -11,6 +11,7 @@ import { EvidencePanel } from '@/components/result/EvidencePanel'
 import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
 import { useUiStore } from '@/store/useUiStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import type { HistoryItem, NodeLabel, QueryResult } from '@/types/query'
 
@@ -111,6 +112,8 @@ function generateHistoryId(): string {
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
 // 질문 입력 → 목 결과 표시 → 이력 저장까지 대시보드의 핵심 흐름을 담당한다.
 export function Dashboard() {
+  const user = useAuthStore((s) => s.user)
+  const logout = useAuthStore((s) => s.logout)
   const [queryText, setQueryText] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
   // 화면 단계(activeScreen)와 패널 열림/접힘 상태는 여러 컴포넌트가 공유해야 해서 전역 store에 둔다.
@@ -149,6 +152,8 @@ export function Dashboard() {
         connectionEndpoint={CONNECTION_ENDPOINT}
         readOnly={READ_ONLY}
         onNavigateHome={handleNavigateHome}
+        username={user?.username}
+        onLogout={logout}
       />
       <div className="flex flex-1 overflow-hidden">
         <SchemaSidebar
