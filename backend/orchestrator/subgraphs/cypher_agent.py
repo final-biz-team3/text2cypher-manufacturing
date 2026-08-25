@@ -23,9 +23,6 @@ from orchestrator.subgraphs.retry_agent import (
 
 logger = logging.getLogger(__name__)
 
-# orchestrator/subgraphs/retry_agent.py의 공용 상태를 그대로 쓴다
-CypherAgentState = RetryAgentState
-
 # 접속/인프라 오류: 쿼리를 재생성해도 해결되지 않으므로 재시도 대상에서 제외한다.
 # neo4j.exceptions.ClientError처럼 넓은 상위 클래스로 잡지 않는다
 # (AuthError가 ClientError를 상속해서 오분류될 수 있음) — 구체적 서브클래스만 잡는다.
@@ -54,11 +51,8 @@ def make_cypher_agent_subgraph(
     execute_cypher: Callable[[str], Any],
     query_policy: GraphQueryPolicy,
 ) -> CompiledStateGraph:
-    """Cypher 생성 -> 실행 -> (실패 시) 재생성 재시도를 최대
-    orchestrator.subgraphs.retry_agent.MAX_ATTEMPTS회 반복하는 SubGraph를
-    만든다. execute_cypher 내부 구현(DB 접속, execute_read 적용 등 READ
-    가드)은 이 함수의 책임이 아니며, 이미 올바르게 구현되어 있다는 전제로
-    호출만 한다."""
+    """Cypher 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
+    execute_cypher 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
 
     def generate(
         state: RetryAgentState, previous_query: str | None, previous_error: str | None
