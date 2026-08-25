@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import bcrypt  # type: ignore
 import jwt  # type: ignore
+from fastapi import Cookie, Depends, HTTPException
 from pydantic import BaseModel
 
 COOKIE_NAME = "access_token"
@@ -36,5 +37,24 @@ def create_access_token(username: str, role: str) -> str:
 
 
 def decode_access_token(token: str) -> CurrentUser:
-    payload = jwt.decode(token, _secret_key(), algorithms=[_ALGORITHM])
+    try:
+        payload = jwt.decode(token, _secret_key(), algorithms=[_ALGORITHM])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다") from exc
     return CurrentUser(username=payload["sub"], role=payload["role"])
+
+
+def get_current_user(
+    access_token: str | None = Cookie(default=None, alias=COOKIE_NAME),
+) -> CurrentUser:
+    if access_token is None:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다")
+    return decode_access_token(access_token)
+
+
+def require_admin(
+    user: CurrentUser = Depends(get_current_user),  # noqa: B008
+) -> CurrentUser:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다")
+    return user
