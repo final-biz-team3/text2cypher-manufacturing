@@ -11,8 +11,12 @@ def build_prompt_messages(
     entity: dict[str, object] | None,
     schema_text: str,
     business_rules: Sequence[str] = (),
+    previous_query: str | None = None,
+    previous_error: str | None = None,
 ) -> list[dict[str, str]]:
-    """언어별 지침과 동적 질의 문맥을 system/user 메시지로 조립한다."""
+    """언어별 지침과 동적 질의 문맥을 system/user 메시지로 조립한다.
+    previous_query·previous_error가 함께 있으면 self-correction 재시도용
+    피드백 섹션을 system 메시지에 추가한다."""
     system_sections = [
         instructions.strip(),
         f"Schema:\n{schema_text.strip()}",
@@ -21,6 +25,14 @@ def build_prompt_messages(
     if business_rules:
         formatted_rules = "\n".join(f"- {rule}" for rule in business_rules)
         system_sections.append(f"Business rules:\n{formatted_rules}")
+
+    if previous_query and previous_error:
+        system_sections.append(
+            "Previous attempt failed. Fix the issue below and generate a "
+            "corrected query that avoids the same problem:\n"
+            f"Previous query:\n{previous_query}\n"
+            f"Error:\n{previous_error}"
+        )
 
     user_content = json.dumps(
         {"query": query, "entity": entity},

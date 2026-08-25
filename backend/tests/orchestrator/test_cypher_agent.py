@@ -1,4 +1,6 @@
-"""Cypher Agent SubGraph의 생성-실행 뼈대를 테스트한다."""
+"""Cypher Agent SubGraph의 생성-실행과 self-correction 재시도를 테스트한다."""
+
+from neo4j.exceptions import CypherSyntaxError, ServiceUnavailable
 
 from agents.cypher.schema.models import GraphQueryPolicy
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
@@ -55,3 +57,94 @@ def test_cypher_agent_returns_error_when_execution_fails() -> None:
     assert result["result"] is None
     assert result["error"] == "unknown label Unknown"
     assert len(openai_client.calls) == 1
+
+
+def test_cypher_agent_retries_after_retryable_error_then_succeeds() -> None:
+    """실행 오류(화이트리스트)가 나면 쿼리를 재생성해 재시도하고, 성공하면 종료한다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:Unknown) RETURN n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
+    )
+    calls = []
+
+    def execute_cypher(cypher: str):
+        calls.append(cypher)
+        if len(calls) == 1:
+            raise CypherSyntaxError("Invalid input 'Unknown'")
+        return [{"n": "x"}]
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+    )
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == [{"n": "x"}]
+    assert result["error"] is None
+    assert len(openai_client.calls) == 2
+    assert len(result["attempts"]) == 2
+
+
+def test_cypher_agent_does_not_retry_on_connection_error() -> None:
+    """접속(인프라) 오류는 쿼리를 재생성해도 해결되지 않으므로 재시도하지 않는다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:Product) RETURN n")
+    )
+
+    def execute_cypher(cypher: str):
+        raise ServiceUnavailable("could not connect to server")
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+    )
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] is None
+    assert result["error"] == "could not connect to server"
+    assert len(openai_client.calls) == 1
+
+
+def test_cypher_agent_stops_after_max_attempts_exceeded() -> None:
+    """실행 오류가 계속되면 원본 1회 + 재시도 2회(총 3회)까지만 시도하고 종료한다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:A) RETURN n"),
+        make_content_response("MATCH (n:B) RETURN n"),
+        make_content_response("MATCH (n:C) RETURN n"),
+    )
+
+    def execute_cypher(cypher: str):
+        raise CypherSyntaxError("invalid syntax")
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+    )
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] is None
+    assert result["error"] == "invalid syntax"
+    assert result["attempt_count"] == 3
+    assert len(openai_client.calls) == 3
+    assert len(result["attempts"]) == 3
+
+
+def test_cypher_agent_retries_once_on_empty_result_then_accepts() -> None:
+    """빈 결과는 1회만 재시도하고, 재시도 후에도 비면 정답으로 받아들인다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:Product {id: -1}) RETURN n"),
+        make_content_response("MATCH (n:Product {id: -1}) RETURN n"),
+    )
+
+    def execute_cypher(cypher: str):
+        return []
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+    )
+
+    result = subgraph.invoke(_initial_state())
+
+    assert result["result"] == []
+    assert result["error"] is None
+    assert len(openai_client.calls) == 2

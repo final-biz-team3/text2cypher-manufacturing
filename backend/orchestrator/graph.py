@@ -61,11 +61,18 @@ def _make_sql_agent_node(
                 "messages": [],
                 "result": None,
                 "error": None,
+                "attempt_count": 0,
+                "attempts": [],
+                "empty_retried": False,
             }
         )
         return {
             "sql_query": result["messages"][-1]["content"],
-            "sql_result": {"result": result["result"], "error": result["error"]},
+            "sql_result": {
+                "result": result["result"],
+                "error": result["error"],
+                "attempts": result.get("attempts", []),
+            },
         }
 
     return sql_agent
@@ -92,11 +99,18 @@ def _make_cypher_agent_node(
                 "messages": [],
                 "result": None,
                 "error": None,
+                "attempt_count": 0,
+                "attempts": [],
+                "empty_retried": False,
             }
         )
         return {
             "cypher_query": result["messages"][-1]["content"],
-            "graph_result": {"result": result["result"], "error": result["error"]},
+            "graph_result": {
+                "result": result["result"],
+                "error": result["error"],
+                "attempts": result.get("attempts", []),
+            },
         }
 
     return cypher_agent
