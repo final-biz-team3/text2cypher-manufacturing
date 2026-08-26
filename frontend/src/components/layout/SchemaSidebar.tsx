@@ -3,13 +3,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { NodeGlyphBadge } from '@/components/common/NodeGlyphBadge'
 import { useUiStore } from '@/store/useUiStore'
 import type { SidebarTab } from '@/store/useUiStore'
-import type { HistoryItem, SchemaNode, SchemaRelationship } from '@/types/query'
+import type { HistoryEntry } from '@/lib/schemas'
+import type { SchemaNode, SchemaRelationship } from '@/types/query'
 
 interface SchemaSidebarProps {
   nodes: SchemaNode[]
   relationships: SchemaRelationship[]
-  history: HistoryItem[]
-  onSelectHistoryItem: (question: string) => void
+  history: HistoryEntry[]
+  onSelectHistoryItem: (item: HistoryEntry) => void
 }
 
 // 좌측 사이드바: "스키마"(노드/관계 타입 설명)와 "질문 이력" 두 탭을 전환하며 보여준다
@@ -87,12 +88,13 @@ export function SchemaSidebar({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => onSelectHistoryItem(item.question)}
+                onClick={() => onSelectHistoryItem(item)}
                 className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-panel-2"
               >
-                <p className="line-clamp-2 text-[12px] text-text">{item.question}</p>
+                <p className="line-clamp-2 text-[12px] text-text">{item.query}</p>
                 <p className="text-[10px] text-text-faint">
-                  {new Date(item.submittedAt).toLocaleTimeString('ko-KR', {
+                  {item.username} ·{' '}
+                  {new Date(item.created_at).toLocaleTimeString('ko-KR', {
                     hour: '2-digit',
                     minute: '2-digit',
                   })}

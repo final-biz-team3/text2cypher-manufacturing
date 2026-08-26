@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 from api.auth import router as auth_router
 from api.chat import router as chat_router
 from api.health import router as health_router
+from api.history import router as history_router
 from core.auth import check_jwt_secret
 from core.neo4j import close_driver, get_driver
 from core.postgres import close_connection, get_connection
@@ -60,6 +61,7 @@ app.add_middleware(
 app.include_router(health_router, tags=["System"])
 app.include_router(auth_router, tags=["Auth"])
 app.include_router(chat_router, tags=["Chat"])
+app.include_router(history_router, tags=["History"])
 
 
 @app.exception_handler(AppError)
