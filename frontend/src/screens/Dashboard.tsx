@@ -11,50 +11,12 @@ import { EvidencePanel } from '@/components/result/EvidencePanel'
 import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
 import { useUiStore } from '@/store/useUiStore'
-import type {
-  HistoryItem,
-  NodeLabel,
-  QueryResult,
-  SchemaNode,
-  SchemaRelationship,
-} from '@/types/query'
+import { useAuthStore } from '@/store/useAuthStore'
+import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
+import type { HistoryItem, NodeLabel, QueryResult } from '@/types/query'
 
-// TODO: 아래 SCHEMA_NODES ~ FOLLOW_UP_QUESTIONS는 백엔드 연동 전까지 사용하는 목(mock) 데이터다.
+// TODO: 아래 FOLLOW_UP_QUESTIONS는 백엔드 연동 전까지 사용하는 목(mock) 데이터다.
 // 실제 API 연동 시 이 상수들과 handleSubmit의 목 처리 로직을 서버 응답으로 대체해야 한다.
-const SCHEMA_NODES: SchemaNode[] = [
-  {
-    label: 'Lot',
-    glyph: 'L',
-    description: '생산 배치 단위',
-    properties: ['lot_id', 'product_code', 'created_at'],
-  },
-  {
-    label: 'Process',
-    glyph: 'P',
-    description: '공정 단계',
-    properties: ['process_name', 'sequence'],
-  },
-  { label: 'Equipment', glyph: 'EQ', description: '설비', properties: ['equipment_id', 'line'] },
-  {
-    label: 'Material',
-    glyph: 'M',
-    description: '투입 자재',
-    properties: ['material_code', 'lot_no'],
-  },
-  {
-    label: 'Defect',
-    glyph: 'D',
-    description: '불량 기록',
-    properties: ['defect_code', 'severity', 'detected_at'],
-  },
-]
-
-const RELATIONSHIPS: SchemaRelationship[] = [
-  { name: 'FOLLOWS', description: '공정 순서' },
-  { name: 'PROCESSED_AT', description: '설비 투입' },
-  { name: 'HAS_DEFECT', description: '불량 발생' },
-  { name: 'CONSUMES', description: '자재 소모' },
-]
 
 const MOCK_RESULT: QueryResult = {
   answer:
@@ -150,6 +112,8 @@ function generateHistoryId(): string {
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
 // 질문 입력 → 목 결과 표시 → 이력 저장까지 대시보드의 핵심 흐름을 담당한다.
 export function Dashboard() {
+  const user = useAuthStore((s) => s.user)
+  const logout = useAuthStore((s) => s.logout)
   const [queryText, setQueryText] = useState('')
   const [history, setHistory] = useState<HistoryItem[]>([])
   // 화면 단계(activeScreen)와 패널 열림/접힘 상태는 여러 컴포넌트가 공유해야 해서 전역 store에 둔다.
@@ -188,6 +152,8 @@ export function Dashboard() {
         connectionEndpoint={CONNECTION_ENDPOINT}
         readOnly={READ_ONLY}
         onNavigateHome={handleNavigateHome}
+        username={user?.username}
+        onLogout={logout}
       />
       <div className="flex flex-1 overflow-hidden">
         <SchemaSidebar

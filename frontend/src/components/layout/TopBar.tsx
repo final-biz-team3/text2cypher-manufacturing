@@ -7,10 +7,19 @@ interface TopBarProps {
   connectionEndpoint: string
   readOnly: boolean
   onNavigateHome: () => void
+  username?: string
+  onLogout?: () => void
 }
 
-// 상단 헤더: 서비스명(홈 이동 버튼), Neo4j 연결/읽기전용 상태 배지, 다크모드 토글을 담당한다
-export function TopBar({ connected, connectionEndpoint, readOnly, onNavigateHome }: TopBarProps) {
+// 상단 헤더: 서비스명(홈 이동 버튼), Neo4j 연결/읽기전용 상태 배지, 다크모드 토글, 로그인 사용자·로그아웃을 담당한다
+export function TopBar({
+  connected,
+  connectionEndpoint,
+  readOnly,
+  onNavigateHome,
+  username,
+  onLogout,
+}: TopBarProps) {
   const theme = useUiStore((s) => s.theme)
   const setTheme = useUiStore((s) => s.setTheme)
 
@@ -48,6 +57,12 @@ export function TopBar({ connected, connectionEndpoint, readOnly, onNavigateHome
         >
           {theme === 'light' ? '다크모드' : '라이트모드'}
         </Button>
+        {username ? <span className="text-[11.5px] text-text-muted">{username}</span> : null}
+        {onLogout ? (
+          <Button type="button" variant="ghost" size="sm" onClick={onLogout}>
+            로그아웃
+          </Button>
+        ) : null}
       </div>
     </header>
   )
