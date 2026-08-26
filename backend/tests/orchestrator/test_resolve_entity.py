@@ -10,6 +10,7 @@ from tests.mocks.openai import (
     MockOpenAIClient,
     make_no_tool_call_response,
     make_tool_call_response,
+    make_tool_calls_response,
 )
 from tests.mocks.postgres import MockPostgresConnection
 
@@ -21,6 +22,7 @@ def _graph_schema() -> GraphSchema:
                 "Product": {
                     "uniqueKey": "productId",
                     "source": {"schema": "production", "table": "product"},
+                    "aliases": ["제품", "부품", "완제품"],
                     "properties": {
                         "productId": {"type": "INTEGER", "sourceColumn": "productid"},
                         "name": {"type": "STRING", "sourceColumn": "name"},
@@ -29,6 +31,7 @@ def _graph_schema() -> GraphSchema:
                 "Supplier": {
                     "uniqueKey": "supplierId",
                     "source": {"schema": "purchasing", "table": "vendor"},
+                    "aliases": ["공급업체", "업체", "공급사"],
                     "properties": {
                         "supplierId": {
                             "type": "INTEGER",
@@ -43,8 +46,8 @@ def _graph_schema() -> GraphSchema:
     )
 
 
-def test_make_resolve_entity_node_raises_when_no_named_entity_types() -> None:
-    """이름 검색 가능한 엔티티 타입이 없는 스키마면 즉시 실패한다."""
+def test_make_resolve_entity_node_uses_sql_type_without_named_graph_type() -> None:
+    """이름 검색 가능한 그래프 노드가 없어도 SQL 엔티티 타입을 사용한다."""
     schema = GraphSchema.model_validate(
         {
             "nodes": {
@@ -63,12 +66,18 @@ def test_make_resolve_entity_node_raises_when_no_named_entity_types() -> None:
         }
     )
 
-    with pytest.raises(ValueError):
-        make_resolve_entity_node(
-            MockOpenAIClient(make_no_tool_call_response()),
-            MockPostgresConnection(rows_by_name={}),
-            schema,
-        )
+    openai_client = MockOpenAIClient(make_no_tool_call_response())
+    node = make_resolve_entity_node(
+        openai_client,
+        MockPostgresConnection(rows_by_name={}),
+        schema,
+    )
+
+    assert node({"query": "전체 제품 수를 알려줘."}) == {"entity": None}
+    entity_type = openai_client.calls[0]["tools"][0]["function"]["parameters"][
+        "properties"
+    ]["entityType"]
+    assert entity_type["enum"] == ["productCategory"]
 
 
 def test_resolve_entity_returns_entity_when_product_found() -> None:
@@ -90,6 +99,39 @@ def test_resolve_entity_returns_entity_when_product_found() -> None:
         "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     }
     assert openai_client.calls[0]["reasoning_effort"] == "none"
+    entity_type = openai_client.calls[0]["tools"][0]["function"]["parameters"][
+        "properties"
+    ]["entityType"]
+    assert "productCategory" in entity_type["enum"]
+    assert "productCategory: 제품 분류" in entity_type["description"]
+
+
+def test_resolve_entity_returns_entity_when_product_category_found() -> None:
+    """질의에서 추출한 제품 분류명을 productCategoryId로 확정한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "productCategory", "entityName": "Components"},
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={"Components": (2, "Components")}
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node({"query": "Components에 포함된 제품 수를 알려줘."})
+
+    assert result == {
+        "entity": {
+            "productCategoryId": 2,
+            "productCategoryName": "Components",
+        }
+    }
+    assert postgres_connection.last_query == (
+        "SELECT productcategoryid, name "
+        "FROM production.productcategory WHERE name = %s",
+        ("Components",),
+    )
 
 
 def test_resolve_entity_returns_entity_when_supplier_found() -> None:
@@ -110,6 +152,45 @@ def test_resolve_entity_returns_entity_when_supplier_found() -> None:
     assert result == {"entity": {"supplierId": 1494, "supplierName": "Allenson Cycles"}}
 
 
+def test_resolve_entity_returns_all_named_entities_in_question_order() -> None:
+    """두 제품을 비교하는 질문은 어느 하나를 버리지 않고 순서대로 확정한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_calls_response(
+            [
+                (
+                    "extract_entity",
+                    {"entityType": "product", "entityName": "Road-650 Black, 58"},
+                ),
+                (
+                    "extract_entity",
+                    {
+                        "entityType": "product",
+                        "entityName": "Mountain-100 Black, 38",
+                    },
+                ),
+            ]
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={
+            "Road-650 Black, 58": (765, "Road-650 Black, 58"),
+            "Mountain-100 Black, 38": (775, "Mountain-100 Black, 38"),
+        }
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node(
+        {"query": ("Road-650 Black, 58과 Mountain-100 Black, 38의 공통 부품을 알려줘.")}
+    )
+
+    assert result == {
+        "entity": [
+            {"productId": 765, "productName": "Road-650 Black, 58"},
+            {"productId": 775, "productName": "Mountain-100 Black, 38"},
+        ]
+    }
+
+
 def test_resolve_entity_returns_none_entity_when_no_entity_mentioned() -> None:
     """특정 대상을 지칭하지 않는 질의는 DB 조회 없이 entity=None으로 통과한다."""
     openai_client = MockOpenAIClient(make_no_tool_call_response())
@@ -117,6 +198,23 @@ def test_resolve_entity_returns_none_entity_when_no_entity_mentioned() -> None:
     node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
 
     result = node({"query": "현재 활성 상태인 공급업체 수를 알려줘."})
+
+    assert result == {"entity": None}
+    assert postgres_connection.last_query is None
+
+
+def test_resolve_entity_ignores_entity_type_alias_as_name() -> None:
+    """종류를 나타내는 표현 자체는 이름으로 조회하지 않는다."""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "productCategory", "entityName": "제품"},
+        )
+    )
+    postgres_connection = MockPostgresConnection(rows_by_name={})
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node({"query": "판매 종료일이 없는 제품을 보여줘."})
 
     assert result == {"entity": None}
     assert postgres_connection.last_query is None
@@ -156,7 +254,7 @@ def test_resolve_entity_requires_openai_model(
 
 
 def test_resolve_entity_returns_confirmed_entity_when_it_matches_db() -> None:
-    """confirmed_entity가 DB 행과 일치하면 매칭 없이 그대로 확정한다."""
+    """confirmed_entity가 유효하고 추가 이름이 없으면 그대로 유지한다."""
     openai_client = MockOpenAIClient(make_no_tool_call_response())
     postgres_connection = MockPostgresConnection(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
@@ -176,7 +274,7 @@ def test_resolve_entity_returns_confirmed_entity_when_it_matches_db() -> None:
     assert result == {
         "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     }
-    assert openai_client.calls == []
+    assert len(openai_client.calls) == 1
 
 
 def test_resolve_entity_falls_through_when_confirmed_entity_not_in_db() -> None:
@@ -291,7 +389,7 @@ def test_resolve_entity_raises_ambiguous_with_similar_candidates() -> None:
 
 
 def test_resolve_entity_candidate_entity_round_trips_as_confirmed_entity() -> None:
-    """candidates[0]["entity"]를 confirmed_entity로 재진입하면 매칭 없이 확정된다."""
+    """후보 응답의 entity를 재확인 요청에 그대로 사용할 수 있다."""
     openai_client = MockOpenAIClient(
         make_tool_call_response(
             "extract_entity",
@@ -330,7 +428,55 @@ def test_resolve_entity_candidate_entity_round_trips_as_confirmed_entity() -> No
     )
 
     assert result == {"entity": candidate_entity}
-    assert reentry_openai_client.calls == []
+    assert len(reentry_openai_client.calls) == 1
+
+
+def test_resolve_entity_merges_confirmed_candidate_with_other_named_entity() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_calls_response(
+            [
+                (
+                    "extract_entity",
+                    {"entityType": "product", "entityName": "터치링 자전거"},
+                ),
+                (
+                    "extract_entity",
+                    {
+                        "entityType": "product",
+                        "entityName": "Mountain-100 Black, 38",
+                    },
+                ),
+            ]
+        )
+    )
+    confirmed_entity = {
+        "productId": 956,
+        "productName": "Touring-1000 Yellow, 54",
+    }
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={
+            "Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54"),
+            "Mountain-100 Black, 38": (775, "Mountain-100 Black, 38"),
+        },
+        similar_rows_by_name={
+            "터치링 자전거": [(956, "Touring-1000 Yellow, 54", 0.62)]
+        },
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node(
+        {
+            "query": "터치링 자전거와 Mountain-100 Black, 38의 공통 부품을 알려줘.",
+            "confirmed_entity": confirmed_entity,
+        }
+    )
+
+    assert result == {
+        "entity": [
+            confirmed_entity,
+            {"productId": 775, "productName": "Mountain-100 Black, 38"},
+        ]
+    }
 
 
 def test_resolve_entity_falls_through_when_confirmed_entity_has_wrong_keys() -> None:
@@ -435,12 +581,20 @@ def test_resolve_entity_returns_none_entity_when_llm_extracts_unknown_entity_typ
     assert postgres_connection.last_query is None
 
 
-def test_resolve_entity_returns_none_entity_when_tool_call_arguments_missing_key() -> (
-    None
-):
-    """tool call 인자에 필수 키가 없으면 entity=None으로 처리한다."""
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"entityType": "product"},
+        {"entityType": "product", "entityName": 123},
+    ],
+    ids=["missing-key", "wrong-type"],
+)
+def test_resolve_entity_returns_none_entity_for_invalid_tool_arguments(
+    arguments: dict[str, object],
+) -> None:
+    """tool call 인자의 키나 타입이 잘못되면 entity=None으로 처리한다."""
     openai_client = MockOpenAIClient(
-        make_tool_call_response("extract_entity", {"entityType": "product"})
+        make_tool_call_response("extract_entity", arguments)
     )
     postgres_connection = MockPostgresConnection(rows_by_name={})
     node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())

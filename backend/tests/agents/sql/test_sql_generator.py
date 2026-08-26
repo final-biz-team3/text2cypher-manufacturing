@@ -20,6 +20,7 @@ def test_generate_sql_builds_sql_prompt_and_returns_llm_query() -> None:
         entity={"productId": 985, "productName": "Paint - Black"},
         schema_text="production.product {productid: INTEGER, listprice: NUMERIC}",
         business_rules=["확정된 제품 ID로 제품을 조회한다."],
+        required_outputs=["productId", "listPrice"],
     )
 
     assert generated_sql == (
@@ -29,6 +30,8 @@ def test_generate_sql_builds_sql_prompt_and_returns_llm_query() -> None:
     assert "PostgreSQL" in sent_messages[0]["content"]
     assert "production.product {productid: INTEGER" in sent_messages[0]["content"]
     assert "- 확정된 제품 ID로 제품을 조회한다." in sent_messages[0]["content"]
+    assert "- productId" in sent_messages[0]["content"]
+    assert "- listPrice" in sent_messages[0]["content"]
     assert json.loads(sent_messages[1]["content"]) == {
         "query": "Paint - Black의 정가를 알려줘.",
         "entity": {"productId": 985, "productName": "Paint - Black"},

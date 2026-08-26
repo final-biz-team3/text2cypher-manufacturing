@@ -42,6 +42,7 @@ Thumbs.db
 # ── 로그 / 임시 파일 ──
 *.log
 *.tmp
+artifacts/
 
 # ── AI 코드 어시스턴트 ──
 .claude/

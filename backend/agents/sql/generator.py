@@ -11,15 +11,23 @@ def generate_sql(
     openai_client: Any,
     *,
     query: str,
-    entity: dict[str, object] | None,
+    entity: object | None,
     schema_text: str,
     business_rules: Sequence[str] = (),
+    required_outputs: Sequence[str] = (),
+    previous_query: str | None = None,
+    previous_error: str | None = None,
 ) -> str:
-    """SQL 프롬프트를 구성해 LLM이 생성한 PostgreSQL 문을 반환한다."""
+    """SQL 프롬프트를 구성해 LLM이 생성한 PostgreSQL 문을 반환한다.
+    previous_query·previous_error는 이전 시도가 실패했을 때 self-correction
+    재시도용 피드백으로 전달한다."""
     messages = build_sql_prompt(
         query=query,
         entity=entity,
         schema_text=schema_text,
         business_rules=business_rules,
+        required_outputs=required_outputs,
+        previous_query=previous_query,
+        previous_error=previous_error,
     )
     return generate_query(openai_client, messages)

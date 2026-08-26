@@ -33,7 +33,7 @@ namespace_packages = true
 explicit_package_bases = true
 
 [tool.pytest.ini_options]
-addopts = "--verbose -m \"not integration\""
+addopts = "--verbose -m \"not integration\" --import-mode=importlib"
 pythonpath = ["backend"]
 testpaths = ["backend/tests"]
 markers = [

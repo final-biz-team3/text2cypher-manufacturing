@@ -7,9 +7,9 @@ from typing import Any
 import psycopg
 
 from agents.cypher.schema.models import GraphSchema
-from orchestrator.entity_types import NamedEntityType, list_named_entity_types
+from orchestrator.entity_types import NamedEntityType, list_resolvable_entity_types
 from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
-from orchestrator.state import OrchestratorState, get_effective_query
+from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
@@ -17,15 +17,26 @@ _SIMILARITY_THRESHOLD = 0.3
 _MAX_CANDIDATES = 5
 
 _SYSTEM_PROMPT = (
-    "사용자 질의에 특정 대상을 지칭하는 이름이 있으면 "
-    "extract_entity를 호출한다. 없으면 아무 도구도 호출하지 않는다. "
+    "사용자에게 답변하거나 추가 자료를 요청하지 않는다. 도구에 정의된 엔티티 "
+    "종류 중 질의에 고유 이름이 명시된 경우에만 extract_entity를 호출한다. "
+    "종류나 조건을 나타내는 일반 표현만 있으면 호출하지 않는다. 고유 이름은 "
+    "엔티티 종류 표현 없이 나타날 수 있으며, 그 이름이 조회·집계 범위를 "
+    "한정하면 extract_entity를 호출한다. 예를 들어 'A에 포함된 대상 수'처럼 "
+    "이름 A가 범위를 한정하면 A를 추출한다. "
     "이름에 쉼표로 이어지는 색상·크기 등 수식어가 있으면 잘라내지 않고 "
-    "쉼표 이후 부분까지 이름 전체를 통째로 추출한다."
+    "쉼표 이후 부분까지 이름 전체를 통째로 추출한다. 질의에 서로 다른 고유 "
+    "이름이 여러 개 있으면 이름마다 extract_entity를 한 번씩 호출하고 질문에 "
+    "등장한 순서를 유지한다."
 )
 
 
 def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
     """엔티티 타입 목록으로 Function Calling 도구 정의를 만든다."""
+    type_descriptions = "; ".join(
+        f"{entity.entity_type}: {', '.join(entity.aliases)}"
+        for entity in entity_types
+        if entity.aliases
+    )
     return {
         "type": "function",
         "function": {
@@ -40,6 +51,7 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
                     "entityType": {
                         "type": "string",
                         "enum": [entity.entity_type for entity in entity_types],
+                        "description": type_descriptions,
                     },
                     "entityName": {
                         "type": "string",
@@ -57,10 +69,10 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
     }
 
 
-def _extract_entity(
+def _extract_entities(
     query: str, openai_client: Any, extract_tool: dict
-) -> tuple[str, str] | None:
-    """LLM Function Calling으로 질의에서 엔티티 타입과 이름을 추출한다."""
+) -> list[tuple[str, str]]:
+    """LLM Function Calling으로 질의의 모든 이름 엔티티를 추출한다."""
     response = openai_client.chat.completions.create(
         model=os.environ["OPENAI_MODEL"],
         messages=[
@@ -72,15 +84,34 @@ def _extract_entity(
     )
     tool_calls = response.choices[0].message.tool_calls
     if not tool_calls:
-        return None
-    arguments = json.loads(tool_calls[0].function.arguments)
-    try:
-        return arguments["entityType"], arguments["entityName"]
-    except KeyError:
-        logger.warning(
-            "resolve_entity: extract_entity 인자 누락 arguments=%r", arguments
-        )
-        return None
+        return []
+
+    extractions: list[tuple[str, str]] = []
+    for tool_call in tool_calls:
+        if tool_call.function.name != "extract_entity":
+            logger.warning(
+                "resolve_entity: 알 수 없는 tool call %r 무시",
+                tool_call.function.name,
+            )
+            continue
+        arguments = json.loads(tool_call.function.arguments)
+        if not isinstance(arguments, dict):
+            logger.warning(
+                "resolve_entity: extract_entity 인자 형식 오류 %r", arguments
+            )
+            continue
+
+        entity_type = arguments.get("entityType")
+        entity_name = arguments.get("entityName")
+        if not isinstance(entity_type, str) or not isinstance(entity_name, str):
+            logger.warning(
+                "resolve_entity: extract_entity 인자 형식 오류 %r", arguments
+            )
+            continue
+        extraction = (entity_type, entity_name)
+        if extraction not in extractions:
+            extractions.append(extraction)
+    return extractions
 
 
 def _entity_type_config(
@@ -91,6 +122,16 @@ def _entity_type_config(
         if config.entity_type == entity_type:
             return config
     raise ValueError(f"Unknown entity type: {entity_type}")
+
+
+def _is_entity_type_alias(name: str, entity_types: list[NamedEntityType]) -> bool:
+    """추출된 이름이 고유 이름이 아닌 엔티티 종류 표현인지 확인한다."""
+    normalized_name = " ".join(name.casefold().split())
+    return any(
+        normalized_name == " ".join(alias.casefold().split())
+        for entity in entity_types
+        for alias in entity.aliases
+    )
 
 
 def _find_entity_by_name(
@@ -182,75 +223,109 @@ def make_resolve_entity_node(
     openai_client: Any, postgres_connection: Any, graph_schema: GraphSchema
 ) -> Callable[[OrchestratorState], dict]:
     """OpenAI/PostgreSQL 클라이언트와 그래프 스키마를 주입받은 resolve_entity 노드를 만든다."""
-    entity_types = list_named_entity_types(graph_schema)
-    if not entity_types:
-        raise ValueError(
-            "그래프 스키마에 이름으로 검색 가능한 엔티티 타입이 하나도 없습니다."
-        )
+    entity_types = list_resolvable_entity_types(graph_schema)
     extract_tool = _build_extract_entity_tool(entity_types)
 
     def resolve_entity(state: OrchestratorState) -> dict:
-        query = get_effective_query(state)
         confirmed_entity = state.get("confirmed_entity")
+        confirmed_config: NamedEntityType | None = None
         if confirmed_entity is not None:
             confirmed_config = _confirmed_entity_config(confirmed_entity, entity_types)
             if confirmed_config is not None and _confirmed_entity_exists(
                 confirmed_entity, confirmed_config, postgres_connection
             ):
                 logger.info(
-                    "resolve_entity: query=%r -> confirmed_entity=%s (재진입)",
-                    query,
+                    "resolve_entity: query=%r -> confirmed_entity=%s 검증 완료 "
+                    "(나머지 엔티티 재추출)",
+                    state["query"],
                     confirmed_entity,
                 )
-                return {"entity": confirmed_entity}
-            logger.warning(
-                "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
-                "(무시하고 재추출)",
-                query,
-                confirmed_entity,
-            )
-
-        extraction = _extract_entity(query, openai_client, extract_tool)
-        if extraction is None:
-            logger.info("resolve_entity: query=%r -> entity=None (대상 미언급)", query)
-            return {"entity": None}
-
-        entity_type, entity_name = extraction
-        try:
-            config = _entity_type_config(entity_type, entity_types)
-        except ValueError:
-            logger.warning(
-                "resolve_entity: query=%r -> 알 수 없는 entityType=%r (entity=None 처리)",
-                query,
-                entity_type,
-            )
-            return {"entity": None}
-
-        entity = _find_entity_by_name(config, entity_name, postgres_connection)
-        if entity is None:
-            candidates = _find_similar_entities(
-                config, entity_name, postgres_connection
-            )
-            if candidates:
-                logger.info(
-                    "resolve_entity: query=%r -> entityName=%r 후보 %d개 "
-                    "(EntityAmbiguousError)",
-                    query,
-                    entity_name,
-                    len(candidates),
+            else:
+                logger.warning(
+                    "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
+                    "(무시하고 재추출)",
+                    state["query"],
+                    confirmed_entity,
                 )
-                raise EntityAmbiguousError(candidates)
+                confirmed_entity = None
+                confirmed_config = None
 
+        extractions = _extract_entities(state["query"], openai_client, extract_tool)
+        if not extractions:
+            if confirmed_entity is not None:
+                return {"entity": confirmed_entity}
             logger.info(
-                "resolve_entity: query=%r -> entityType=%r entityName=%r 조회 실패 "
-                "(EntityNotFoundError)",
-                query,
-                entity_type,
-                entity_name,
+                "resolve_entity: query=%r -> entity=None (대상 미언급)", state["query"]
             )
-            raise EntityNotFoundError()
+            return {"entity": None}
 
-        logger.info("resolve_entity: query=%r -> entity=%s", query, entity)
-        return {"entity": entity}
+        resolved: list[dict] = []
+        for entity_type, entity_name in extractions:
+            if _is_entity_type_alias(entity_name, entity_types):
+                logger.info(
+                    "resolve_entity: query=%r -> entityName=%r 종류 표현이므로 무시",
+                    state["query"],
+                    entity_name,
+                )
+                continue
+
+            try:
+                config = _entity_type_config(entity_type, entity_types)
+            except ValueError:
+                logger.warning(
+                    "resolve_entity: query=%r -> 알 수 없는 entityType=%r (무시)",
+                    state["query"],
+                    entity_type,
+                )
+                continue
+
+            entity = _find_entity_by_name(config, entity_name, postgres_connection)
+            if entity is None:
+                candidates = _find_similar_entities(
+                    config, entity_name, postgres_connection
+                )
+                confirmed_candidate = next(
+                    (
+                        candidate["entity"]
+                        for candidate in candidates
+                        if confirmed_config == config
+                        and candidate["entity"] == confirmed_entity
+                    ),
+                    None,
+                )
+                if confirmed_candidate is not None:
+                    if confirmed_candidate not in resolved:
+                        resolved.append(confirmed_candidate)
+                    continue
+                if candidates:
+                    logger.info(
+                        "resolve_entity: query=%r -> entityName=%r 후보 %d개 "
+                        "(EntityAmbiguousError)",
+                        state["query"],
+                        entity_name,
+                        len(candidates),
+                    )
+                    raise EntityAmbiguousError(candidates)
+
+                logger.info(
+                    "resolve_entity: query=%r -> entityType=%r entityName=%r 조회 실패 "
+                    "(EntityNotFoundError)",
+                    state["query"],
+                    entity_type,
+                    entity_name,
+                )
+                raise EntityNotFoundError()
+            if entity not in resolved:
+                resolved.append(entity)
+
+        result: dict | list[dict] | None
+        if not resolved:
+            result = confirmed_entity
+        elif len(resolved) == 1:
+            result = resolved[0]
+        else:
+            result = resolved
+        logger.info("resolve_entity: query=%r -> entity=%s", state["query"], result)
+        return {"entity": result}
 
     return resolve_entity
