@@ -1,13 +1,24 @@
 """대화기록 저장·조회를 다룬다."""
 
 import json
-from typing import Any
+from typing import Any, Protocol
 
 from core.auth import CurrentUser
 
 
+class Cursor(Protocol):
+    def fetchall(self) -> list[tuple[Any, ...]]: ...
+
+
+class DatabaseConnection(Protocol):
+    """실제 psycopg 커넥션과 테스트용 fake가 공통으로 만족하는 인터페이스."""
+
+    def execute(self, query: str, params: tuple[Any, ...] = ()) -> Cursor: ...
+    def commit(self) -> None: ...
+
+
 def save_conversation(
-    connection: Any,
+    connection: DatabaseConnection,
     username: str,
     query: str,
     final_answer: str | None,
@@ -33,7 +44,7 @@ def save_conversation(
     connection.commit()
 
 
-def list_history(connection: Any, user: CurrentUser) -> list[dict]:
+def list_history(connection: DatabaseConnection, user: CurrentUser) -> list[dict]:
     """admin이면 전체, 아니면 본인 기록만 최신순으로 반환한다."""
     query = (
         "SELECT id, username, query, final_answer, sql_query, cypher_query, "
