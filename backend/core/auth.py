@@ -9,8 +9,8 @@ from fastapi import Cookie, Depends, HTTPException
 from pydantic import BaseModel
 
 COOKIE_NAME = "access_token"
+EXPIRE_HOURS = 24
 _ALGORITHM = "HS256"
-_EXPIRE_HOURS = 12
 
 
 class CurrentUser(BaseModel):
@@ -40,7 +40,7 @@ def check_jwt_secret() -> None:
 
 
 def create_access_token(username: str, role: str) -> str:
-    expire = datetime.now(UTC) + timedelta(hours=_EXPIRE_HOURS)
+    expire = datetime.now(UTC) + timedelta(hours=EXPIRE_HOURS)
     payload = {"sub": username, "role": role, "exp": expire}
     return jwt.encode(payload, _secret_key(), algorithm=_ALGORITHM)
 
