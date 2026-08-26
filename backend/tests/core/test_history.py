@@ -11,29 +11,48 @@ class _FakeCursor:
     def __init__(self, rows: list[tuple[Any, ...]]) -> None:
         self._rows = rows
 
-    def fetchall(self) -> list[tuple[Any, ...]]:
+    async def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
 
 
 class _FakeConnection:
+    def __init__(self, pool: "_FakePool") -> None:
+        self._pool = pool
+
+    async def execute(self, query: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
+        self._pool.statements.append((query, params))
+        return _FakeCursor(self._pool.rows)
+
+    async def commit(self) -> None:
+        self._pool.committed = True
+
+
+class _FakeConnectionContext:
+    def __init__(self, pool: "_FakePool") -> None:
+        self._pool = pool
+
+    async def __aenter__(self) -> _FakeConnection:
+        return _FakeConnection(self._pool)
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
+class _FakePool:
     def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
         self.statements: list[tuple[str, tuple[Any, ...]]] = []
         self.committed = False
-        self._rows = rows or []
+        self.rows = rows or []
 
-    def execute(self, query: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
-        self.statements.append((query, params))
-        return _FakeCursor(self._rows)
-
-    def commit(self) -> None:
-        self.committed = True
+    def connection(self) -> _FakeConnectionContext:
+        return _FakeConnectionContext(self)
 
 
-def test_save_conversation_inserts_and_commits() -> None:
-    connection = _FakeConnection()
+async def test_save_conversation_inserts_and_commits() -> None:
+    pool = _FakePool()
 
-    save_conversation(
-        connection,
+    await save_conversation(
+        pool,
         "kim.quality",
         "정가 알려줘",
         "1200원입니다",
@@ -48,26 +67,26 @@ def test_save_conversation_inserts_and_commits() -> None:
         None,
     )
 
-    query, params = connection.statements[0]
+    query, params = pool.statements[0]
     assert "INSERT INTO app.conversation_history" in query
     assert params[0] == "kim.quality"
     assert params[1] == "정가 알려줘"
     assert params[2] == "1200원입니다"
     assert '"listprice": 1200' in params[5]
     assert params[6] is None
-    assert connection.committed is True
+    assert pool.committed is True
 
 
-def test_list_history_scopes_to_own_rows_for_non_admin() -> None:
-    connection = _FakeConnection(
+async def test_list_history_scopes_to_own_rows_for_non_admin() -> None:
+    pool = _FakePool(
         rows=[
             (1, "kim.quality", "q", "a", None, None, None, None, datetime(2026, 1, 1))
         ]
     )
 
-    result = list_history(connection, CurrentUser(username="kim.quality", role="user"))
+    result = await list_history(pool, CurrentUser(username="kim.quality", role="user"))
 
-    query, params = connection.statements[0]
+    query, params = pool.statements[0]
     assert "WHERE username = %s" in query
     assert params == ("kim.quality",)
     assert result == [
@@ -85,11 +104,11 @@ def test_list_history_scopes_to_own_rows_for_non_admin() -> None:
     ]
 
 
-def test_list_history_returns_all_rows_for_admin() -> None:
-    connection = _FakeConnection(rows=[])
+async def test_list_history_returns_all_rows_for_admin() -> None:
+    pool = _FakePool(rows=[])
 
-    list_history(connection, CurrentUser(username="park.admin", role="admin"))
+    await list_history(pool, CurrentUser(username="park.admin", role="admin"))
 
-    query, params = connection.statements[0]
+    query, params = pool.statements[0]
     assert "WHERE" not in query
     assert params == ()

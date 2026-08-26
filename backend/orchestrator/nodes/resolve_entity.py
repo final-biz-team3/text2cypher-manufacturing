@@ -260,7 +260,9 @@ def make_resolve_entity_node(
                 confirmed_entity = None
                 confirmed_config = None
 
-        extractions = await _extract_entities(state["query"], openai_client, extract_tool)
+        extractions = await _extract_entities(
+            state["query"], openai_client, extract_tool
+        )
         if not extractions:
             if confirmed_entity is not None:
                 return {"entity": confirmed_entity}

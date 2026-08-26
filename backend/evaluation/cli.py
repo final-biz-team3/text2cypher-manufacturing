@@ -1,6 +1,7 @@
 """`python -m evaluation` 명령행 진입점."""
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -10,13 +11,21 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
+from core.postgres import bootstrap_postgres, close_pool, open_pool
 from evaluation.database import ReadOnlyDatabaseExecutor
 from evaluation.errors import ConfigurationError, InfrastructureError
 from evaluation.models import EvaluationCase, load_manifest
 from evaluation.reporting import build_summary, write_artifacts
 from evaluation.runner import EvaluationRun, EvaluationRunner
+
+# resolve_entity/route_query/generate_sql/generate_cypher가 전부 async라
+# 이 CLI(전체 동기)에서도 asyncio.run()으로 다리를 놓아 호출한다(runner.py
+# 참고). psycopg의 async 모드는 Windows 기본 ProactorEventLoop를 지원하지
+# 않으므로 여기서도 main.py/conftest.py와 동일하게 정책을 고정한다.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
@@ -151,9 +160,12 @@ def main(argv: list[str] | None = None) -> int:
             if not api_key:
                 raise ConfigurationError("OPENAI_API_KEY가 필요합니다.")
             os.environ["OPENAI_MODEL"] = args.model
-            client = OpenAI(api_key=api_key, base_url=args.base_url)
+            client = AsyncOpenAI(api_key=api_key, base_url=args.base_url)
 
         database = ReadOnlyDatabaseExecutor.from_environment()
+        if client is not None:
+            asyncio.run(bootstrap_postgres())
+            asyncio.run(open_pool())
         try:
             runner = EvaluationRunner(
                 manifest,
@@ -168,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         finally:
             database.close()
+            if client is not None:
+                asyncio.run(close_pool())
 
         summary = build_summary(
             result,

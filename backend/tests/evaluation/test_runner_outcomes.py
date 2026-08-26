@@ -23,7 +23,7 @@ def test_sql_generation_receives_manifest_rules_and_outputs(
     expected = manifest.contracts["RQ08"].subqueries[0]
     captured: dict[str, Any] = {}
 
-    def generate_sql(*args: Any, **kwargs: Any) -> str:
+    async def generate_sql(*args: Any, **kwargs: Any) -> str:
         captured.update(kwargs)
         return "SELECT 1"
 
@@ -50,7 +50,7 @@ def test_cypher_generation_receives_manifest_rules_and_outputs(
     expected = manifest.contracts["RQ17"].subqueries[0]
     captured: dict[str, Any] = {}
 
-    def generate_cypher(*args: Any, **kwargs: Any) -> str:
+    async def generate_cypher(*args: Any, **kwargs: Any) -> str:
         captured.update(kwargs)
         return "MATCH (n) RETURN n"
 

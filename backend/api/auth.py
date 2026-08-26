@@ -15,7 +15,7 @@ from core.auth import (
     hash_password,
     verify_password,
 )
-from core.postgres import get_connection
+from core.postgres import get_pool
 
 router = APIRouter(prefix="/auth")
 
@@ -35,18 +35,18 @@ def _cookie_secure() -> bool:
     return os.getenv("APP_ENV") != "development"
 
 
-def _find_user_row(connection: Any, username: str) -> tuple[str, str, str] | None:
-    cursor = connection.execute(
-        "SELECT username, password_hash, role FROM app.users WHERE username = %s",
-        (username,),
-    )
-    return cursor.fetchone()
+async def _find_user_row(pool: Any, username: str) -> tuple[str, str, str] | None:
+    async with pool.connection() as conn:
+        cursor = await conn.execute(
+            "SELECT username, password_hash, role FROM app.users WHERE username = %s",
+            (username,),
+        )
+        return await cursor.fetchone()
 
 
 @router.post("/login")
-def login(request: LoginRequest, response: Response) -> dict[str, str]:
-    connection = get_connection()
-    row = _find_user_row(connection, request.username)
+async def login(request: LoginRequest, response: Response) -> dict[str, str]:
+    row = await _find_user_row(get_pool(), request.username)
     password_hash = row[1] if row is not None else _DUMMY_HASH
     password_ok = verify_password(request.password, password_hash)
     if row is None or not password_ok:

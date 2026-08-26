@@ -1,5 +1,7 @@
 """프로덕션 오케스트레이터 구성요소를 사용하는 평가 실행기."""
 
+import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,7 @@ from agents.cypher.schema.serializer import serialize_graph_schema
 from agents.sql.generator import generate_sql
 from agents.sql.schema.loader import load_sql_schema
 from agents.sql.schema.serializer import serialize_sql_schema
+from core.postgres import get_pool
 from evaluation.contracts import (
     collect_input_bindings,
     compare_execution_contract,
@@ -75,18 +78,25 @@ class EvaluationRunner:
         self.sql_schema_text = serialize_sql_schema(sql_schema)
         self.graph_schema_text = serialize_graph_schema(graph_schema)
         self.graph_query_policy = graph_schema.query_policy
-        self.resolve_entity = (
-            make_resolve_entity_node(
-                openai_client,
-                database.postgres,
-                graph_schema,
+        # resolve_entity/route_query 노드는 async다 - 이 클래스(그리고
+        # 아래를 호출하는 _evaluate_case)는 전부 동기라, asyncio.run()으로
+        # 감싸 동기 호출부 입장에서는 평범한 함수처럼 보이게 한다. resolve_entity의
+        # DB 조회는 database.postgres(평가 전용 sync 커넥션)가 아니라
+        # core.postgres.get_pool()을 쓴다 - resolve_entity.py가 이제
+        # `async with pool.connection()` 형태의 풀 객체를 요구하기 때문에,
+        # 앱 전체가 쓰는 것과 같은(읽기 전용) 풀을 그대로 재사용한다.
+        self.resolve_entity: Callable[[Any], Any] | None
+        self.route_query: Callable[[Any], Any] | None
+        if openai_client is not None:
+            resolve_entity_node = make_resolve_entity_node(
+                openai_client, get_pool(), graph_schema
             )
-            if openai_client is not None
-            else None
-        )
-        self.route_query = (
-            make_route_query_node(openai_client) if openai_client is not None else None
-        )
+            route_query_node = make_route_query_node(openai_client)
+            self.resolve_entity = lambda state: asyncio.run(resolve_entity_node(state))
+            self.route_query = lambda state: asyncio.run(route_query_node(state))
+        else:
+            self.resolve_entity = None
+            self.route_query = None
 
     def _execute(
         self,
@@ -226,28 +236,35 @@ class EvaluationRunner:
         entity: Any,
         inputs: dict[str, list[Any]],
     ) -> str:
+        # generate_sql/generate_cypher는 async다 - 이 메서드는 동기 호출부
+        # (_evaluate_subqueries)에서 그대로 쓸 수 있어야 해서 asyncio.run()으로
+        # 감싼다(위 __init__의 resolve_entity/route_query와 동일한 이유).
         context = entity
         if inputs:
             context = {"resolvedEntities": entity, "upstreamBindings": inputs}
         if expected.tool == "sql":
-            query = generate_sql(
-                self.openai_client,
-                query=actual["question"],
-                entity=context,
-                schema_text=self.sql_schema_text,
-                business_rules=expected.business_rules,
-                required_outputs=expected.required_outputs,
+            query = asyncio.run(
+                generate_sql(
+                    self.openai_client,
+                    query=actual["question"],
+                    entity=context,
+                    schema_text=self.sql_schema_text,
+                    business_rules=expected.business_rules,
+                    required_outputs=expected.required_outputs,
+                )
             )
             validate_read_only_sql(query)
             return query
-        query = generate_cypher(
-            self.openai_client,
-            query=actual["question"],
-            entity=context,
-            schema_text=self.graph_schema_text,
-            query_policy=self.graph_query_policy,
-            business_rules=expected.business_rules,
-            required_outputs=expected.required_outputs,
+        query = asyncio.run(
+            generate_cypher(
+                self.openai_client,
+                query=actual["question"],
+                entity=context,
+                schema_text=self.graph_schema_text,
+                query_policy=self.graph_query_policy,
+                business_rules=expected.business_rules,
+                required_outputs=expected.required_outputs,
+            )
         )
         validate_read_only_cypher(query)
         return query
