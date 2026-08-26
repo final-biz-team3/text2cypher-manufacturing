@@ -24,7 +24,7 @@ def test_build_sql_prompt_adds_postgresql_policy_and_dynamic_context() -> None:
     assert "질문에서 요청한 값" in system_content
     assert "관련 식별자를 기준" in system_content
     assert '"외부 구매 부품"은 production.product.makeflag = false' in system_content
-    assert "COALESCE(SUM(quantity), 0)" in system_content
+    assert "COALESCE(pg_catalog.sum(quantity), 0)" in system_content
     assert "GREATEST(safetystocklevel - 실제 재고, 0)" in system_content
     assert "shelf·bin별 원본 quantity" in system_content
     assert "locationid, shelf, bin 순" in system_content

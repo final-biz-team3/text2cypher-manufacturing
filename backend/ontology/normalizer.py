@@ -2,9 +2,57 @@
 
 import re
 
-from ontology.loader import build_term_map, normalize_lookup_key
-from ontology.models import TermDictionary
-from orchestrator.state import DetectedAction, MatchedTerm, NormalizationResult
+from ontology.loader import build_term_index, normalize_lookup_key
+from ontology.models import TermConcept, TermDictionary
+from orchestrator.state import (
+    AmbiguousTerm,
+    DetectedAction,
+    MatchedTerm,
+    NormalizationResult,
+)
+
+_KOREAN_PARTICLES = (
+    "들에게서",
+    "들에게",
+    "들에서",
+    "들까지",
+    "들부터",
+    "들처럼",
+    "들보다",
+    "들의",
+    "들은",
+    "들이",
+    "들을",
+    "들과",
+    "들로",
+    "들도",
+    "들만",
+    "에게서",
+    "으로",
+    "에서",
+    "에게",
+    "까지",
+    "부터",
+    "처럼",
+    "보다",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "과",
+    "와",
+    "의",
+    "에",
+    "로",
+    "도",
+    "만",
+    "별로",
+    "별",
+    "들",
+)
+_ENGLISH_READ_COMMANDS = {"show", "find", "list", "get", "search", "display"}
 
 
 def _term_pattern(term: str) -> re.Pattern[str]:
@@ -12,6 +60,58 @@ def _term_pattern(term: str) -> re.Pattern[str]:
     if term.isascii() and any(character.isalpha() for character in term):
         return re.compile(rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])", re.I)
     return re.compile(escaped, re.I)
+
+
+def _has_korean_business_boundary(
+    query: str, start: int, end: int, *, allowed_prefixes: list[str]
+) -> bool:
+    before = query[:start]
+    after = query[end:]
+    if before and before[-1].isalnum():
+        has_allowed_prefix = any(
+            before.endswith(prefix)
+            and (len(before) == len(prefix) or not before[-len(prefix) - 1].isalnum())
+            for prefix in allowed_prefixes
+        )
+        if not has_allowed_prefix:
+            return False
+    if after and after[0].isalnum():
+        return any(
+            after.startswith(particle)
+            and (len(after) == len(particle) or not after[len(particle)].isalnum())
+            for particle in _KOREAN_PARTICLES
+        )
+    return True
+
+
+def _concept_matches_boundary(
+    query: str,
+    start: int,
+    end: int,
+    term: str,
+    concept: TermConcept,
+    lookup_terms: set[str],
+) -> bool:
+    if concept.concept_type == "BUSINESS" and term.isascii():
+        previous = re.search(r"([A-Z][A-Za-z0-9&.-]*)\s+$", query[:start])
+        previous_is_entity_name = bool(
+            previous
+            and previous.group(1).casefold()
+            not in _ENGLISH_READ_COMMANDS | lookup_terms
+        )
+        next_is_title_case = bool(re.match(r"\s+[A-Z][A-Za-z0-9&.-]*", query[end:]))
+        if previous_is_entity_name or next_is_title_case:
+            return False
+    return not (
+        concept.concept_type == "BUSINESS"
+        and any("가" <= character <= "힣" for character in term)
+        and not _has_korean_business_boundary(
+            query,
+            start,
+            end,
+            allowed_prefixes=concept.allowed_prefixes,
+        )
+    )
 
 
 def _has_final_consonant(word: str) -> bool:
@@ -57,21 +157,49 @@ def normalize_query(query: str, dictionary: TermDictionary) -> NormalizationResu
     normalized = query
     matched_terms: list[MatchedTerm] = []
     detected_actions: list[DetectedAction] = []
-    term_map = build_term_map(dictionary)
+    ambiguous_terms: list[AmbiguousTerm] = []
+    term_index = build_term_index(dictionary)
+    lookup_terms = set(term_index)
 
     # 복합 표현이 짧은 표현보다 먼저 매칭되도록 한다.
-    terms = sorted(term_map, key=lambda value: (-len(value), value))
+    terms = sorted(term_index, key=lambda value: (-len(value), value))
     occupied: list[tuple[int, int]] = []
     replacements: list[tuple[int, int, str]] = []
 
     for lookup_term in terms:
-        concept = term_map[lookup_term]
         for match in _term_pattern(lookup_term).finditer(query):
             span = match.span()
+            candidates = [
+                concept
+                for concept in term_index[lookup_term]
+                if _concept_matches_boundary(
+                    query, *span, lookup_term, concept, lookup_terms
+                )
+            ]
+            if not candidates:
+                continue
             if any(span[0] < end and start < span[1] for start, end in occupied):
                 continue
             occupied.append(span)
             original = match.group(0)
+            if len(candidates) > 1:
+                ambiguous_terms.append(
+                    {
+                        "original": original,
+                        "candidates": [
+                            {
+                                "concept_id": concept.concept_id,
+                                "canonical": concept.canonical,
+                                "concept_type": concept.concept_type,
+                                "target_type": concept.target_type,
+                            }
+                            for concept in candidates
+                        ],
+                    }
+                )
+                continue
+
+            concept = candidates[0]
             if concept.concept_type == "ACTION":
                 assert concept.action_type is not None
                 assert concept.default_policy is not None
@@ -113,4 +241,8 @@ def normalize_query(query: str, dictionary: TermDictionary) -> NormalizationResu
         "normalized_query": normalized,
         "matched_terms": matched_terms,
         "detected_actions": detected_actions,
+        "normalization_status": (
+            "NEEDS_CLARIFICATION" if ambiguous_terms else "NORMALIZED"
+        ),
+        "ambiguous_terms": ambiguous_terms,
     }

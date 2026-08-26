@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 from orchestrator.planning import parse_execution_plan
-from orchestrator.state import OrchestratorState
+from orchestrator.state import OrchestratorState, get_effective_query
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,9 @@ A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_impact","tool":"graph
 
 def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], dict]:
     def route_query(state: OrchestratorState) -> dict:
+        query = get_effective_query(state)
         entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
-        user_content = f"Q: {state['query']}\nentity: {entity_json}\nA:"
+        user_content = f"Q: {query}\nentity: {entity_json}\nA:"
 
         response = openai_client.chat.completions.create(
             model=os.environ["OPENAI_MODEL"],
@@ -69,12 +70,12 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], d
         if not isinstance(content, str):
             raise ValueError("route_query가 빈 응답을 반환했습니다.")
         try:
-            plan = parse_execution_plan(content, state["query"])
+            plan = parse_execution_plan(content, query)
         except ValueError as exc:
             raise RoutePlanError(str(exc), content) from exc
         logger.info(
             "route_query: query=%r -> tool_plan=%s subqueries=%s",
-            state["query"],
+            query,
             plan["tool_plan"],
             [item["id"] for item in plan["subqueries"]],
         )

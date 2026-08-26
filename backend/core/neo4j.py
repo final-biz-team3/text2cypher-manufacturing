@@ -11,8 +11,8 @@ def get_driver() -> Driver:
         _driver = GraphDatabase.driver(
             os.getenv("NEO4J_URI", "bolt://localhost:7687"),
             auth=(
-                os.getenv("NEO4J_USER", "neo4j"),
-                os.getenv("NEO4J_PASSWORD", "changeme_local"),
+                os.getenv("NEO4J_APP_USER", "text2cypher_reader"),
+                os.getenv("NEO4J_APP_PASSWORD", "changeme_local"),
             ),
         )
     return _driver

@@ -5,7 +5,8 @@ concepts:
     conceptType: BUSINESS
     canonical: 공급업체
     targetType: Supplier
-    terms: [공급업체, 공급사, 협력사, 납품업체, supplier, vendor]
+    allowedPrefixes: [우수, 핵심, 전략, 1차]
+    terms: [공급업체, 공급사, 협력사, 납품업체, 업체, supplier, vendor]
 
   - conceptId: component
     conceptType: BUSINESS
@@ -54,6 +55,18 @@ concepts:
     canonical: 안전재고
     targetType: null
     terms: [안전재고, 안전재고 수준, safety stock, safety stock level]
+
+  - conceptId: sales_volume
+    conceptType: BUSINESS
+    canonical: 판매량
+    targetType: null
+    terms: [판매량, 판매 수량, 주문 수량, sales volume]
+
+  - conceptId: rejected_quantity
+    conceptType: BUSINESS
+    canonical: 반려 수량
+    targetType: null
+    terms: [반려 수량, 거부 수량, 불합격 수량, rejected quantity]
 
   - conceptId: bom
     conceptType: BUSINESS

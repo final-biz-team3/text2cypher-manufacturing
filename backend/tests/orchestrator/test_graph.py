@@ -1,6 +1,14 @@
-"""엔티티 확정 -> 라우팅 -> self-correction 뼈대까지의 전체 흐름을 테스트한다."""
+"""안전성 검사 -> 엔티티 확정 -> self-correction 흐름을 테스트한다."""
 
-from orchestrator.graph import build_orchestrator_graph
+import logging
+from pathlib import Path
+
+from orchestrator.graph import (
+    _PROJECT_ROOT,
+    _ontology_path,
+    _schema_dir,
+    build_orchestrator_graph,
+)
 from tests.mocks.openai import (
     MockOpenAIClient,
     make_content_response,
@@ -8,11 +16,34 @@ from tests.mocks.openai import (
 )
 from tests.mocks.postgres import MockPostgresConnection
 
+_READ = make_content_response(
+    '{"intent":"READ","confidence":0.99,"reason":"조회 요청"}'
+)
+
+
+def test_graph_data_paths_use_environment_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("SCHEMA_DIR", "/container/schema-data")
+    monkeypatch.setenv(
+        "ONTOLOGY_PATH", "/container/ontology-data/manufacturing_terms.yaml"
+    )
+
+    assert _schema_dir() == Path("/container/schema-data")
+    assert _ontology_path() == Path("/container/ontology-data/manufacturing_terms.yaml")
+
+
+def test_graph_data_paths_fall_back_to_project_files(monkeypatch) -> None:
+    monkeypatch.delenv("SCHEMA_DIR", raising=False)
+    monkeypatch.delenv("ONTOLOGY_PATH", raising=False)
+
+    assert _schema_dir() == _PROJECT_ROOT / "schema"
+    assert _ontology_path() == _PROJECT_ROOT / "ontology" / "manufacturing_terms.yaml"
+
 
 def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
     """제품명이 있는 SQL형 질의는 entity 확정 후 sql_agent가 한 번 생성·실행을
     시도한다(execute_sql이 자리표시라 항상 실패하고 error에 담긴다)."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_tool_call_response(
             "extract_entity",
             {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
@@ -45,13 +76,14 @@ def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
     assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
     assert result["cypher_query"] is None
     assert result["graph_result"] is None
-    assert len(openai_client.calls) == 3
+    assert len(openai_client.calls) == 4
 
 
 def test_graph_routes_to_graph_and_runs_cypher_agent_once() -> None:
     """부품 사용처를 묻는 질의는 entity 확정 후 graph로 라우팅되고 cypher_agent가
     한 번 생성·실행을 시도한다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_tool_call_response(
             "extract_entity", {"entityType": "product", "entityName": "Paint - Black"}
         ),
@@ -80,13 +112,14 @@ def test_graph_routes_to_graph_and_runs_cypher_agent_once() -> None:
     )
     assert result["graph_result"]["result"] is None
     assert "self-correction 구현에서 채운다" in result["graph_result"]["error"]
-    assert len(openai_client.calls) == 3
+    assert len(openai_client.calls) == 4
 
 
 def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
     """tool_plan이 ["sql", "graph"] Hybrid일 때 sql_agent와 cypher_agent가 각각
     독립적으로 실행되고, 한쪽의 attempts/error가 다른 쪽으로 섞이지 않는다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_tool_call_response(
             "extract_entity",
             {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
@@ -131,15 +164,16 @@ def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
     assert "Cypher 실행/검증은" in result["graph_result"]["error"]
     assert len(result["graph_result"]["attempts"]) == 1
 
-    assert len(openai_client.calls) == 4
+    assert len(openai_client.calls) == 5
 
 
 def test_graph_builds_final_answer_from_sql_result() -> None:
     """특정 제품을 지칭하지 않는 집계 질의도 sql_agent를 거쳐 final_answer가 채워진다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_content_response("[]"),
         make_content_response('["sql"]'),
-        make_content_response("SELECT COUNT(*) FROM production.product"),
+        make_content_response("SELECT pg_catalog.count(*) FROM production.product"),
     )
     postgres_connection = MockPostgresConnection(rows_by_name={})
     graph = build_orchestrator_graph(openai_client, postgres_connection)
@@ -148,5 +182,21 @@ def test_graph_builds_final_answer_from_sql_result() -> None:
 
     assert result["entity"] is None
     assert result["tool_plan"] == ["sql"]
-    assert result["sql_query"] == "SELECT COUNT(*) FROM production.product"
+    assert result["sql_query"] == "SELECT pg_catalog.count(*) FROM production.product"
     assert "self-correction 구현에서 채운다" in result["final_answer"]
+
+
+def test_graph_stops_before_llm_when_user_requests_write(caplog) -> None:
+    caplog.set_level(logging.INFO)
+    openai_client = MockOpenAIClient()
+    graph = build_orchestrator_graph(
+        openai_client, MockPostgresConnection(rows_by_name={})
+    )
+
+    result = graph.invoke({"query": "모든 제품을 삭제해줘."})
+
+    assert result["natural_guard"]["decision"] == "BLOCK_WRITE"
+    assert result["execution_allowed"] is False
+    assert result.get("tool_plan") is None
+    assert openai_client.calls == []
+    assert "detected_actions" in caplog.text

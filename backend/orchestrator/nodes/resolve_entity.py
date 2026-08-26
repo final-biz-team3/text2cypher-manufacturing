@@ -9,7 +9,7 @@ import psycopg
 from agents.cypher.schema.models import GraphSchema
 from orchestrator.entity_types import NamedEntityType, list_resolvable_entity_types
 from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
-from orchestrator.state import OrchestratorState
+from orchestrator.state import OrchestratorState, get_effective_query
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +227,7 @@ def make_resolve_entity_node(
     extract_tool = _build_extract_entity_tool(entity_types)
 
     def resolve_entity(state: OrchestratorState) -> dict:
+        query = get_effective_query(state)
         confirmed_entity = state.get("confirmed_entity")
         confirmed_config: NamedEntityType | None = None
         if confirmed_entity is not None:
@@ -237,26 +238,24 @@ def make_resolve_entity_node(
                 logger.info(
                     "resolve_entity: query=%r -> confirmed_entity=%s 검증 완료 "
                     "(나머지 엔티티 재추출)",
-                    state["query"],
+                    query,
                     confirmed_entity,
                 )
             else:
                 logger.warning(
                     "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
                     "(무시하고 재추출)",
-                    state["query"],
+                    query,
                     confirmed_entity,
                 )
                 confirmed_entity = None
                 confirmed_config = None
 
-        extractions = _extract_entities(state["query"], openai_client, extract_tool)
+        extractions = _extract_entities(query, openai_client, extract_tool)
         if not extractions:
             if confirmed_entity is not None:
                 return {"entity": confirmed_entity}
-            logger.info(
-                "resolve_entity: query=%r -> entity=None (대상 미언급)", state["query"]
-            )
+            logger.info("resolve_entity: query=%r -> entity=None (대상 미언급)", query)
             return {"entity": None}
 
         resolved: list[dict] = []
@@ -264,7 +263,7 @@ def make_resolve_entity_node(
             if _is_entity_type_alias(entity_name, entity_types):
                 logger.info(
                     "resolve_entity: query=%r -> entityName=%r 종류 표현이므로 무시",
-                    state["query"],
+                    query,
                     entity_name,
                 )
                 continue
@@ -274,7 +273,7 @@ def make_resolve_entity_node(
             except ValueError:
                 logger.warning(
                     "resolve_entity: query=%r -> 알 수 없는 entityType=%r (무시)",
-                    state["query"],
+                    query,
                     entity_type,
                 )
                 continue
@@ -301,7 +300,7 @@ def make_resolve_entity_node(
                     logger.info(
                         "resolve_entity: query=%r -> entityName=%r 후보 %d개 "
                         "(EntityAmbiguousError)",
-                        state["query"],
+                        query,
                         entity_name,
                         len(candidates),
                     )
@@ -310,7 +309,7 @@ def make_resolve_entity_node(
                 logger.info(
                     "resolve_entity: query=%r -> entityType=%r entityName=%r 조회 실패 "
                     "(EntityNotFoundError)",
-                    state["query"],
+                    query,
                     entity_type,
                     entity_name,
                 )
@@ -325,7 +324,7 @@ def make_resolve_entity_node(
             result = resolved[0]
         else:
             result = resolved
-        logger.info("resolve_entity: query=%r -> entity=%s", state["query"], result)
+        logger.info("resolve_entity: query=%r -> entity=%s", query, result)
         return {"entity": result}
 
     return resolve_entity

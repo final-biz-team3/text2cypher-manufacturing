@@ -33,6 +33,15 @@ async def chat(
     )
     response = {
         "query": result["query"],
+        "normalized_query": result.get("normalized_query"),
+        "matched_terms": result.get("matched_terms", []),
+        "normalization_status": result.get("normalization_status"),
+        "ambiguous_terms": result.get("ambiguous_terms", []),
+        "normalization_elapsed_ms": result.get("normalization_elapsed_ms"),
+        "natural_guard": result.get("natural_guard"),
+        "query_guard": result.get("query_guard"),
+        "execution_allowed": result.get("execution_allowed", False),
+        "error": result.get("error"),
         "entity": result.get("entity"),
         "tool_plan": result.get("tool_plan"),
         "sql_query": result.get("sql_query"),

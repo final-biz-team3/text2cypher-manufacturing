@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -10,20 +11,44 @@ from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
 from agents.cypher.schema.serializer import serialize_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from agents.sql.schema.serializer import serialize_sql_schema
+from guard.natural_language import (
+    make_natural_language_guard_node,
+    route_after_natural_guard,
+)
+from ontology.loader import load_term_dictionary
 from orchestrator.nodes.generate_answer import make_generate_answer_node
+from orchestrator.nodes.normalize_terms import (
+    make_normalize_terms_node,
+    route_after_normalization,
+)
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import make_route_query_node
-from orchestrator.state import OrchestratorState
+from orchestrator.nodes.validate_generated_queries import validate_generated_queries
+from orchestrator.state import OrchestratorState, get_effective_query
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
 from orchestrator.subgraphs.sql_agent import make_sql_agent_subgraph
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _schema_dir() -> Path:
+    return Path(os.environ.get("SCHEMA_DIR", _PROJECT_ROOT / "schema"))
+
+
+def _ontology_path() -> Path:
+    return Path(
+        os.environ.get(
+            "ONTOLOGY_PATH",
+            _PROJECT_ROOT / "ontology" / "manufacturing_terms.yaml",
+        )
+    )
+
+
 def _load_schema_context() -> tuple[str, str, GraphSchema]:
     """SQL/Cypher 스키마를 프로젝트 YAML에서 읽는다."""
-    sql_schema = load_sql_schema(_PROJECT_ROOT / "schema" / "sql_schema.yaml")
-    cypher_schema = load_graph_schema(_PROJECT_ROOT / "schema" / "graph_schema.yaml")
+    schema_dir = _schema_dir()
+    sql_schema = load_sql_schema(schema_dir / "sql_schema.yaml")
+    cypher_schema = load_graph_schema(schema_dir / "graph_schema.yaml")
     if cypher_schema.query_policy is None:
         raise ValueError("Graph schema requires BOM query policy metadata.")
 
@@ -83,7 +108,7 @@ def _make_sql_agent_node(
             return {"sql_query": None, "sql_result": None}
         result = subgraph.invoke(
             _retry_agent_initial_state(
-                state["query"], state.get("entity"), sql_schema_text
+                get_effective_query(state), state.get("entity"), sql_schema_text
             )
         )
         return {
@@ -109,7 +134,7 @@ def _make_cypher_agent_node(
             return {"cypher_query": None, "graph_result": None}
         result = subgraph.invoke(
             _retry_agent_initial_state(
-                state["query"], state.get("entity"), cypher_schema_text
+                get_effective_query(state), state.get("entity"), cypher_schema_text
             )
         )
         return {
@@ -129,9 +154,17 @@ def build_orchestrator_graph(
     sql_schema_text, cypher_schema_text, cypher_schema = _load_schema_context()
     cypher_query_policy = cypher_schema.query_policy
     assert cypher_query_policy is not None
+    term_dictionary = load_term_dictionary(_ontology_path())
 
     graph = StateGraph(OrchestratorState)
     # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다.
+    graph.add_node(
+        "normalize_terms", cast(Any, make_normalize_terms_node(term_dictionary))
+    )
+    graph.add_node(
+        "validate_natural_language",
+        cast(Any, make_natural_language_guard_node(openai_client)),
+    )
     graph.add_node(
         "resolve_entity",
         cast(
@@ -157,10 +190,22 @@ def build_orchestrator_graph(
         "generate_answer",
         cast(Any, make_generate_answer_node()),
     )
-    graph.add_edge(START, "resolve_entity")
+    graph.add_node("validate_generated_queries", validate_generated_queries)
+    graph.add_edge(START, "normalize_terms")
+    graph.add_conditional_edges(
+        "normalize_terms",
+        route_after_normalization,
+        {"continue": "validate_natural_language", "stop": END},
+    )
+    graph.add_conditional_edges(
+        "validate_natural_language",
+        route_after_natural_guard,
+        {"continue": "resolve_entity", "stop": END},
+    )
     graph.add_edge("resolve_entity", "route_query")
     graph.add_edge("route_query", "sql_agent")
     graph.add_edge("sql_agent", "cypher_agent")
-    graph.add_edge("cypher_agent", "generate_answer")
+    graph.add_edge("cypher_agent", "validate_generated_queries")
+    graph.add_edge("validate_generated_queries", "generate_answer")
     graph.add_edge("generate_answer", END)
     return graph.compile()

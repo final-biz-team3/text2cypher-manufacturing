@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ontology.loader import build_term_map, load_term_dictionary
+from ontology.loader import build_term_index, build_term_map, load_term_dictionary
 from ontology.models import TermDictionary
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -40,5 +40,10 @@ def test_duplicate_term_across_concepts_is_rejected() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="Duplicate term"):
+    assert [concept.concept_id for concept in build_term_index(dictionary)["중복"]] == [
+        "one",
+        "two",
+    ]
+
+    with pytest.raises(ValueError, match="Ambiguous term"):
         build_term_map(dictionary)

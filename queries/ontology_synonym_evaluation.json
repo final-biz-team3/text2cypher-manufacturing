@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "questions": [
+    {"id":"RQ01","route":"SQL","variants":["Touring-1000 Yellow, 54의 정가와 표준원가를 조회해줘.","Touring-1000 Yellow, 54 정가와 표준원가를 보여줘."]},
+    {"id":"RQ02","route":"SQL","variants":["HL Mountain Frame - Black, 38의 재고 위치별 수량을 조회해줘.","HL Mountain Frame - Black, 38의 현재고 위치와 수량을 보여줘."]},
+    {"id":"RQ03","route":"SQL","variants":["활성 공급사 수를 알려줘.","현재 활성 업체 개수를 조회해줘."]},
+    {"id":"RQ04","route":"SQL","variants":["외부 구매 자재 수를 알려줘.","구매하는 구성품 개수를 조회해줘."]},
+    {"id":"RQ05","route":"SQL","variants":["판매 종료일 없는 제품 10개를 보여줘.","판매가 끝나지 않은 제품을 10개 조회해줘."]},
+    {"id":"RQ06","route":"SQL","variants":["Touring-1000 Yellow, 54의 제품번호·색상·크기를 조회해줘.","Touring-1000 Yellow, 54 제품번호와 색상 및 크기를 보여줘."]},
+    {"id":"RQ07","route":"SQL","variants":["Components 분류의 제품 개수를 조회해줘.","Components에 속한 제품 수를 보여줘."]},
+    {"id":"RQ08","route":"SQL","variants":["Paint - Black의 안전재고와 현재고 및 부족 수량을 계산해줘.","Paint - Black 안전재고 수준, 실재고, 부족량을 조회해줘."]},
+    {"id":"RQ09","route":"SQL","variants":["판매 수량 상위 완제품 5개를 보여줘.","주문 수량이 큰 최종 제품 5개를 조회해줘."]},
+    {"id":"RQ10","route":"SQL","variants":["거부 수량이 많은 공급사 5곳을 보여줘.","불합격 수량 상위 납품업체 5곳을 조회해줘."]},
+    {"id":"RQ11","route":"SQL","variants":["폐기량 상위 작업오더 5개와 제품명을 보여줘.","폐기 수량이 큰 생산지시 5개를 조회해줘."]},
+    {"id":"RQ12","route":"GRAPH","variants":["자재 Paint - Black을 쓰는 모품을 4단계까지 찾아줘.","구성품 Paint - Black의 상위 완제품 경로를 보여줘."]},
+    {"id":"RQ13","route":"GRAPH","variants":["최종 제품 HL Road Frame - Black, 58의 하위 자재 계층을 보여줘.","모품 HL Road Frame - Black, 58의 BOM 구조를 조회해줘."]},
+    {"id":"RQ14","route":"GRAPH","variants":["협력사 Allenson Cycles의 공급 부품과 영향 완제품을 보여줘.","업체 Allenson Cycles가 납품하는 자재의 상위 제품을 조회해줘."]},
+    {"id":"RQ15","route":"GRAPH","variants":["작업오더 17747의 작업장과 작업 공정 순서를 보여줘.","WO 17747이 거친 공정 위치와 라우팅 공정을 조회해줘."]},
+    {"id":"RQ16","route":"GRAPH","variants":["모품 HL Road Frame - Black, 58과 자재 Metal Sheet 5의 BOM 경로를 보여줘.","완제품 HL Road Frame - Black, 58에서 구성품 Metal Sheet 5까지 경로를 조회해줘."]},
+    {"id":"RQ17","route":"GRAPH","variants":["두 최종 제품 Road-650 Black, 58과 Mountain-100 Black, 38의 공통 자재를 보여줘.","Road-650 Black, 58과 Mountain-100 Black, 38이 공유하는 구성품을 조회해줘."]},
+    {"id":"RQ18","route":"HYBRID","variants":["협력사 Allenson Cycles 공급 중단 시 영향 자재·완제품·현재고를 보여줘.","업체 Allenson Cycles 중단 영향과 부품 실재고를 분석해줘."]},
+    {"id":"RQ19","route":"HYBRID","variants":["최종 제품 HL Road Frame - Black, 58 10개 생산 시 부족 자재와 납품업체를 보여줘.","모품 HL Road Frame - Black, 58을 10개 만들 때 부족 구성품과 공급사를 계산해줘."]},
+    {"id":"RQ20","route":"HYBRID","variants":["작업오더 17747의 폐기량·불량 사유·공정 위치를 보여줘.","WO 17747의 스크랩 수량과 폐기 원인 및 작업 공정을 조회해줘."]}
+  ],
+  "canonicalEvidence": {
+    "RQ01":["정가","표준원가"], "RQ02":["재고","위치"], "RQ03":["공급업체"],
+    "RQ04":["부품"], "RQ05":["제품"], "RQ06":["제품번호","색상","크기"],
+    "RQ07":["제품"], "RQ08":["안전재고","재고","부족"], "RQ09":["판매량","완제품"],
+    "RQ10":["반려 수량","공급업체"], "RQ11":["작업지시","폐기"],
+    "RQ12":["부품","완제품"], "RQ13":["완제품"], "RQ14":["공급업체","부품"],
+    "RQ15":["작업지시","작업장","공정"], "RQ16":["완제품","부품"],
+    "RQ17":["부품"], "RQ18":["공급업체","부품","재고"],
+    "RQ19":["완제품","부품","공급업체"], "RQ20":["작업지시","폐기사유"]
+  },
+  "representativeQueries": {
+    "RQ01":{"sql":"SELECT productid, name, listprice, standardcost FROM production.product WHERE name = 'Touring-1000 Yellow, 54'"},
+    "RQ02":{"sql":"SELECT p.productid, i.locationid, i.shelf, i.bin, i.quantity FROM production.product p JOIN production.productinventory i ON i.productid = p.productid WHERE p.name = 'HL Mountain Frame - Black, 38' ORDER BY i.locationid, i.shelf, i.bin"},
+    "RQ03":{"sql":"SELECT pg_catalog.count(*) AS active_supplier_count FROM purchasing.vendor WHERE activeflag = true"},
+    "RQ04":{"sql":"SELECT pg_catalog.count(*) AS purchased_product_count FROM production.product WHERE makeflag = false"},
+    "RQ05":{"sql":"SELECT productid, name, sellenddate FROM production.product WHERE sellenddate IS NULL ORDER BY productid LIMIT 10"},
+    "RQ06":{"sql":"SELECT productid, name, productnumber, color, size FROM production.product WHERE name = 'Touring-1000 Yellow, 54'"},
+    "RQ07":{"sql":"SELECT pc.productcategoryid, pg_catalog.count(p.productid) AS product_count FROM production.productcategory pc JOIN production.productsubcategory ps ON ps.productcategoryid = pc.productcategoryid JOIN production.product p ON p.productsubcategoryid = ps.productsubcategoryid WHERE pc.name = 'Components' GROUP BY pc.productcategoryid"},
+    "RQ08":{"sql":"SELECT p.productid, p.safetystocklevel, COALESCE(pg_catalog.sum(i.quantity), 0) AS actual_stock, GREATEST(p.safetystocklevel - COALESCE(pg_catalog.sum(i.quantity), 0), 0) AS shortage FROM production.product p LEFT JOIN production.productinventory i ON i.productid = p.productid WHERE p.name = 'Paint - Black' GROUP BY p.productid, p.safetystocklevel"},
+    "RQ09":{"sql":"SELECT p.productid, pg_catalog.sum(d.orderqty) AS sales_volume FROM production.product p JOIN sales.salesorderdetail d ON d.productid = p.productid WHERE p.finishedgoodsflag = true GROUP BY p.productid ORDER BY sales_volume DESC, p.productid LIMIT 5"},
+    "RQ10":{"sql":"SELECT h.vendorid, pg_catalog.sum(d.rejectedqty) AS rejected_quantity FROM purchasing.purchaseorderheader h JOIN purchasing.purchaseorderdetail d ON d.purchaseorderid = h.purchaseorderid GROUP BY h.vendorid HAVING pg_catalog.sum(d.rejectedqty) > 0 ORDER BY rejected_quantity DESC, h.vendorid LIMIT 5"},
+    "RQ11":{"sql":"SELECT w.workorderid, w.productid, w.scrappedqty, w.scrapreasonid FROM production.workorder w WHERE w.scrappedqty > 0 ORDER BY w.scrappedqty DESC, w.workorderid LIMIT 5"},
+    "RQ12":{"cypher":"MATCH path=(component:Product {name: 'Paint - Black'})<-[:REQUIRES_COMPONENT*1..4]-(finished:Product) WHERE finished.sellableFinishedGood = true RETURN component.productId, finished.productId, length(path)"},
+    "RQ13":{"cypher":"MATCH path=(finished:Product {name: 'HL Road Frame - Black, 58'})-[:REQUIRES_COMPONENT*1..4]->(component:Product) RETURN finished.productId, component.productId, length(path)"},
+    "RQ14":{"cypher":"MATCH (supplier:Supplier {name: 'Allenson Cycles'})-[:SUPPLIES]->(component:Product)<-[:REQUIRES_COMPONENT*1..4]-(finished:Product) WHERE supplier.active = true RETURN supplier.supplierId, component.productId, finished.productId"},
+    "RQ15":{"cypher":"MATCH (work:WorkOrder {workOrderId: 17747})-[:HAS_OPERATION]->(operation:RoutingOperation)-[:PERFORMED_AT]->(location:Location) RETURN work.workOrderId, operation.sequence, location.locationId ORDER BY operation.sequence"},
+    "RQ16":{"cypher":"MATCH path=(finished:Product {name: 'HL Road Frame - Black, 58'})-[:REQUIRES_COMPONENT*1..4]->(component:Product {name: 'Metal Sheet 5'}) RETURN [node IN nodes(path) | node.productId] AS productIds"},
+    "RQ17":{"cypher":"MATCH (a:Product {name: 'Road-650 Black, 58'})-[:REQUIRES_COMPONENT*1..4]->(component:Product)<-[:REQUIRES_COMPONENT*1..4]-(b:Product {name: 'Mountain-100 Black, 38'}) RETURN component.productId, component.name"},
+    "RQ18":{"sql":"SELECT productid, COALESCE(pg_catalog.sum(quantity), 0) AS actual_stock FROM production.productinventory GROUP BY productid","cypher":"MATCH (supplier:Supplier {name: 'Allenson Cycles'})-[:SUPPLIES]->(component:Product)<-[:REQUIRES_COMPONENT*1..4]-(finished:Product) RETURN supplier.supplierId, component.productId, finished.productId"},
+    "RQ19":{"sql":"SELECT productid, COALESCE(pg_catalog.sum(quantity), 0) AS actual_stock FROM production.productinventory GROUP BY productid","cypher":"MATCH path=(finished:Product {name: 'HL Road Frame - Black, 58'})-[:REQUIRES_COMPONENT*1..4]->(component:Product)<-[:SUPPLIES]-(supplier:Supplier) WHERE supplier.active = true RETURN component.productId, supplier.supplierId, relationships(path)"},
+    "RQ20":{"sql":"SELECT workorderid, productid, scrappedqty, scrapreasonid FROM production.workorder WHERE workorderid = 17747","cypher":"MATCH (work:WorkOrder {workOrderId: 17747})-[:HAS_OPERATION]->(operation:RoutingOperation)-[:PERFORMED_AT]->(location:Location) RETURN operation.sequence, location.locationId ORDER BY operation.sequence"}
+  },
+  "normalizationCases": [
+    ["협력사", "공급업체"], ["공급사", "공급업체"], ["업체", "공급업체"],
+    ["자재", "부품"], ["구성품", "부품"], ["최종 제품", "완제품"],
+    ["모품", "완제품"], ["작업오더", "작업지시"], ["WO", "작업지시"],
+    ["작업 공정", "공정"], ["공정 위치", "작업장"], ["스크랩 사유", "폐기사유"],
+    ["현재고", "재고"], ["실재고", "재고"], ["안전재고 수준", "안전재고"],
+    ["자재명세서", "BOM"], ["판매 수량", "판매량"], ["주문 수량", "판매량"],
+    ["거부 수량", "반려 수량"], ["불합격 수량", "반려 수량"]
+  ],
+  "entityNameCorpus": [
+    "한빛협력사", "ABC협력사", "123협력사", "업체상사", "업체명",
+    "공급사의뢰", "협력사이름", "소모품", "공급사슬", "Vendor Components Ltd"
+  ]
+}

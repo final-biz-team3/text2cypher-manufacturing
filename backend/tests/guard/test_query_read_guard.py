@@ -9,6 +9,19 @@ from guard.query_read_guard import validate_cypher_read_only, validate_sql_read_
         "SELECT * FROM production.product",
         "WITH products AS (SELECT * FROM production.product) SELECT * FROM products;",
         "SELECT 'DELETE FROM product' AS example",
+        "SELECT $$ DELETE FROM product $$ AS example",
+        "SELECT pg_catalog.count(*) FROM production.product",
+        """SELECT p.productid,
+                  COALESCE(pg_catalog.sum(i.quantity), 0) AS actual_stock,
+                  GREATEST(
+                    p.safetystocklevel
+                      - COALESCE(pg_catalog.sum(i.quantity), 0),
+                    0
+                  ) AS shortage
+             FROM production.product AS p
+             LEFT JOIN production.productinventory AS i
+               ON i.productid = p.productid
+            GROUP BY p.productid, p.safetystocklevel""",
     ],
 )
 def test_allows_read_only_sql(query: str) -> None:
@@ -22,6 +35,20 @@ def test_allows_read_only_sql(query: str) -> None:
         "WITH removed AS (DELETE FROM production.product RETURNING *) SELECT * FROM removed",
         "SELECT * FROM production.product FOR UPDATE",
         "SELECT 1; DELETE FROM production.product",
+        "SELECT '--'; DELETE FROM production.product",
+        "SELECT * INTO audit_copy FROM production.product",
+        "SELECT nextval('audit_seq')",
+        "SELECT pg_advisory_lock(42)",
+        "SELECT * FROM production.product FOR KEY SHARE",
+        "SELECT * FROM production.product FOR NO KEY UPDATE",
+        "SELECT '\\'; DELETE FROM production.product",
+        "SELECT pg_notify('audit', 'x')",
+        "SELECT set_config('search_path', 'public', false)",
+        "SELECT \"nextval\"('audit_seq')",
+        "SELECT custom_write_function()",
+        "SELECT attacker.count(*)",
+        "SELECT attacker.round(1)",
+        "SELECT count(*) FROM production.product",
     ],
 )
 def test_blocks_sql_that_can_write_or_lock(query: str) -> None:

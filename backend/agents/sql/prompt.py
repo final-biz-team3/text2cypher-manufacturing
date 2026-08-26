@@ -9,6 +9,8 @@ _SQL_INSTRUCTIONS = """당신은 제조 데이터용 PostgreSQL 쿼리 생성기
 
 - 제공된 스키마의 테이블, 컬럼과 조인만 사용합니다.
 - SELECT 문 또는 최종 문이 SELECT인 읽기 전용 WITH 문만 생성합니다.
+- 집계·문자열·수치 함수는 pg_catalog 스키마로 완전 수식합니다. 단,
+  COALESCE·GREATEST처럼 PostgreSQL이 특수 SQL 표현으로 파싱하는 구문은 대문자로 씁니다.
 - 확정된 entity가 있으면 해당 식별자로 조회하고 결과에 ID·이름을 포함합니다.
 - 결과에는 질문에서 요청한 값을 포함합니다.
 - 결과 alias는 한국어 표시명 대신 스키마 식별자 또는 의미가 분명한 영어
@@ -24,7 +26,7 @@ _SQL_DOMAIN_RULES = (
     '"위치별 재고 수량"은 제품·위치 식별정보와 shelf·bin별 원본 quantity를 '
     "합산하지 않고 locationid, shelf, bin 순으로 반환한다.",
     '"실제 재고"는 제품을 기준으로 productinventory를 LEFT JOIN한 뒤 '
-    "COALESCE(SUM(quantity), 0)으로 계산하고, "
+    "COALESCE(pg_catalog.sum(quantity), 0)으로 계산하고, "
     '"부족 수량"은 GREATEST(safetystocklevel - 실제 재고, 0)이다.',
 )
 

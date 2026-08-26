@@ -17,6 +17,7 @@ class TermConcept(BaseModel):
     concept_type: Literal["BUSINESS", "ACTION"]
     canonical: str
     target_type: str | None = None
+    allowed_prefixes: list[str] = Field(default_factory=list)
     action_type: (
         Literal[
             "READ",

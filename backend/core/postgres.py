@@ -13,8 +13,9 @@ def get_connection() -> Connection:
             host=os.getenv("POSTGRES_HOST", "localhost"),
             port=os.getenv("POSTGRES_PORT", "5432"),
             dbname=os.getenv("POSTGRES_DB", "postgres"),
-            user=os.getenv("POSTGRES_USER", "postgres"),
-            password=os.getenv("POSTGRES_PASSWORD", "changeme_local"),
+            user=os.getenv("POSTGRES_APP_USER", "text2cypher_reader"),
+            password=os.getenv("POSTGRES_APP_PASSWORD", "changeme_local"),
+            options="-c default_transaction_read_only=on",
         )
     return _connection
 

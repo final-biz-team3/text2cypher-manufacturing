@@ -1,10 +1,13 @@
 """사용자의 자연어 요청을 읽기·쓰기·확인 필요로 분류한다."""
 
 import json
+import logging
 import os
 import re
 from collections.abc import Callable
 from typing import Any, Literal, cast
+
+from openai import APIError
 
 from orchestrator.state import (
     DetectedAction,
@@ -14,26 +17,27 @@ from orchestrator.state import (
     OrchestratorState,
 )
 
+logger = logging.getLogger(__name__)
+
 _WRITE_COMMAND_PATTERNS = (
     re.compile(
         r"(삭제|제거|지워|없애|수정|변경|갱신|바꿔|추가|등록|생성|만들어)"
-        r"\s*(해\s*줘|해주세요|해라|하라|해|시켜줘|해줘)",
+        r"\s*(해\s*줘|해주세요|해라|하라|해|시켜줘|해줘|줘|주세요)",
         re.I,
     ),
+    # English write verbs are commands only at the start of a sentence/clause.
+    # This keeps noun phrases such as "price change history" on the classifier path.
     re.compile(
-        r"\b(delete|remove|erase|update|modify|edit|change|insert|create|add|"
-        r"register|alter|truncate|grant|revoke)\b",
+        r"(?:^|[.!?;,]\s*|\b(?:and|then)\s+)"
+        r"(?:please\s+)?"
+        r"(?:change|update|modify|edit|delete|remove|erase|create|insert|add|"
+        r"register|drop|alter|truncate|grant|revoke)\b",
         re.I,
     ),
     # 채팅에서는 "새 제품도 등록"처럼 요청형 어미 없이 쓰기 동작만으로
     # 명령을 끝내기도 한다. "등록된 제품"처럼 뒤에 수식어가 이어지는 표현은
     # 매칭하지 않고, 문장 끝에 놓인 쓰기 동작만 명확한 명령으로 처리한다.
     re.compile(r"(삭제|제거|수정|변경|갱신|추가|등록|생성)\s*[.!?]?\s*$", re.I),
-)
-_READ_REQUEST_PATTERN = re.compile(
-    r"(알려|보여|조회|검색|찾아|확인|계산|비교|분석|몇\s*개|얼마|"
-    r"\b(select|show|find|search|get|list)\b)",
-    re.I,
 )
 
 _SYSTEM_PROMPT = """당신은 읽기 전용 제조 데이터 챗봇의 요청 분류기입니다.
@@ -50,6 +54,23 @@ def _action_intent(actions: list[DetectedAction]) -> NaturalIntent:
         item["action_type"] for item in actions if item["default_policy"] == "BLOCK"
     ]
     return blocked[0] if blocked else "UNKNOWN"
+
+
+def _explicit_write_intent(query: str, actions: list[DetectedAction]) -> NaturalIntent:
+    intent = _action_intent(actions)
+    if intent != "UNKNOWN":
+        return intent
+    if re.search(r"\b(drop|alter|truncate)\b|테이블|인덱스|구조", query, re.I):
+        return "SCHEMA_CHANGE"
+    if re.search(r"삭제|제거|지워|없애|\b(delete|remove|erase)\b", query, re.I):
+        return "DELETE"
+    if re.search(
+        r"추가|등록|생성|만들어|\b(insert|create|add|register)\b", query, re.I
+    ):
+        return "CREATE"
+    if re.search(r"권한|\b(grant|revoke)\b", query, re.I):
+        return "PERMISSION_CHANGE"
+    return "UPDATE"
 
 
 def _classify_with_llm(
@@ -117,31 +138,21 @@ def make_natural_language_guard_node(
         original = state["query"]
         normalized = state.get("normalized_query") or original
         actions = state.get("detected_actions", [])
-        has_blocked_action = any(item["default_policy"] == "BLOCK" for item in actions)
-
         if any(pattern.search(original) for pattern in _WRITE_COMMAND_PATTERNS):
-            intent = _action_intent(actions)
-            if intent == "UNKNOWN":
-                intent = "UPDATE"
+            intent = _explicit_write_intent(original, actions)
             result: NaturalGuardResult = {
                 "decision": "BLOCK_WRITE",
                 "intent": intent,
                 "reason": "데이터 또는 스키마 변경을 요청한 문장입니다.",
                 "confidence": 1.0,
             }
-        elif _READ_REQUEST_PATTERN.search(original) and not has_blocked_action:
-            result = {
-                "decision": "ALLOW_READ",
-                "intent": "READ",
-                "reason": "데이터 조회·계산·분석 요청입니다.",
-                "confidence": 1.0,
-            }
         else:
-            # "삭제된 제품을 보여줘"처럼 쓰기 단어가 상태 설명으로 사용되는
-            # 경우와, 조회·쓰기 표현이 섞인 문장은 단어만으로 확정하지 않는다.
+            # 규칙에 없는 동사와 축약형을 조회로 오인하지 않도록 모든 나머지
+            # 요청은 분류기가 명시적으로 READ라고 확인해야 실행한다.
             try:
                 result = _classify_with_llm(original, normalized, openai_client)
             except (
+                APIError,
                 AttributeError,
                 KeyError,
                 TypeError,
@@ -156,6 +167,14 @@ def make_natural_language_guard_node(
                 }
 
         allowed = result["decision"] == "ALLOW_READ"
+        log = logger.info if allowed else logger.warning
+        log(
+            "natural guard: decision=%s intent=%s reason=%s detected_actions=%s",
+            result["decision"],
+            result["intent"],
+            result["reason"],
+            actions,
+        )
         response: NaturalGuardNodeResult = {
             "natural_guard": result,
             "execution_allowed": allowed,

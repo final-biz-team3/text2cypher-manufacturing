@@ -17,12 +17,17 @@ from tests.mocks.openai import (
 )
 from tests.mocks.postgres import MockPostgresConnection
 
+_READ = make_content_response(
+    '{"intent":"READ","confidence":0.99,"reason":"조회 요청"}'
+)
+
 
 def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """confirmed_entity를 검증·유지하고 SQL 생성·실행을 한 번 시도한다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response(
@@ -61,12 +66,14 @@ def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert "self-correction 구현에서 채운다" in result["final_answer"]
     assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
     assert "subqueries" not in result
-    assert len(openai_client.calls) == 3
+    assert len(openai_client.calls) == 4
+    assert result["normalization_elapsed_ms"] >= 0
 
 
 def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> None:
     """/chat 호출 후 로그인한 사용자 이름으로 대화기록이 저장된다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),
@@ -120,6 +127,7 @@ def test_chat_returns_response_even_if_save_conversation_fails(
 ) -> None:
     """대화기록 저장이 실패해도 /chat 응답 자체는 정상 반환된다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),
@@ -181,6 +189,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     """유효한 access_token 쿠키가 있으면 /chat이 정상 응답한다."""
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),

@@ -30,15 +30,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     check_jwt_secret()
     get_driver()
-    connection = get_connection()
-    try:
-        connection.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        logger.warning(
-            "pg_trgm 확장을 준비하지 못했습니다 — 유사 이름 검색이 비활성화됩니다"
-        )
+    get_connection()
     yield
     close_driver()
     close_connection()
