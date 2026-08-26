@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 import psycopg
+from psycopg_pool import AsyncConnectionPool
 
 from agents.cypher.schema.models import GraphSchema
 from orchestrator.entity_types import NamedEntityType, list_resolvable_entity_types
@@ -69,11 +70,11 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
     }
 
 
-def _extract_entities(
+async def _extract_entities(
     query: str, openai_client: Any, extract_tool: dict
 ) -> list[tuple[str, str]]:
     """LLM Function Calling으로 질의의 모든 이름 엔티티를 추출한다."""
-    response = openai_client.chat.completions.create(
+    response = await openai_client.chat.completions.create(
         model=os.environ["OPENAI_MODEL"],
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -134,45 +135,52 @@ def _is_entity_type_alias(name: str, entity_types: list[NamedEntityType]) -> boo
     )
 
 
-def _find_entity_by_name(
+async def _find_entity_by_name(
     config: NamedEntityType,
     name: str,
-    postgres_connection: Any,
+    pool: AsyncConnectionPool,
 ) -> dict | None:
-    """엔티티 타입별 테이블·컬럼으로 이름을 정확 일치 조회한다."""
-    cursor = postgres_connection.execute(
-        f"SELECT {config.id_column}, {config.name_column} "
-        f"FROM {config.table} WHERE {config.name_column} = %s",
-        (name,),
-    )
-    row = cursor.fetchone()
+    """엔티티 타입별 테이블·컬럼으로 이름을 정확 일치 조회한다.
+    이 함수(와 아래 조회 함수들)는 여기서 명시적으로 commit/rollback을
+    호출하지 않는다 - pool.connection()이 `async with conn:`으로 커넥션을
+    감싸 블록을 정상 종료할 때 자동으로 commit한다(psycopg 표준 동작).
+    SELECT뿐이라 commit이든 rollback이든 결과에 차이가 없다."""
+    async with pool.connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT {config.id_column}, {config.name_column} "
+            f"FROM {config.table} WHERE {config.name_column} = %s",
+            (name,),
+        )
+        row = await cursor.fetchone()
     if row is None:
         return None
     return {config.id_field: row[0], config.name_field: row[1]}
 
 
-def _find_similar_entities(
+async def _find_similar_entities(
     config: NamedEntityType,
     name: str,
-    postgres_connection: Any,
+    pool: AsyncConnectionPool,
 ) -> list[dict]:
     """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다.
     pg_trgm을 쓸 수 없으면 롤백 후 후보 없음으로 처리한다."""
-    try:
-        cursor = postgres_connection.execute(
-            f"SELECT {config.id_column}, {config.name_column}, "
-            f"similarity({config.name_column}, %s) AS score "
-            f"FROM {config.table} "
-            f"WHERE similarity({config.name_column}, %s) >= %s "
-            f"ORDER BY score DESC LIMIT %s",
-            (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
-        )
-    except psycopg.errors.UndefinedFunction:
-        postgres_connection.rollback()
-        logger.warning(
-            "resolve_entity: pg_trgm 유사도 검색을 사용할 수 없어 후보 없음으로 처리"
-        )
-        return []
+    async with pool.connection() as conn:
+        try:
+            cursor = await conn.execute(
+                f"SELECT {config.id_column}, {config.name_column}, "
+                f"similarity({config.name_column}, %s) AS score "
+                f"FROM {config.table} "
+                f"WHERE similarity({config.name_column}, %s) >= %s "
+                f"ORDER BY score DESC LIMIT %s",
+                (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
+            )
+        except psycopg.errors.UndefinedFunction:
+            await conn.rollback()
+            logger.warning(
+                "resolve_entity: pg_trgm 유사도 검색을 사용할 수 없어 후보 없음으로 처리"
+            )
+            return []
+        rows = await cursor.fetchall()
     return [
         {
             "id": row[0],
@@ -181,7 +189,7 @@ def _find_similar_entities(
             "score": row[2],
             "entity": {config.id_field: row[0], config.name_field: row[1]},
         }
-        for row in cursor.fetchall()
+        for row in rows
     ]
 
 
@@ -207,32 +215,34 @@ def _confirmed_entity_config(
     return None
 
 
-def _confirmed_entity_exists(
-    confirmed_entity: dict, config: NamedEntityType, postgres_connection: Any
+async def _confirmed_entity_exists(
+    confirmed_entity: dict, config: NamedEntityType, pool: AsyncConnectionPool
 ) -> bool:
     """confirmed_entity의 id·name이 실제 DB 행과 일치하는지 확인한다."""
-    cursor = postgres_connection.execute(
-        f"SELECT 1 FROM {config.table} "
-        f"WHERE {config.id_column} = %s AND {config.name_column} = %s",
-        (confirmed_entity[config.id_field], confirmed_entity[config.name_field]),
-    )
-    return cursor.fetchone() is not None
+    async with pool.connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT 1 FROM {config.table} "
+            f"WHERE {config.id_column} = %s AND {config.name_column} = %s",
+            (confirmed_entity[config.id_field], confirmed_entity[config.name_field]),
+        )
+        row = await cursor.fetchone()
+    return row is not None
 
 
 def make_resolve_entity_node(
-    openai_client: Any, postgres_connection: Any, graph_schema: GraphSchema
-) -> Callable[[OrchestratorState], dict]:
-    """OpenAI/PostgreSQL 클라이언트와 그래프 스키마를 주입받은 resolve_entity 노드를 만든다."""
+    openai_client: Any, pool: Any, graph_schema: GraphSchema
+) -> Callable[[OrchestratorState], Any]:
+    """OpenAI 클라이언트/PostgreSQL 풀/그래프 스키마를 주입받은 resolve_entity 노드를 만든다."""
     entity_types = list_resolvable_entity_types(graph_schema)
     extract_tool = _build_extract_entity_tool(entity_types)
 
-    def resolve_entity(state: OrchestratorState) -> dict:
+    async def resolve_entity(state: OrchestratorState) -> dict:
         confirmed_entity = state.get("confirmed_entity")
         confirmed_config: NamedEntityType | None = None
         if confirmed_entity is not None:
             confirmed_config = _confirmed_entity_config(confirmed_entity, entity_types)
-            if confirmed_config is not None and _confirmed_entity_exists(
-                confirmed_entity, confirmed_config, postgres_connection
+            if confirmed_config is not None and await _confirmed_entity_exists(
+                confirmed_entity, confirmed_config, pool
             ):
                 logger.info(
                     "resolve_entity: query=%r -> confirmed_entity=%s 검증 완료 "
@@ -250,7 +260,7 @@ def make_resolve_entity_node(
                 confirmed_entity = None
                 confirmed_config = None
 
-        extractions = _extract_entities(state["query"], openai_client, extract_tool)
+        extractions = await _extract_entities(state["query"], openai_client, extract_tool)
         if not extractions:
             if confirmed_entity is not None:
                 return {"entity": confirmed_entity}
@@ -279,11 +289,9 @@ def make_resolve_entity_node(
                 )
                 continue
 
-            entity = _find_entity_by_name(config, entity_name, postgres_connection)
+            entity = await _find_entity_by_name(config, entity_name, pool)
             if entity is None:
-                candidates = _find_similar_entities(
-                    config, entity_name, postgres_connection
-                )
+                candidates = await _find_similar_entities(config, entity_name, pool)
                 confirmed_candidate = next(
                     (
                         candidate["entity"]

@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from core.auth import CurrentUser, get_current_user
 from core.history import save_conversation
 from core.openai_client import get_openai_client
-from core.postgres import get_connection
+from core.postgres import get_pool, get_write_pool
 from orchestrator.graph import build_orchestrator_graph
 
 logger = logging.getLogger(__name__)
@@ -26,9 +26,8 @@ async def chat(
     request: ChatRequest,
     user: CurrentUser = Depends(get_current_user),  # noqa: B008
 ):
-    connection = get_connection()
-    graph = build_orchestrator_graph(get_openai_client(), connection)
-    result = graph.invoke(
+    graph = build_orchestrator_graph(get_openai_client(), get_pool())
+    result = await graph.ainvoke(
         {"query": request.query, "confirmed_entity": request.confirmed_entity}
     )
     response = {
@@ -42,8 +41,10 @@ async def chat(
         "final_answer": result.get("final_answer"),
     }
     try:
-        save_conversation(
-            connection,
+        # 대화기록 저장은 쓰기(INSERT)라 조회 전용 get_pool()이 아니라
+        # read_only가 안 걸린 별도의 write pool을 쓴다.
+        await save_conversation(
+            get_write_pool(),
             user.username,
             response["query"],
             response["final_answer"],

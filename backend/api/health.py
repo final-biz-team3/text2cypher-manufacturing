@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter
 
 from core.neo4j import get_driver
-from core.postgres import get_connection
+from core.postgres import get_pool
 
 router = APIRouter()
 
@@ -15,7 +15,7 @@ async def health_check():
 
     try:
         driver = get_driver()
-        driver.verify_connectivity()
+        await driver.verify_connectivity()
     except Exception as e:
         neo4j_status = "error"
         neo4j_detail = str(e)
@@ -24,8 +24,8 @@ async def health_check():
     postgres_detail = None
 
     try:
-        connection = get_connection()
-        connection.execute("SELECT 1")
+        async with get_pool().connection() as conn:
+            await conn.execute("SELECT 1")
     except Exception as e:
         postgres_status = "error"
         postgres_detail = str(e)

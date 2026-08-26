@@ -74,7 +74,10 @@ services:
         condition: service_healthy  # postgres 준비 완료 후 백엔드 시작
     volumes:
       - ./backend:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    # --loop none: uvicorn이 기본으로 asyncio.run()에 loop_factory를 직접 넘겨
+    # main.py에서 건 이벤트 루프 정책(Windows ProactorEventLoop 회피용)을
+    # 무시해버린다 - none으로 두면 asyncio.run()이 정책을 그대로 따른다.
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --loop none
 
 volumes:
   neo4j_data:
