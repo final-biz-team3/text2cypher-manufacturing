@@ -21,9 +21,9 @@ from tests.mocks.postgres import MockPostgresConnection
 def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """confirmed_entity가 있으면 매칭 없이 바로 라우팅으로 넘어가고, sql_agent가
-    한 번 생성·실행을 시도한 뒤 200으로 정상 종료한다."""
+    """confirmed_entity를 검증·유지하고 SQL 생성·실행을 한 번 시도한다."""
     openai_client = MockOpenAIClient(
+        make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response(
             "SELECT listprice FROM production.product WHERE productid = 956"
@@ -59,7 +59,8 @@ def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     )
     assert "self-correction 구현에서 채운다" in result["final_answer"]
     assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
-    assert len(openai_client.calls) == 2
+    assert "subqueries" not in result
+    assert len(openai_client.calls) == 3
 
 
 def test_chat_request_rejects_unknown_field() -> None:

@@ -12,6 +12,7 @@ def test_build_sql_prompt_adds_postgresql_policy_and_dynamic_context() -> None:
         entity={"productId": 985},
         schema_text="production.product {productid: INTEGER}",
         business_rules=["확정된 제품 ID로 조회한다."],
+        required_outputs=["productId", "actualStock"],
     )
 
     system_content = messages[0]["content"]
@@ -31,6 +32,10 @@ def test_build_sql_prompt_adds_postgresql_policy_and_dynamic_context() -> None:
     assert "lowerCamelCase" in system_content
     assert "사용자가 순위 번호를 요구한 경우에만" in system_content
     assert "- 확정된 제품 ID로 조회한다." in system_content
+    assert "Required output aliases:" in system_content
+    assert "- productId" in system_content
+    assert "- actualStock" in system_content
+    assert "Return every field above using the exact alias." in system_content
     assert "SQL만 반환" in system_content
     assert json.loads(messages[1]["content"]) == {
         "query": "제품의 재고를 알려줘.",

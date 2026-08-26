@@ -232,26 +232,32 @@ def make_resolve_entity_node(
 
     def resolve_entity(state: OrchestratorState) -> dict:
         confirmed_entity = state.get("confirmed_entity")
+        confirmed_config: NamedEntityType | None = None
         if confirmed_entity is not None:
             confirmed_config = _confirmed_entity_config(confirmed_entity, entity_types)
             if confirmed_config is not None and _confirmed_entity_exists(
                 confirmed_entity, confirmed_config, postgres_connection
             ):
                 logger.info(
-                    "resolve_entity: query=%r -> confirmed_entity=%s (재진입)",
+                    "resolve_entity: query=%r -> confirmed_entity=%s 검증 완료 "
+                    "(나머지 엔티티 재추출)",
                     state["query"],
                     confirmed_entity,
                 )
-                return {"entity": confirmed_entity}
-            logger.warning(
-                "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
-                "(무시하고 재추출)",
-                state["query"],
-                confirmed_entity,
-            )
+            else:
+                logger.warning(
+                    "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
+                    "(무시하고 재추출)",
+                    state["query"],
+                    confirmed_entity,
+                )
+                confirmed_entity = None
+                confirmed_config = None
 
         extractions = _extract_entities(state["query"], openai_client, extract_tool)
         if not extractions:
+            if confirmed_entity is not None:
+                return {"entity": confirmed_entity}
             logger.info(
                 "resolve_entity: query=%r -> entity=None (대상 미언급)", state["query"]
             )
@@ -282,6 +288,19 @@ def make_resolve_entity_node(
                 candidates = _find_similar_entities(
                     config, entity_name, postgres_connection
                 )
+                confirmed_candidate = next(
+                    (
+                        candidate["entity"]
+                        for candidate in candidates
+                        if confirmed_config == config
+                        and candidate["entity"] == confirmed_entity
+                    ),
+                    None,
+                )
+                if confirmed_candidate is not None:
+                    if confirmed_candidate not in resolved:
+                        resolved.append(confirmed_candidate)
+                    continue
                 if candidates:
                     logger.info(
                         "resolve_entity: query=%r -> entityName=%r 후보 %d개 "
@@ -300,11 +319,12 @@ def make_resolve_entity_node(
                     entity_name,
                 )
                 raise EntityNotFoundError()
-            resolved.append(entity)
+            if entity not in resolved:
+                resolved.append(entity)
 
         result: dict | list[dict] | None
         if not resolved:
-            result = None
+            result = confirmed_entity
         elif len(resolved) == 1:
             result = resolved[0]
         else:

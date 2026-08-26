@@ -235,6 +235,8 @@ class EvaluationRunner:
                 query=actual["question"],
                 entity=context,
                 schema_text=self.sql_schema_text,
+                business_rules=expected.business_rules,
+                required_outputs=expected.required_outputs,
             )
             validate_read_only_sql(query)
             return query
@@ -244,6 +246,8 @@ class EvaluationRunner:
             entity=context,
             schema_text=self.graph_schema_text,
             query_policy=self.graph_query_policy,
+            business_rules=expected.business_rules,
+            required_outputs=expected.required_outputs,
         )
         validate_read_only_cypher(query)
         return query

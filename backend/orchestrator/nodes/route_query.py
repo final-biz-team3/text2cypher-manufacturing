@@ -18,8 +18,6 @@ class RoutePlanError(ValueError):
         self.raw_response = raw_response
 
 
-# route_query가 OpenAI에 보내는 few-shot 프롬프트. RQ 번호나 평가 fixture를 넣지
-# 않고 질문의 데이터 책임만으로 실행 단위를 만들도록 한다.
 _SYSTEM_PROMPT = """당신은 제조 데이터 질의 라우터입니다.
 사용자 질문과 확인된 entity를 보고 어떤 Tool을 실행해야 하는지 결정합니다.
 반드시 아래 Tool 중에서만 선택하고 JSON 객체로 반환합니다.
@@ -54,10 +52,8 @@ A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_impact","tool":"graph
 설명이나 Markdown 없이 JSON 객체만 반환한다."""
 
 
-# OpenAI 클라이언트를 주입받은 route_query 노드 함수를 생성
 def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], dict]:
     def route_query(state: OrchestratorState) -> dict:
-        # 질의 원문 + 확정된 entity를 few-shot 프롬프트의 입력 형식으로 구성
         entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
         user_content = f"Q: {state['query']}\nentity: {entity_json}\nA:"
 

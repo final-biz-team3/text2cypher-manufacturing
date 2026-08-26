@@ -11,6 +11,7 @@ def build_prompt_messages(
     entity: object | None,
     schema_text: str,
     business_rules: Sequence[str] = (),
+    required_outputs: Sequence[str] = (),
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> list[dict[str, str]]:
@@ -25,6 +26,14 @@ def build_prompt_messages(
     if business_rules:
         formatted_rules = "\n".join(f"- {rule}" for rule in business_rules)
         system_sections.append(f"Business rules:\n{formatted_rules}")
+
+    if required_outputs:
+        formatted_outputs = "\n".join(f"- {field}" for field in required_outputs)
+        system_sections.append(
+            "Required output aliases:\n"
+            f"{formatted_outputs}\n"
+            "Return every field above using the exact alias."
+        )
 
     if previous_query and previous_error is not None:
         system_sections.append(

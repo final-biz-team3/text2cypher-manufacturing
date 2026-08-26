@@ -49,6 +49,7 @@ def build_cypher_prompt(
     schema_text: str,
     query_policy: GraphQueryPolicy,
     business_rules: Sequence[str] = (),
+    required_outputs: Sequence[str] = (),
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> list[dict[str, str]]:
@@ -59,6 +60,7 @@ def build_cypher_prompt(
         entity=entity,
         schema_text=schema_text,
         business_rules=(*_build_cypher_domain_rules(query_policy), *business_rules),
+        required_outputs=required_outputs,
         previous_query=previous_query,
         previous_error=previous_error,
     )

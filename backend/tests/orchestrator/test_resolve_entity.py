@@ -254,7 +254,7 @@ def test_resolve_entity_requires_openai_model(
 
 
 def test_resolve_entity_returns_confirmed_entity_when_it_matches_db() -> None:
-    """confirmed_entity가 DB 행과 일치하면 매칭 없이 그대로 확정한다."""
+    """confirmed_entity가 유효하고 추가 이름이 없으면 그대로 유지한다."""
     openai_client = MockOpenAIClient(make_no_tool_call_response())
     postgres_connection = MockPostgresConnection(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
@@ -274,7 +274,7 @@ def test_resolve_entity_returns_confirmed_entity_when_it_matches_db() -> None:
     assert result == {
         "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     }
-    assert openai_client.calls == []
+    assert len(openai_client.calls) == 1
 
 
 def test_resolve_entity_falls_through_when_confirmed_entity_not_in_db() -> None:
@@ -389,7 +389,7 @@ def test_resolve_entity_raises_ambiguous_with_similar_candidates() -> None:
 
 
 def test_resolve_entity_candidate_entity_round_trips_as_confirmed_entity() -> None:
-    """candidates[0]["entity"]를 confirmed_entity로 재진입하면 매칭 없이 확정된다."""
+    """candidates[0]["entity"]를 confirmed_entity로 재진입하면 확정된다."""
     openai_client = MockOpenAIClient(
         make_tool_call_response(
             "extract_entity",
@@ -428,7 +428,55 @@ def test_resolve_entity_candidate_entity_round_trips_as_confirmed_entity() -> No
     )
 
     assert result == {"entity": candidate_entity}
-    assert reentry_openai_client.calls == []
+    assert len(reentry_openai_client.calls) == 1
+
+
+def test_resolve_entity_merges_confirmed_candidate_with_other_named_entity() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_calls_response(
+            [
+                (
+                    "extract_entity",
+                    {"entityType": "product", "entityName": "터치링 자전거"},
+                ),
+                (
+                    "extract_entity",
+                    {
+                        "entityType": "product",
+                        "entityName": "Mountain-100 Black, 38",
+                    },
+                ),
+            ]
+        )
+    )
+    confirmed_entity = {
+        "productId": 956,
+        "productName": "Touring-1000 Yellow, 54",
+    }
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={
+            "Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54"),
+            "Mountain-100 Black, 38": (775, "Mountain-100 Black, 38"),
+        },
+        similar_rows_by_name={
+            "터치링 자전거": [(956, "Touring-1000 Yellow, 54", 0.62)]
+        },
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node(
+        {
+            "query": "터치링 자전거와 Mountain-100 Black, 38의 공통 부품을 알려줘.",
+            "confirmed_entity": confirmed_entity,
+        }
+    )
+
+    assert result == {
+        "entity": [
+            confirmed_entity,
+            {"productId": 775, "productName": "Mountain-100 Black, 38"},
+        ]
+    }
 
 
 def test_resolve_entity_falls_through_when_confirmed_entity_has_wrong_keys() -> None:

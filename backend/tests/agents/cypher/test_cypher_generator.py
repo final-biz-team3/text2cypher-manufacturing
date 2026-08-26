@@ -26,6 +26,7 @@ def test_generate_cypher_builds_cypher_prompt_and_returns_llm_query() -> None:
             bomMaxDepth=4,
         ),
         business_rules=["관계 방향은 조립품에서 부품 방향이다."],
+        required_outputs=["componentId", "depth"],
     )
 
     assert generated_cypher == (
@@ -39,6 +40,8 @@ def test_generate_cypher_builds_cypher_prompt_and_returns_llm_query() -> None:
         sent_messages[0]["content"]
     )
     assert "- 관계 방향은 조립품에서 부품 방향이다." in (sent_messages[0]["content"])
+    assert "- componentId" in sent_messages[0]["content"]
+    assert "- depth" in sent_messages[0]["content"]
     assert json.loads(sent_messages[1]["content"]) == {
         "query": "이 부품을 사용하는 완제품을 알려줘.",
         "entity": {"productId": 492, "productName": "Paint - Black"},

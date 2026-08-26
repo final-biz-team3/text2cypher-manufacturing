@@ -3,7 +3,10 @@ from types import MethodType
 from typing import Any
 
 import psycopg
+import pytest
 
+import evaluation.runner as runner_module
+from agents.cypher.schema.models import GraphQueryPolicy
 from evaluation.errors import InfrastructureError, QuerySafetyError
 from evaluation.models import load_manifest
 from evaluation.runner import EvaluationRunner
@@ -11,6 +14,63 @@ from orchestrator.nodes.route_query import RoutePlanError
 from orchestrator.state import OrchestratorState
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_sql_generation_receives_manifest_rules_and_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    expected = manifest.contracts["RQ08"].subqueries[0]
+    captured: dict[str, Any] = {}
+
+    def generate_sql(*args: Any, **kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "SELECT 1"
+
+    monkeypatch.setattr(runner_module, "generate_sql", generate_sql)
+    runner = object.__new__(EvaluationRunner)
+    runner.openai_client = object()
+    runner.sql_schema_text = "schema"
+
+    runner._generate_query(
+        expected,
+        {"question": "재고와 부족 수량을 조회한다."},
+        {"productId": 492},
+        {},
+    )
+
+    assert captured["business_rules"] == expected.business_rules
+    assert captured["required_outputs"] == expected.required_outputs
+
+
+def test_cypher_generation_receives_manifest_rules_and_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    expected = manifest.contracts["RQ17"].subqueries[0]
+    captured: dict[str, Any] = {}
+
+    def generate_cypher(*args: Any, **kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "MATCH (n) RETURN n"
+
+    monkeypatch.setattr(runner_module, "generate_cypher", generate_cypher)
+    runner = object.__new__(EvaluationRunner)
+    runner.openai_client = object()
+    runner.graph_schema_text = "schema"
+    runner.graph_query_policy = GraphQueryPolicy(
+        bomAsOfDate="2014-08-08", bomMaxDepth=4
+    )
+
+    runner._generate_query(
+        expected,
+        {"question": "두 완제품의 공통 부품을 조회한다."},
+        [{"productId": 765}, {"productId": 775}],
+        {},
+    )
+
+    assert captured["business_rules"] == expected.business_rules
+    assert captured["required_outputs"] == expected.required_outputs
 
 
 def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() -> None:
