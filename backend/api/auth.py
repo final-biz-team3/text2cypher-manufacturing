@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from core.auth import (
     COOKIE_NAME,
+    EXPIRE_HOURS,
     CurrentUser,
     create_access_token,
     get_current_user,
@@ -18,7 +19,7 @@ from core.postgres import get_connection
 
 router = APIRouter(prefix="/auth")
 
-_COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60
+_COOKIE_MAX_AGE_SECONDS = EXPIRE_HOURS * 60 * 60
 _DUMMY_HASH = hash_password("dummy-password-for-timing")
 
 

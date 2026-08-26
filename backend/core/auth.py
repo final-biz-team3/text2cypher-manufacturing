@@ -9,8 +9,8 @@ from fastapi import Cookie, Depends, HTTPException
 from pydantic import BaseModel
 
 COOKIE_NAME = "access_token"
+EXPIRE_HOURS = 24
 _ALGORITHM = "HS256"
-_EXPIRE_HOURS = 12
 
 
 class CurrentUser(BaseModel):
@@ -40,7 +40,7 @@ def check_jwt_secret() -> None:
 
 
 def create_access_token(username: str, role: str) -> str:
-    expire = datetime.now(UTC) + timedelta(hours=_EXPIRE_HOURS)
+    expire = datetime.now(UTC) + timedelta(hours=EXPIRE_HOURS)
     payload = {"sub": username, "role": role, "exp": expire}
     return jwt.encode(payload, _secret_key(), algorithm=_ALGORITHM)
 
@@ -48,9 +48,9 @@ def create_access_token(username: str, role: str) -> str:
 def decode_access_token(token: str) -> CurrentUser:
     try:
         payload = jwt.decode(token, _secret_key(), algorithms=[_ALGORITHM])
-    except jwt.PyJWTError as exc:
+        return CurrentUser(username=payload["sub"], role=payload["role"])
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="인증이 필요합니다") from exc
-    return CurrentUser(username=payload["sub"], role=payload["role"])
 
 
 def get_current_user(

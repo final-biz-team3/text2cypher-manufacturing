@@ -1,5 +1,8 @@
 """비밀번호 해싱과 JWT 발급/검증 동작을 테스트한다."""
 
+from datetime import UTC, datetime, timedelta
+
+import jwt
 import pytest
 from fastapi import HTTPException
 
@@ -40,6 +43,36 @@ def test_decode_access_token_rejects_garbage_token(
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     with pytest.raises(HTTPException) as exc_info:
         decode_access_token("not-a-real-token")
+    assert exc_info.value.status_code == 401
+
+
+def test_decode_access_token_rejects_token_missing_role_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """서명은 유효하지만 role 필드가 없는 토큰은 500이 아니라 401을 반환해야 한다."""
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
+    token = jwt.encode(
+        {"sub": "kim.quality"},
+        "test-secret-at-least-32-characters-long",
+        algorithm="HS256",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        decode_access_token(token)
+    assert exc_info.value.status_code == 401
+
+
+def test_decode_access_token_rejects_expired_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
+    expired = datetime.now(UTC) - timedelta(hours=1)
+    token = jwt.encode(
+        {"sub": "kim.quality", "role": "admin", "exp": expired},
+        "test-secret-at-least-32-characters-long",
+        algorithm="HS256",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        decode_access_token(token)
     assert exc_info.value.status_code == 401
 
 
