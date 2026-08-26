@@ -29,6 +29,7 @@ async def chat(
         "query": result["query"],
         "entity": result.get("entity"),
         "tool_plan": result.get("tool_plan"),
+        "subqueries": result.get("subqueries"),
         "sql_query": result.get("sql_query"),
         "cypher_query": result.get("cypher_query"),
         "sql_result": result.get("sql_result"),

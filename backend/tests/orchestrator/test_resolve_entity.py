@@ -10,6 +10,7 @@ from tests.mocks.openai import (
     MockOpenAIClient,
     make_no_tool_call_response,
     make_tool_call_response,
+    make_tool_calls_response,
 )
 from tests.mocks.postgres import MockPostgresConnection
 
@@ -149,6 +150,45 @@ def test_resolve_entity_returns_entity_when_supplier_found() -> None:
     result = node({"query": "공급업체 Allenson Cycles가 공급하는 부품을 알려줘."})
 
     assert result == {"entity": {"supplierId": 1494, "supplierName": "Allenson Cycles"}}
+
+
+def test_resolve_entity_returns_all_named_entities_in_question_order() -> None:
+    """두 제품을 비교하는 질문은 어느 하나를 버리지 않고 순서대로 확정한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_calls_response(
+            [
+                (
+                    "extract_entity",
+                    {"entityType": "product", "entityName": "Road-650 Black, 58"},
+                ),
+                (
+                    "extract_entity",
+                    {
+                        "entityType": "product",
+                        "entityName": "Mountain-100 Black, 38",
+                    },
+                ),
+            ]
+        )
+    )
+    postgres_connection = MockPostgresConnection(
+        rows_by_name={
+            "Road-650 Black, 58": (765, "Road-650 Black, 58"),
+            "Mountain-100 Black, 38": (775, "Mountain-100 Black, 38"),
+        }
+    )
+    node = make_resolve_entity_node(openai_client, postgres_connection, _graph_schema())
+
+    result = node(
+        {"query": ("Road-650 Black, 58과 Mountain-100 Black, 38의 공통 부품을 알려줘.")}
+    )
+
+    assert result == {
+        "entity": [
+            {"productId": 765, "productName": "Road-650 Black, 58"},
+            {"productId": 775, "productName": "Mountain-100 Black, 38"},
+        ]
+    }
 
 
 def test_resolve_entity_returns_none_entity_when_no_entity_mentioned() -> None:

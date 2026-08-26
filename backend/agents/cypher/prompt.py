@@ -11,6 +11,8 @@ _CYPHER_INSTRUCTIONS = """당신은 제조 데이터용 Neo4j Cypher 쿼리 생�
 - 제공된 스키마의 노드, 관계와 속성만 사용합니다.
 - 관계 방향을 제공된 스키마와 동일하게 사용합니다.
 - 결과를 반환하는 RETURN 절을 포함합니다.
+- RETURN alias는 한국어 표시명 대신 속성명 또는 의미가 분명한 영어
+  lowerCamelCase를 사용합니다.
 - 확정된 entity가 있으면 해당 식별자를 우선 사용합니다.
 - 제공된 업무 규칙이 있으면 쿼리에 반영합니다.
 - CREATE, MERGE, SET, DELETE, REMOVE 같은 쓰기 절을 사용하지 않습니다.
@@ -43,7 +45,7 @@ def _build_cypher_domain_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...
 def build_cypher_prompt(
     *,
     query: str,
-    entity: dict[str, object] | None,
+    entity: object | None,
     schema_text: str,
     query_policy: GraphQueryPolicy,
     business_rules: Sequence[str] = (),

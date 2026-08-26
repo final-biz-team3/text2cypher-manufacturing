@@ -28,6 +28,8 @@ def test_build_sql_prompt_adds_postgresql_policy_and_dynamic_context() -> None:
     assert "shelf·bin별 원본 quantity" in system_content
     assert "locationid, shelf, bin 순" in system_content
     assert "LEFT JOIN" in system_content
+    assert "lowerCamelCase" in system_content
+    assert "사용자가 순위 번호를 요구한 경우에만" in system_content
     assert "- 확정된 제품 ID로 조회한다." in system_content
     assert "SQL만 반환" in system_content
     assert json.loads(messages[1]["content"]) == {

@@ -55,6 +55,29 @@ def make_tool_call_response(
     )
 
 
+def make_tool_calls_response(
+    calls: list[tuple[str, dict[str, Any]]],
+) -> MockChatCompletion:
+    """여러 엔티티처럼 한 응답에 여러 tool call을 담는다."""
+    return MockChatCompletion(
+        choices=[
+            MockChoice(
+                message=MockMessage(
+                    tool_calls=[
+                        MockToolCall(
+                            function=MockToolCallFunction(
+                                name=name,
+                                arguments=json.dumps(arguments),
+                            )
+                        )
+                        for name, arguments in calls
+                    ]
+                )
+            )
+        ]
+    )
+
+
 def make_no_tool_call_response() -> MockChatCompletion:
     """tool call이 없는 Chat Completions 응답을 만든다."""
     return MockChatCompletion(

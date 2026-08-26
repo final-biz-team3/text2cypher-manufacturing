@@ -24,6 +24,8 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
     assert "Neo4j Cypher" in system_content
     assert "관계 방향" in system_content
     assert "RETURN 절" in system_content
+    assert "lowerCamelCase" in system_content
+    assert "한국어 표시명 대신" in system_content
     assert "(:Product)-[:REQUIRES_COMPONENT]->(:Product)" in system_content
     assert "상위 조립품에서 하위 부품 방향" in system_content
     assert "부품의 사용처는 역방향" in system_content

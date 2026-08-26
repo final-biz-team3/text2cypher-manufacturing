@@ -25,7 +25,7 @@ INCONCLUSIVE = "INCONCLUSIVE"
 
 class RetryAgentState(TypedDict):
     query: str
-    entity: dict | None
+    entity: dict | list[dict] | None
     schema: str
     messages: list
     result: Any | None

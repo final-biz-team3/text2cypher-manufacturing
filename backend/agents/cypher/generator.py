@@ -12,7 +12,7 @@ def generate_cypher(
     openai_client: Any,
     *,
     query: str,
-    entity: dict[str, object] | None,
+    entity: object | None,
     schema_text: str,
     query_policy: GraphQueryPolicy,
     business_rules: Sequence[str] = (),

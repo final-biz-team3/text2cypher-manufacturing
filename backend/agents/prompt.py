@@ -8,7 +8,7 @@ def build_prompt_messages(
     *,
     instructions: str,
     query: str,
-    entity: dict[str, object] | None,
+    entity: object | None,
     schema_text: str,
     business_rules: Sequence[str] = (),
     previous_query: str | None = None,

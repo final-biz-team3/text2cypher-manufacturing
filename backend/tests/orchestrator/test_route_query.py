@@ -2,7 +2,7 @@
 
 import pytest
 
-from orchestrator.nodes.route_query import make_route_query_node
+from orchestrator.nodes.route_query import RoutePlanError, make_route_query_node
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 
@@ -18,7 +18,19 @@ def test_route_query_returns_sql_tool_plan_for_numeric_query() -> None:
         }
     )
 
-    assert result == {"tool_plan": ["sql"]}
+    assert result == {
+        "tool_plan": ["sql"],
+        "subqueries": [
+            {
+                "id": "sql_query",
+                "tool": "sql",
+                "question": "Touring-1000 Yellow, 54의 정가와 표준원가를 알려줘.",
+                "dependsOn": [],
+                "requiredOutputs": [],
+                "joinKeys": [],
+            }
+        ],
+    }
 
 
 def test_route_query_returns_graph_tool_plan_for_relationship_query() -> None:
@@ -33,7 +45,19 @@ def test_route_query_returns_graph_tool_plan_for_relationship_query() -> None:
         }
     )
 
-    assert result == {"tool_plan": ["graph"]}
+    assert result == {
+        "tool_plan": ["graph"],
+        "subqueries": [
+            {
+                "id": "graph_query",
+                "tool": "graph",
+                "question": "부품 Paint - Black을 사용하는 완제품을 최대 4단계까지 알려줘.",
+                "dependsOn": [],
+                "requiredOutputs": [],
+                "joinKeys": [],
+            }
+        ],
+    }
 
 
 def test_route_query_sends_query_and_entity_in_prompt() -> None:
@@ -49,6 +73,11 @@ def test_route_query_sends_query_and_entity_in_prompt() -> None:
     )
 
     sent_messages = openai_client.calls[0]["messages"]
+    assert openai_client.calls[0]["response_format"] == {"type": "json_object"}
+    system_message = next(m["content"] for m in sent_messages if m["role"] == "system")
+    assert "다른 단계로 전달하거나 최종 결합에 실제로 필요한 필드만" in system_message
+    assert "전달·결합이 없으면 빈 배열" in system_message
+    assert "requiredOutputs와 joinKeys 둘 다에" in system_message
     user_message = next(m["content"] for m in sent_messages if m["role"] == "user")
     assert "활성 공급업체 수를 알려줘." in user_message
 
@@ -74,5 +103,7 @@ def test_route_query_rejects_invalid_plan(tool_plan_json: str) -> None:
     openai_client = MockOpenAIClient(make_content_response(tool_plan_json))
     node = make_route_query_node(openai_client)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(RoutePlanError) as exc_info:
         node({"query": "질의", "entity": None})
+
+    assert exc_info.value.raw_response == tool_plan_json

@@ -1,5 +1,7 @@
 from typing import NotRequired, TypedDict
 
+from orchestrator.planning import Subquery
+
 
 # query만 필수이고 나머지는 그래프 실행 중 노드가 채워나가므로 NotRequired로 선언한다
 # -> graph.invoke({"query": ...})처럼 부분 dict로 시작하거나, 노드 단위 테스트에서
@@ -9,13 +11,16 @@ class OrchestratorState(TypedDict):
     query: str
 
     # resolve_entity가 확정한 엔티티의 ID와 이름
-    entity: NotRequired[dict | None]
+    entity: NotRequired[dict | list[dict] | None]
 
     # 이전 턴에 사용자가 확인한 entity (있으면 resolve_entity가 매칭을 건너뜀)
     confirmed_entity: NotRequired[dict | None]
 
     # route_query가 결정한 실행 계획 (["sql"] / ["graph"] / ["sql", "graph"])
     tool_plan: NotRequired[list[str]]
+
+    # route_query가 질문을 데이터 소스별 책임과 의존성으로 나눈 실행 단위
+    subqueries: NotRequired[list[Subquery]]
 
     # tool_plan에 따라 생성된 읽기 전용 쿼리 (DB 실행 전 단계)
     sql_query: NotRequired[str | None]
