@@ -224,10 +224,6 @@ def make_resolve_entity_node(
 ) -> Callable[[OrchestratorState], dict]:
     """OpenAI/PostgreSQL 클라이언트와 그래프 스키마를 주입받은 resolve_entity 노드를 만든다."""
     entity_types = list_resolvable_entity_types(graph_schema)
-    if not entity_types:
-        raise ValueError(
-            "그래프 스키마에 이름으로 검색 가능한 엔티티 타입이 하나도 없습니다."
-        )
     extract_tool = _build_extract_entity_tool(entity_types)
 
     def resolve_entity(state: OrchestratorState) -> dict:

@@ -187,11 +187,7 @@ def parse_execution_plan(content: str, query: str) -> ExecutionPlan:
         names = ", ".join(sorted(unsupported_tools))
         raise ValueError(f"지원하지 않는 tool_plan 값: {names}")
 
-    subqueries = (
-        _legacy_subqueries(tool_plan, query)
-        if legacy
-        else validate_subqueries(raw_subqueries)
-    )
+    subqueries = _legacy_subqueries(tool_plan, query) if legacy else raw_subqueries
     validated = validate_subqueries(subqueries)
     planned_tools = list(dict.fromkeys(item["tool"] for item in validated))
     if set(planned_tools) != set(tool_plan):
