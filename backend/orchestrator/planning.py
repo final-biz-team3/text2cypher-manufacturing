@@ -148,7 +148,7 @@ def validate_subqueries(subqueries: Any) -> list[Subquery]:
 
 
 def _legacy_subqueries(tool_plan: list[str], query: str) -> list[Subquery]:
-    """이전 JSON 배열 응답도 실행 가능하게 하되 평가에서는 계약 차이를 드러낸다."""
+    """tool_plan 배열을 단일 단계 실행 계획으로 변환한다."""
     return [
         {
             "id": f"{tool}_query",
@@ -163,7 +163,7 @@ def _legacy_subqueries(tool_plan: list[str], query: str) -> list[Subquery]:
 
 
 def parse_execution_plan(content: str, query: str) -> ExecutionPlan:
-    """LLM의 신규 object 또는 기존 array 응답을 검증된 실행 계획으로 바꾼다."""
+    """LLM의 JSON object 또는 array 응답을 검증된 실행 계획으로 바꾼다."""
     raw = json.loads(content)
     legacy = isinstance(raw, list)
     if isinstance(raw, list):

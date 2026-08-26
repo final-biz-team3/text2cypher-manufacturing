@@ -58,9 +58,7 @@ def _field_value(
         (key, value) for key, value in row.items() if canonical_name(key) in accepted
     ]
     if not matches:
-        # 단일 출력 계약은 어떤 컬럼을 뜻하는지 위치 추측이 필요 없다. 값은
-        # 이어지는 Gold hash 비교로 검증하므로 의미가 분명한 임의 alias 때문에
-        # 올바른 집계 쿼리를 미평가하지 않는다.
+        # 단일 출력은 Gold hash가 값을 검증하므로 유일한 컬럼을 사용한다.
         if allow_single_column_fallback and len(row) == 1:
             return _normalize_value(next(iter(row.values())))
         raise ResultContractError(f"필수 결과 필드 {field!r}가 없습니다.")

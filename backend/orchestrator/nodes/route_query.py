@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class RoutePlanError(ValueError):
-    """검증에 실패한 모델 원문을 진단 artifact까지 전달한다."""
+    """검증 실패 정보와 모델 응답 원문을 함께 보존한다."""
 
     def __init__(self, message: str, raw_response: str) -> None:
         super().__init__(message)

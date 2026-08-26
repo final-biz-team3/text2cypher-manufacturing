@@ -389,7 +389,7 @@ def test_resolve_entity_raises_ambiguous_with_similar_candidates() -> None:
 
 
 def test_resolve_entity_candidate_entity_round_trips_as_confirmed_entity() -> None:
-    """candidates[0]["entity"]를 confirmed_entity로 재진입하면 확정된다."""
+    """후보 응답의 entity를 재확인 요청에 그대로 사용할 수 있다."""
     openai_client = MockOpenAIClient(
         make_tool_call_response(
             "extract_entity",

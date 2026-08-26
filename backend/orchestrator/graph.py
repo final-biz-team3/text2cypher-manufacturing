@@ -131,8 +131,7 @@ def build_orchestrator_graph(
     assert cypher_query_policy is not None
 
     graph = StateGraph(OrchestratorState)
-    # langgraph의 add_node 오버로드가 factory의 Callable 반환 타입을 추론하지
-    # 못하므로, 런타임 시그니처를 검증한 노드만 Any로 좁혀 전달한다.
+    # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다.
     graph.add_node(
         "resolve_entity",
         cast(
