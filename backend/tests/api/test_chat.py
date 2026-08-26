@@ -3,11 +3,18 @@
 import asyncio
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import api.chat as chat_module
 from api.chat import ChatRequest, chat
-from tests.mocks.openai import MockOpenAIClient, make_content_response
+from core.auth import create_access_token
+from tests.mocks.openai import (
+    MockOpenAIClient,
+    make_content_response,
+    make_no_tool_call_response,
+)
 from tests.mocks.postgres import MockPostgresConnection
 
 
@@ -64,3 +71,38 @@ def test_chat_request_rejects_unknown_field() -> None:
                 "confirmedEntity": {"productId": 956},
             }
         )
+
+
+def test_chat_endpoint_rejects_request_without_cookie() -> None:
+    """라우터 레벨에서 인증 없이 /chat을 호출하면 401을 받는다."""
+    app = FastAPI()
+    app.include_router(chat_module.router)
+    client = TestClient(app)
+
+    response = client.post("/chat", json={"query": "정가 알려줘"})
+
+    assert response.status_code == 401
+
+
+def test_chat_endpoint_accepts_request_with_valid_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """유효한 access_token 쿠키가 있으면 /chat이 정상 응답한다."""
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
+    openai_client = MockOpenAIClient(
+        make_no_tool_call_response(),
+        make_content_response('["sql"]'),
+        make_content_response("SELECT listprice FROM production.product"),
+    )
+    monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
+    monkeypatch.setattr(
+        chat_module, "get_connection", lambda: MockPostgresConnection(rows_by_name={})
+    )
+    app = FastAPI()
+    app.include_router(chat_module.router)
+    client = TestClient(app)
+    client.cookies.set("access_token", create_access_token("kim.quality", "admin"))
+
+    response = client.post("/chat", json={"query": "정가 알려줘"})
+
+    assert response.status_code == 200
