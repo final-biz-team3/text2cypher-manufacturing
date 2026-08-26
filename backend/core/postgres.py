@@ -40,7 +40,9 @@ async def configure_connection(conn: psycopg.AsyncConnection) -> None:
     트랜잭션을 여는데, psycopg_pool은 configure 콜백이 커넥션을 트랜잭션이
     열린 채로 반환하면 그 커넥션을 폐기한다 — 반드시 commit으로 닫아야 한다."""
     await conn.set_read_only(True)
-    timeout_ms = os.getenv("SQL_STATEMENT_TIMEOUT_MS", "5000")
+    # SET은 psycopg 파라미터 바인딩(%s)을 지원하지 않아 문자열로 조립해야
+    # 한다 - 대신 정수로 먼저 파싱해 SQL 구문에 그대로 새는 걸 막는다.
+    timeout_ms = int(os.getenv("SQL_STATEMENT_TIMEOUT_MS", "5000"))
     await conn.execute(f"SET statement_timeout = '{timeout_ms}ms'")
     await conn.commit()
 
