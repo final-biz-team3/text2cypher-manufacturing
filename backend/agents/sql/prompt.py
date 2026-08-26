@@ -17,6 +17,7 @@ _SQL_INSTRUCTIONS = """당신은 제조 데이터용 PostgreSQL 쿼리 생성기
 - 설명, 주석 또는 Markdown 없이 SQL만 반환합니다."""
 
 _SQL_DOMAIN_RULES = (
+    '"외부 구매 부품"은 production.product.makeflag = false인 제품이다.',
     '"위치별 재고 수량"은 제품·위치 식별정보와 shelf·bin별 원본 quantity를 '
     "합산하지 않고 locationid, shelf, bin 순으로 반환한다.",
     '"실제 재고"는 제품을 기준으로 productinventory를 LEFT JOIN한 뒤 '

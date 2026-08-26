@@ -8,7 +8,7 @@ class OrchestratorState(TypedDict):
     # 사용자 자연어 질의 (필수)
     query: str
 
-    # resolve_entity가 확정한 엔티티 (productId, productName)
+    # resolve_entity가 확정한 엔티티의 ID와 이름
     entity: NotRequired[dict | None]
 
     # 이전 턴에 사용자가 확인한 entity (있으면 resolve_entity가 매칭을 건너뜀)

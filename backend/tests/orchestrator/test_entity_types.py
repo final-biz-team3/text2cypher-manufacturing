@@ -7,7 +7,10 @@ import pytest
 
 from agents.cypher.schema.loader import load_graph_schema
 from agents.cypher.schema.models import GraphSchema
-from orchestrator.entity_types import list_named_entity_types
+from orchestrator.entity_types import (
+    list_named_entity_types,
+    list_resolvable_entity_types,
+)
 
 PROJECT_SCHEMA_PATH = (
     Path(__file__).resolve().parents[3] / "schema" / "graph_schema.yaml"
@@ -51,6 +54,7 @@ def test_list_named_entity_types_includes_only_nodes_with_name_and_source() -> N
     assert entity_types[0].name_column == "name"
     assert entity_types[0].id_field == "productId"
     assert entity_types[0].name_field == "productName"
+    assert entity_types[0].aliases == ()
 
 
 def test_list_named_entity_types_loads_project_schema() -> None:
@@ -67,6 +71,21 @@ def test_list_named_entity_types_loads_project_schema() -> None:
     assert entity_types["supplier"].id_field == "supplierId"
     assert entity_types["scrapReason"].table == "production.scrapreason"
     assert entity_types["scrapReason"].name_field == "scrapReasonName"
+
+
+def test_list_resolvable_entity_types_includes_sql_only_type() -> None:
+    """공통 엔티티 목록에 SQL에서만 사용하는 이름 기반 타입도 포함한다."""
+    schema = load_graph_schema(PROJECT_SCHEMA_PATH)
+
+    entity_types = {
+        entity.entity_type: entity for entity in list_resolvable_entity_types(schema)
+    }
+
+    product_category = entity_types["productCategory"]
+    assert product_category.table == "production.productcategory"
+    assert product_category.id_field == "productCategoryId"
+    assert product_category.name_field == "productCategoryName"
+    assert product_category.aliases == ("제품 분류",)
 
 
 def test_list_named_entity_types_skips_node_with_unsafe_table_identifier(
