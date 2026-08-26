@@ -8,6 +8,8 @@ from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
+_SUPPORTED_TOOLS = {"sql", "graph"}
+
 # route_query가 OpenAI에 보내는 few-shot 프롬프트
 # SQL/GRAPH 사용 조건 + 예시 3개로 tool_plan(["sql"]/["graph"]/["sql","graph"])을 결정
 _SYSTEM_PROMPT = """당신은 제조 데이터 질의 라우터입니다.
@@ -50,6 +52,12 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], d
         )
         # LLM 응답(JSON 배열 문자열)을 tool_plan으로 파싱
         tool_plan = json.loads(response.choices[0].message.content)
+        if not isinstance(tool_plan, list) or not tool_plan:
+            raise ValueError("route_query가 빈 tool_plan을 반환했습니다.")
+        unsupported_tools = set(tool_plan) - _SUPPORTED_TOOLS
+        if unsupported_tools:
+            names = ", ".join(sorted(unsupported_tools))
+            raise ValueError(f"지원하지 않는 tool_plan 값: {names}")
         logger.info("route_query: query=%r -> tool_plan=%s", state["query"], tool_plan)
         return {"tool_plan": tool_plan}
 
