@@ -48,9 +48,9 @@ def create_access_token(username: str, role: str) -> str:
 def decode_access_token(token: str) -> CurrentUser:
     try:
         payload = jwt.decode(token, _secret_key(), algorithms=[_ALGORITHM])
-    except jwt.PyJWTError as exc:
+        return CurrentUser(username=payload["sub"], role=payload["role"])
+    except (jwt.PyJWTError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="인증이 필요합니다") from exc
-    return CurrentUser(username=payload["sub"], role=payload["role"])
 
 
 def get_current_user(
