@@ -12,10 +12,11 @@ def generate_cypher(
     openai_client: Any,
     *,
     query: str,
-    entity: dict[str, object] | None,
+    entity: object | None,
     schema_text: str,
     query_policy: GraphQueryPolicy,
     business_rules: Sequence[str] = (),
+    required_outputs: Sequence[str] = (),
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> str:
@@ -28,6 +29,7 @@ def generate_cypher(
         schema_text=schema_text,
         query_policy=query_policy,
         business_rules=business_rules,
+        required_outputs=required_outputs,
         previous_query=previous_query,
         previous_error=previous_error,
     )

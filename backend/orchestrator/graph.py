@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -35,7 +35,7 @@ def _load_schema_context() -> tuple[str, str, GraphSchema]:
 
 
 def _retry_agent_initial_state(
-    query: str, entity: dict | None, schema_text: str
+    query: str, entity: dict | list[dict] | None, schema_text: str
 ) -> dict:
     """sql_agent/cypher_agent SubGraph에 공통으로 넘기는 초기 상태를 만든다."""
     return {
@@ -131,31 +131,31 @@ def build_orchestrator_graph(
     assert cypher_query_policy is not None
 
     graph = StateGraph(OrchestratorState)
-    # mypy가 factory가 반환하는 Callable 타입을 add_node의 오버로드와 맞추지
-    # 못해 arg-type 오류를 낸다(런타임 시그니처는 정확히 일치 - 오탐).
-    # langgraph 1.2.11 + mypy 2.3.0 조합의 알려진 한계라 무시한다.
+    # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다.
     graph.add_node(
         "resolve_entity",
-        make_resolve_entity_node(
-            openai_client, postgres_connection, cypher_schema
-        ),  # type: ignore[arg-type]
+        cast(
+            Any,
+            make_resolve_entity_node(openai_client, postgres_connection, cypher_schema),
+        ),
     )
-    graph.add_node(
-        "route_query", make_route_query_node(openai_client)  # type: ignore[arg-type]
-    )
+    graph.add_node("route_query", cast(Any, make_route_query_node(openai_client)))
     graph.add_node(
         "sql_agent",
-        _make_sql_agent_node(openai_client, sql_schema_text),  # type: ignore[arg-type]
+        cast(Any, _make_sql_agent_node(openai_client, sql_schema_text)),
     )
     graph.add_node(
         "cypher_agent",
-        _make_cypher_agent_node(
-            openai_client, cypher_schema_text, cypher_query_policy
-        ),  # type: ignore[arg-type]
+        cast(
+            Any,
+            _make_cypher_agent_node(
+                openai_client, cypher_schema_text, cypher_query_policy
+            ),
+        ),
     )
     graph.add_node(
         "generate_answer",
-        make_generate_answer_node(),  # type: ignore[arg-type]
+        cast(Any, make_generate_answer_node()),
     )
     graph.add_edge(START, "resolve_entity")
     graph.add_edge("resolve_entity", "route_query")

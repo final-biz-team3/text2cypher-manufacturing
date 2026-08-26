@@ -1,4 +1,4 @@
-"""그래프 스키마에서 이름으로 검색 가능한 엔티티 타입 목록을 만든다."""
+"""이름으로 검색 가능한 엔티티 타입의 조회 정보를 구성한다."""
 
 import logging
 import re
@@ -23,6 +23,20 @@ class NamedEntityType:
     name_column: str
     id_field: str
     name_field: str
+    aliases: tuple[str, ...] = ()
+
+
+_SQL_NAMED_ENTITY_TYPES = (
+    NamedEntityType(
+        entity_type="productCategory",
+        table="production.productcategory",
+        id_column="productcategoryid",
+        name_column="name",
+        id_field="productCategoryId",
+        name_field="productCategoryName",
+        aliases=("제품 분류",),
+    ),
+)
 
 
 def list_named_entity_types(schema: GraphSchema) -> list[NamedEntityType]:
@@ -94,7 +108,20 @@ def list_named_entity_types(schema: GraphSchema) -> list[NamedEntityType]:
                 name_column=name_source_column,
                 id_field=node.unique_key,
                 name_field=f"{entity_type}Name",
+                aliases=tuple(node.aliases),
             )
         )
 
+    return entity_types
+
+
+def list_resolvable_entity_types(schema: GraphSchema) -> list[NamedEntityType]:
+    """그래프와 SQL에서 이름으로 확정할 수 있는 엔티티 타입을 반환한다."""
+    entity_types = list_named_entity_types(schema)
+    existing_types = {entity.entity_type for entity in entity_types}
+    entity_types.extend(
+        entity
+        for entity in _SQL_NAMED_ENTITY_TYPES
+        if entity.entity_type not in existing_types
+    )
     return entity_types

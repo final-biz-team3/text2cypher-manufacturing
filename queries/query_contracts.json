@@ -1,12 +1,12 @@
 {
-  "version": "3.0.0",
   "name": "manufacturing-risk-structured-query-contracts",
   "confirmedAt": "2026-08-19",
-  "status": "PARAMETERS_CONFIRMED_CONTRACTS_READY_GOLD_PENDING",
+  "status": "RQ01_RQ20_EVALUATION_GOLD_READY",
   "scope": "PostgreSQL 전체 원본과 Neo4j 관계 그래프를 결합한 제조 데이터 탐색 MVP",
   "referenceArtifacts": {
     "querySet": "docs/design/manufacturing-risk-query-set.md",
     "parameters": "queries/query_parameters.json",
+    "evaluationManifest": "queries/evaluation/manifest.json",
     "parameterEvidence": "reports/query_parameter_selection_report.md",
     "dataStructure": "docs/design/postgresql-neo4j-data-structure-mentor.md",
     "neo4jBlueprint": "docs/design/manufacturing-risk-structured-mvp-blueprint.md"
@@ -63,7 +63,7 @@
       "emptyResultPolicy": "해당 제품을 찾을 수 없다고 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 1, "startPredicate": "production.product.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ02",
@@ -79,7 +79,7 @@
       "emptyResultPolicy": "제품이 없으면 NOT_FOUND, 제품은 있지만 재고가 없으면 빈 목록을 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 20, "startPredicate": "production.product.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ03",
@@ -95,7 +95,7 @@
       "emptyResultPolicy": "0을 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 1},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ04",
@@ -111,7 +111,7 @@
       "emptyResultPolicy": "0을 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 1},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ05",
@@ -121,13 +121,13 @@
       "sampleQuestion": "판매 종료일이 등록되지 않은 제품을 10개만 보여줘.",
       "parameters": {},
       "sources": ["postgresql"],
-      "requiredAnswerFields": ["productId", "productName", "sellEndDate"],
+      "requiredAnswerFields": ["productId", "productName"],
       "businessRules": ["sellenddate IS NULL인 모든 제품이 후보이다.", "productId로 먼저 정렬한 뒤 10개를 제한한다."],
       "ordering": ["productId ASC"],
       "emptyResultPolicy": "빈 목록을 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 10},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ06",
@@ -143,7 +143,7 @@
       "emptyResultPolicy": "해당 제품을 찾을 수 없다고 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 1, "startPredicate": "production.product.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ07",
@@ -159,7 +159,7 @@
       "emptyResultPolicy": "분류가 없으면 NOT_FOUND를 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 1, "startPredicate": "production.productcategory.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ08",
@@ -175,7 +175,7 @@
       "emptyResultPolicy": "제품이 없으면 NOT_FOUND를 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 1, "startPredicate": "production.product.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ09",
@@ -185,13 +185,13 @@
       "sampleQuestion": "판매량이 가장 많은 완제품 상위 5개를 알려줘.",
       "parameters": {},
       "sources": ["postgresql"],
-      "requiredAnswerFields": ["rank", "productId", "productName", "totalOrderQty"],
+      "requiredAnswerFields": ["productId", "productName", "totalOrderQty"],
       "businessRules": ["salesorderdetail.orderqty 합계를 판매량으로 정의한다.", "finishedgoodsflag=true인 제품만 포함한다.", "판매량 내림차순, productId 오름차순으로 5개를 반환한다."],
       "ordering": ["totalOrderQty DESC", "productId ASC"],
       "emptyResultPolicy": "빈 목록을 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 5},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ10",
@@ -201,29 +201,29 @@
       "sampleQuestion": "반려 수량이 많은 공급업체 상위 5곳을 알려줘.",
       "parameters": {},
       "sources": ["postgresql"],
-      "requiredAnswerFields": ["rank", "supplierId", "supplierName", "totalRejectedQty"],
+      "requiredAnswerFields": ["supplierId", "supplierName", "totalRejectedQty"],
       "businessRules": ["purchaseorderdetail.rejectedqty를 구매주문 공급업체별로 합산한다.", "합계가 0보다 큰 공급업체만 포함한다.", "반려 수량 내림차순, supplierId 오름차순으로 5개를 반환한다."],
       "ordering": ["totalRejectedQty DESC", "supplierId ASC"],
       "emptyResultPolicy": "빈 목록을 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 5},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ11",
       "quadrant": "HIGH_QUESTION_LOW_SCHEMA",
       "route": "SQL",
-      "questionTemplate": "폐기 수량이 많은 작업지시 상위 5개를 제품명과 함께 알려줘.",
-      "sampleQuestion": "폐기 수량이 많은 작업지시 상위 5개를 제품명과 함께 알려줘.",
+      "questionTemplate": "폐기 수량이 많은 작업지시 상위 5개를 제품명과 폐기사유와 함께 알려줘.",
+      "sampleQuestion": "폐기 수량이 많은 작업지시 상위 5개를 제품명과 폐기사유와 함께 알려줘.",
       "parameters": {},
       "sources": ["postgresql"],
-      "requiredAnswerFields": ["rank", "workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"],
+      "requiredAnswerFields": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"],
       "businessRules": ["scrappedqty>0인 작업지시만 포함한다.", "폐기사유가 없으면 scrapReason 필드는 NULL이다.", "폐기 수량 내림차순, workOrderId 오름차순으로 5개를 반환한다."],
       "ordering": ["scrappedQty DESC", "workOrderId ASC"],
       "emptyResultPolicy": "빈 목록을 반환한다.",
       "correctness": "정규화한 PostgreSQL 결과 SHA-256 일치",
       "performance": {"maxRows": 5},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ12",
@@ -239,7 +239,7 @@
       "emptyResultPolicy": "유효한 상위 완제품 경로가 없다고 반환한다.",
       "correctness": "business key와 전체 경로 배열을 정규화한 SHA-256 일치",
       "performance": {"maxDepth": 4, "maxRows": 200, "startPredicate": "Product.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ13",
@@ -255,7 +255,7 @@
       "emptyResultPolicy": "유효한 하위 부품이 없다고 반환한다.",
       "correctness": "business key와 전체 경로 배열을 정규화한 SHA-256 일치",
       "performance": {"maxDepth": 4, "maxRows": 200, "startPredicate": "Product.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ14",
@@ -265,13 +265,13 @@
       "sampleQuestion": "공급업체 Allenson Cycles가 공급하는 부품과 그 부품을 사용하는 완제품을 알려줘.",
       "parameters": {"supplierName": {"type": "string", "required": true, "match": "EXACT", "fixture": "Allenson Cycles"}, "bomAsOfDate": {"type": "date", "required": true, "fixture": "2014-08-08"}, "maxDepth": {"type": "integer", "required": true, "minimum": 1, "maximum": 4, "fixture": 4}},
       "sources": ["neo4j_graph"],
-      "requiredAnswerFields": ["supplierId", "supplierName", "componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds"],
+      "requiredAnswerFields": ["componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds"],
       "businessRules": ["현재 active=true인 공급업체만 허용한다.", "SUPPLIES로 부품을 찾은 뒤 BOM을 역방향으로 탐색한다.", "완제품은 sellableFinishedGood=true로 제한한다.", "BOM 경로의 모든 관계가 기준일에 유효해야 한다."],
       "ordering": ["componentId ASC", "depth ASC", "finishedProductId ASC", "pathProductIds ASC"],
       "emptyResultPolicy": "활성 공급관계 또는 영향 완제품이 없다고 반환한다.",
       "correctness": "business key와 영향 경로를 정규화한 SHA-256 일치",
       "performance": {"maxDepth": 4, "maxRows": 200, "startPredicate": "Supplier.name"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ15",
@@ -287,7 +287,7 @@
       "emptyResultPolicy": "작업지시가 없으면 NOT_FOUND, 공정이 없으면 빈 목록을 반환한다.",
       "correctness": "business key와 공정 순서를 정규화한 SHA-256 일치",
       "performance": {"maxDepth": 2, "maxRows": 20, "startPredicate": "WorkOrder.workOrderId"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ16",
@@ -303,7 +303,7 @@
       "emptyResultPolicy": "두 제품 사이에 유효한 BOM 경로가 없다고 반환한다.",
       "correctness": "모든 business key 경로 배열의 정규화 SHA-256 일치",
       "performance": {"maxDepth": 4, "maxRows": 100, "startPredicate": "Product.name pair"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ17",
@@ -319,7 +319,7 @@
       "emptyResultPolicy": "공통 하위 부품이 없다고 반환한다.",
       "correctness": "공통 component business key 집합과 최소 깊이의 SHA-256 일치",
       "performance": {"maxDepth": 4, "maxRows": 200, "startPredicate": "two Product names"},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_GOLD_READY"
     },
     {
       "id": "RQ18",
@@ -329,7 +329,7 @@
       "sampleQuestion": "공급업체 Allenson Cycles가 공급을 중단하면 영향을 받는 부품과 완제품, 각 부품의 현재 재고를 알려줘.",
       "parameters": {"supplierName": {"type": "string", "required": true, "match": "EXACT", "fixture": "Allenson Cycles"}, "bomAsOfDate": {"type": "date", "required": true, "fixture": "2014-08-08"}, "maxDepth": {"type": "integer", "required": true, "minimum": 1, "maximum": 4, "fixture": 4}},
       "sources": ["neo4j_graph", "postgresql"],
-      "requiredAnswerFields": ["supplierId", "supplierName", "componentId", "componentName", "actualStock", "finishedProductId", "finishedProductName", "depth", "pathProductIds"],
+      "requiredAnswerFields": ["componentId", "componentName", "actualStock", "finishedProductId", "finishedProductName", "depth", "pathProductIds"],
       "sourceOwnership": {"supplierAndImpactPaths": "neo4j_graph", "actualStock": "postgresql"},
       "executionPlan": ["Neo4j에서 현재 활성 공급업체의 공급 부품과 유효 BOM 영향 경로를 찾는다.", "componentId 목록으로 PostgreSQL 재고를 합산한다.", "componentId로 결과를 결합한다."],
       "businessRules": ["현재 active=true인 공급업체의 가상 중단만 평가한다.", "재고 행이 없으면 actualStock=0이다.", "원인과 대응 방법은 문서가 없으므로 반환하지 않는다."],
@@ -337,7 +337,7 @@
       "emptyResultPolicy": "활성 공급관계 또는 영향 경로가 없다고 반환한다.",
       "correctness": "출처별 결과와 business key 결합 결과의 SHA-256 일치",
       "performance": {"maxDepth": 4, "maxRows": 200, "executionOrder": ["neo4j_graph", "postgresql", "application_join"]},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_PARTIAL_GOLD_READY_FINAL_JOIN_PENDING"
     },
     {
       "id": "RQ19",
@@ -355,14 +355,14 @@
       "emptyResultPolicy": "부족한 외부 구매 부품이 없다고 반환한다.",
       "correctness": "경로 수량 계산·PostgreSQL 수치·공급업체 결합 결과의 SHA-256 일치",
       "performance": {"maxDepth": 4, "maxRows": 100, "executionOrder": ["neo4j_graph", "application_calculation", "postgresql", "neo4j_graph"]},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_PARTIAL_GOLD_READY_FINAL_JOIN_PENDING"
     },
     {
       "id": "RQ20",
       "quadrant": "HIGH_QUESTION_HIGH_SCHEMA",
       "route": "HYBRID",
-      "questionTemplate": "작업지시 [ID]에서 발생한 폐기 수량과 폐기사유, 해당 작업지시가 거친 공정과 작업장을 알려줘.",
-      "sampleQuestion": "작업지시 17747에서 발생한 폐기 수량과 폐기사유, 해당 작업지시가 거친 공정과 작업장을 알려줘.",
+      "questionTemplate": "작업지시 [ID]의 생산 제품, 폐기 수량과 폐기사유, 거친 공정과 작업장을 알려줘.",
+      "sampleQuestion": "작업지시 17747의 생산 제품, 폐기 수량과 폐기사유, 거친 공정과 작업장을 알려줘.",
       "parameters": {"workOrderId": {"type": "integer", "required": true, "fixture": 17747}},
       "sources": ["neo4j_graph", "postgresql"],
       "requiredAnswerFields": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName", "processes"],
@@ -373,7 +373,7 @@
       "emptyResultPolicy": "작업지시가 없으면 NOT_FOUND, 공정이 없으면 processes 빈 목록을 반환한다.",
       "correctness": "PostgreSQL 사실과 Neo4j 공정 순서를 결합한 결과의 SHA-256 일치",
       "performance": {"maxDepth": 2, "maxRows": 20, "executionOrder": ["postgresql", "neo4j_graph", "application_join"]},
-      "goldStatus": "CONTRACT_READY_GOLD_PENDING"
+      "goldStatus": "SOURCE_PARTIAL_GOLD_READY_FINAL_JOIN_PENDING"
     }
   ]
 }

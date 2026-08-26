@@ -21,9 +21,9 @@ from tests.mocks.postgres import MockPostgresConnection
 def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """confirmed_entity가 있으면 매칭 없이 바로 라우팅으로 넘어가고, sql_agent가
-    한 번 생성·실행을 시도한 뒤 200으로 정상 종료한다."""
+    """confirmed_entity를 검증·유지하고 SQL 생성·실행을 한 번 시도한다."""
     openai_client = MockOpenAIClient(
+        make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response(
             "SELECT listprice FROM production.product WHERE productid = 956"
@@ -60,12 +60,14 @@ def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     )
     assert "self-correction 구현에서 채운다" in result["final_answer"]
     assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
-    assert len(openai_client.calls) == 2
+    assert "subqueries" not in result
+    assert len(openai_client.calls) == 3
 
 
 def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> None:
     """/chat 호출 후 로그인한 사용자 이름으로 대화기록이 저장된다."""
     openai_client = MockOpenAIClient(
+        make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),
     )
@@ -118,6 +120,7 @@ def test_chat_returns_response_even_if_save_conversation_fails(
 ) -> None:
     """대화기록 저장이 실패해도 /chat 응답 자체는 정상 반환된다."""
     openai_client = MockOpenAIClient(
+        make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),
     )

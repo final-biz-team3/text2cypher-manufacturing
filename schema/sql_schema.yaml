@@ -2,14 +2,21 @@ tables:
   production.product:
     aliases: [제품]
     columns:
-      productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
-      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: []}
-      listprice: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [정가]}
-      standardcost: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [표준원가]}
+      productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [제품 ID]}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [제품명]}
+      productnumber: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [제품번호]}
+      makeflag: {type: BOOLEAN, primaryKey: false, nullable: false, aliases: [자체 생산 여부]}
+      finishedgoodsflag: {type: BOOLEAN, primaryKey: false, nullable: false, aliases: [판매 가능 완제품 여부]}
+      color: {type: VARCHAR, primaryKey: false, nullable: true, aliases: [색상]}
       safetystocklevel: {type: SMALLINT, primaryKey: false, nullable: false, aliases: [안전재고, 안전재고 수준]}
+      standardcost: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [표준원가]}
+      listprice: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [정가]}
+      size: {type: VARCHAR, primaryKey: false, nullable: true, aliases: [크기]}
+      productsubcategoryid: {type: INTEGER, primaryKey: false, nullable: true, aliases: []}
+      sellenddate: {type: TIMESTAMP, primaryKey: false, nullable: true, aliases: [판매 종료일]}
 
   production.productinventory:
-    aliases: []
+    aliases: [제품 재고]
     columns:
       productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
       locationid: {type: SMALLINT, primaryKey: true, nullable: false, aliases: []}
@@ -18,13 +25,118 @@ tables:
       quantity: {type: SMALLINT, primaryKey: false, nullable: false, aliases: [위치별 재고 수량, 재고 수량]}
 
   production.location:
-    aliases: [재고 위치]
+    aliases: [재고 위치, 작업장]
     columns:
-      locationid: {type: SMALLINT, primaryKey: true, nullable: false, aliases: []}
-      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: []}
+      locationid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [재고 위치 ID]}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [재고 위치명, 작업장명]}
+
+  purchasing.vendor:
+    aliases: [공급업체]
+    columns:
+      businessentityid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [공급업체 ID]}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [공급업체명]}
+      activeflag: {type: BOOLEAN, primaryKey: false, nullable: false, aliases: [활성 여부]}
+
+  purchasing.productvendor:
+    aliases: [제품별 공급업체]
+    columns:
+      productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      businessentityid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+
+  production.productcategory:
+    aliases: [제품 분류]
+    columns:
+      productcategoryid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [제품 분류 ID]}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [제품 분류명]}
+
+  production.productsubcategory:
+    aliases: [제품 하위 분류]
+    columns:
+      productsubcategoryid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [제품 하위 분류 ID]}
+      productcategoryid: {type: INTEGER, primaryKey: false, nullable: false, aliases: []}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [제품 하위 분류명]}
+
+  production.billofmaterials:
+    aliases: [BOM]
+    columns:
+      billofmaterialsid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [BOM ID]}
+      productassemblyid: {type: INTEGER, primaryKey: false, nullable: true, aliases: [상위 조립품 ID]}
+      componentid: {type: INTEGER, primaryKey: false, nullable: false, aliases: [하위 부품 ID]}
+      startdate: {type: TIMESTAMP, primaryKey: false, nullable: false, aliases: [BOM 유효 시작일]}
+      enddate: {type: TIMESTAMP, primaryKey: false, nullable: true, aliases: [BOM 유효 종료일]}
+      perassemblyqty: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [조립품 1개당 필요 수량, 단위당 필요 수량]}
+
+  sales.salesorderdetail:
+    aliases: [판매 주문 상세]
+    columns:
+      salesorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      salesorderdetailid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      productid: {type: INTEGER, primaryKey: false, nullable: false, aliases: []}
+      orderqty: {type: SMALLINT, primaryKey: false, nullable: false, aliases: [판매 주문 수량, 주문 수량]}
+
+  purchasing.purchaseorderdetail:
+    aliases: [구매 주문 상세]
+    columns:
+      purchaseorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      purchaseorderdetailid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      rejectedqty: {type: NUMERIC, primaryKey: false, nullable: false, aliases: [반려 수량]}
+
+  purchasing.purchaseorderheader:
+    aliases: [구매 주문]
+    columns:
+      purchaseorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      vendorid: {type: INTEGER, primaryKey: false, nullable: false, aliases: []}
+
+  production.workorder:
+    aliases: [작업지시]
+    columns:
+      workorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [작업지시 ID]}
+      productid: {type: INTEGER, primaryKey: false, nullable: false, aliases: []}
+      scrappedqty: {type: SMALLINT, primaryKey: false, nullable: false, aliases: [폐기 수량]}
+      scrapreasonid: {type: SMALLINT, primaryKey: false, nullable: true, aliases: []}
+
+  production.workorderrouting:
+    aliases: [작업지시 공정]
+    columns:
+      workorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
+      operationsequence: {type: SMALLINT, primaryKey: true, nullable: false, aliases: [공정 순서, 작업 순서]}
+      locationid: {type: SMALLINT, primaryKey: false, nullable: false, aliases: []}
+
+  production.scrapreason:
+    aliases: [폐기사유, 폐기 사유]
+    columns:
+      scrapreasonid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [폐기사유 ID, 폐기 사유 ID]}
+      name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [폐기사유명, 폐기 사유명]}
 
 joins:
   - from: production.productinventory.productid
     to: production.product.productid
   - from: production.productinventory.locationid
+    to: production.location.locationid
+  - from: production.product.productsubcategoryid
+    to: production.productsubcategory.productsubcategoryid
+  - from: production.productsubcategory.productcategoryid
+    to: production.productcategory.productcategoryid
+  - from: production.billofmaterials.productassemblyid
+    to: production.product.productid
+  - from: production.billofmaterials.componentid
+    to: production.product.productid
+  - from: sales.salesorderdetail.productid
+    to: production.product.productid
+  - from: purchasing.productvendor.productid
+    to: production.product.productid
+  - from: purchasing.productvendor.businessentityid
+    to: purchasing.vendor.businessentityid
+  - from: purchasing.purchaseorderdetail.purchaseorderid
+    to: purchasing.purchaseorderheader.purchaseorderid
+  - from: purchasing.purchaseorderheader.vendorid
+    to: purchasing.vendor.businessentityid
+  - from: production.workorder.productid
+    to: production.product.productid
+  - from: production.workorder.scrapreasonid
+    to: production.scrapreason.scrapreasonid
+  - from: production.workorderrouting.workorderid
+    to: production.workorder.workorderid
+  - from: production.workorderrouting.locationid
     to: production.location.locationid

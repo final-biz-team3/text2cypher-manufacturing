@@ -17,6 +17,7 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
             bomMaxDepth=4,
         ),
         business_rules=["같은 완제품의 서로 다른 경로는 별도로 보존한다."],
+        required_outputs=["componentId", "minDepth"],
     )
 
     system_content = messages[0]["content"]
@@ -24,6 +25,8 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
     assert "Neo4j Cypher" in system_content
     assert "관계 방향" in system_content
     assert "RETURN 절" in system_content
+    assert "lowerCamelCase" in system_content
+    assert "한국어 표시명 대신" in system_content
     assert "(:Product)-[:REQUIRES_COMPONENT]->(:Product)" in system_content
     assert "상위 조립품에서 하위 부품 방향" in system_content
     assert "부품의 사용처는 역방향" in system_content
@@ -39,6 +42,9 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
     assert "productId 값과 Node 목록을 직접 비교하지 않는다" in system_content
     assert "깊이, 도착 Product ID, 전체 ID 경로 순" in system_content
     assert "- 같은 완제품의 서로 다른 경로는 별도로 보존한다." in system_content
+    assert "Required output aliases:" in system_content
+    assert "- componentId" in system_content
+    assert "- minDepth" in system_content
     assert "Cypher만 반환" in system_content
     assert json.loads(messages[1]["content"]) == {
         "query": "이 부품을 사용하는 완제품을 알려줘.",

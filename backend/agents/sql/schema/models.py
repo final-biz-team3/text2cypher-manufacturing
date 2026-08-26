@@ -4,7 +4,14 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-ColumnDataType = Literal["INTEGER", "SMALLINT", "NUMERIC", "VARCHAR"]
+ColumnDataType = Literal[
+    "BOOLEAN",
+    "INTEGER",
+    "NUMERIC",
+    "SMALLINT",
+    "TIMESTAMP",
+    "VARCHAR",
+]
 
 
 class _SchemaModel(BaseModel):
@@ -35,7 +42,7 @@ class TableSchema(_SchemaModel):
 
 
 class JoinSchema(_SchemaModel):
-    """두 SQL 컬럼 사이의 외래 키 조인 방향을 표현한다."""
+    """두 SQL 컬럼 사이의 검증된 조인 방향을 표현한다."""
 
     from_column: str = Field(alias="from")
     to_column: str = Field(alias="to")

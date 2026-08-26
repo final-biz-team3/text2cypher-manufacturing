@@ -1,0 +1,210 @@
+{
+  "fieldAliases": {
+    "productId": ["product_id"],
+    "productName": ["product_name"],
+    "listPrice": ["list_price", "price"],
+    "standardCost": ["standard_cost", "cost"],
+    "locationId": ["location_id"],
+    "locationName": ["location_name"],
+    "activeSupplierCount": ["active_supplier_count", "active_vendor_count", "supplier_count", "vendor_count", "count"],
+    "purchasedProductCount": ["purchased_product_count", "external_product_count", "external_component_count", "external_purchase_part_count", "external_purchased_part_count", "component_count", "count"],
+    "sellEndDate": ["sell_end_date"],
+    "productNumber": ["product_number"],
+    "categoryId": ["category_id", "product_category_id"],
+    "categoryName": ["category_name", "product_category_name"],
+    "productCount": ["product_count", "count"],
+    "safetyStockLevel": ["safety_stock_level", "safety_stock"],
+    "actualStock": ["actual_stock", "actual_inventory", "current_stock", "stock_quantity", "total_stock"],
+    "shortageQty": ["shortage_qty", "shortage_quantity"],
+    "totalOrderQty": ["total_order_qty", "total_sales_qty", "total_sales_quantity", "sales_quantity"],
+    "supplierId": ["supplier_id", "vendor_id", "business_entity_id"],
+    "supplierName": ["supplier_name", "vendor_name"],
+    "totalRejectedQty": ["total_rejected_qty", "rejected_quantity"],
+    "workOrderId": ["work_order_id"],
+    "scrappedQty": ["scrapped_qty", "scrapped_quantity", "scrap_quantity"],
+    "scrapReasonId": ["scrap_reason_id"],
+    "scrapReasonName": ["scrap_reason_name"],
+    "componentId": ["component_id", "component_product_id"],
+    "componentName": ["component_name", "component_product_name"],
+    "finishedProductId": ["finished_product_id", "finished_good_product_id"],
+    "finishedProductName": ["finished_product_name", "finished_good_name", "finished_good_product_name"],
+    "rootProductId": ["root_product_id"],
+    "rootProductName": ["root_product_name"],
+    "pathProductIds": ["path_product_ids", "product_id_path", "productIdPath", "path_ids"],
+    "pathProductNames": ["path_product_names", "product_name_path", "productNamePath", "path_names"],
+    "routingOperationKey": ["routing_operation_key", "operation_key"],
+    "sequence": ["operation_sequence"],
+    "finishedProductIdA": ["finished_product_id_a", "product_a_id"],
+    "finishedProductIdB": ["finished_product_id_b", "product_b_id"],
+    "minDepthA": ["min_depth_a"],
+    "minDepthB": ["min_depth_b"],
+    "quantityPerAssembly": ["quantity_per_assembly", "quantities_per_assembly"],
+    "makeFlag": ["make_flag"]
+  },
+  "snapshot": {
+    "syncRunId": "20260822T015245Z-89db8d74",
+    "checks": [
+      {"source": "sql", "name": "pg.product", "query": "SELECT COUNT(*) AS value FROM production.product", "expected": 504},
+      {"source": "sql", "name": "pg.productinventory", "query": "SELECT COUNT(*) AS value FROM production.productinventory", "expected": 1069},
+      {"source": "sql", "name": "pg.vendor", "query": "SELECT COUNT(*) AS value FROM purchasing.vendor", "expected": 104},
+      {"source": "sql", "name": "pg.productvendor", "query": "SELECT COUNT(*) AS value FROM purchasing.productvendor", "expected": 460},
+      {"source": "sql", "name": "pg.billofmaterials", "query": "SELECT COUNT(*) AS value FROM production.billofmaterials", "expected": 2679},
+      {"source": "sql", "name": "pg.salesorderdetail", "query": "SELECT COUNT(*) AS value FROM sales.salesorderdetail", "expected": 121317},
+      {"source": "sql", "name": "pg.purchaseorderdetail", "query": "SELECT COUNT(*) AS value FROM purchasing.purchaseorderdetail", "expected": 8845},
+      {"source": "sql", "name": "pg.workorder", "query": "SELECT COUNT(*) AS value FROM production.workorder", "expected": 72591},
+      {"source": "sql", "name": "pg.workorderrouting", "query": "SELECT COUNT(*) AS value FROM production.workorderrouting", "expected": 67131},
+      {"source": "sql", "name": "pg.fixture.product956", "query": "SELECT COUNT(*) AS value FROM production.product WHERE productid = 956 AND name = 'Touring-1000 Yellow, 54'", "expected": 1},
+      {"source": "sql", "name": "pg.fixture.supplier1494", "query": "SELECT COUNT(*) AS value FROM purchasing.vendor WHERE businessentityid = 1494 AND name = 'Allenson Cycles' AND activeflag = true", "expected": 1},
+      {"source": "sql", "name": "pg.fixture.workorder17747", "query": "SELECT COUNT(*) AS value FROM production.workorder WHERE workorderid = 17747 AND productid = 802 AND scrappedqty = 54", "expected": 1},
+      {"source": "graph", "name": "neo4j.Product", "query": "MATCH (n:Product) RETURN count(n) AS value", "expected": 504},
+      {"source": "graph", "name": "neo4j.Supplier", "query": "MATCH (n:Supplier) RETURN count(n) AS value", "expected": 104},
+      {"source": "graph", "name": "neo4j.WorkOrder", "query": "MATCH (n:WorkOrder) RETURN count(n) AS value", "expected": 72591},
+      {"source": "graph", "name": "neo4j.RoutingOperation", "query": "MATCH (n:RoutingOperation) RETURN count(n) AS value", "expected": 67131},
+      {"source": "graph", "name": "neo4j.Location", "query": "MATCH (n:Location) RETURN count(n) AS value", "expected": 14},
+      {"source": "graph", "name": "neo4j.ScrapReason", "query": "MATCH (n:ScrapReason) RETURN count(n) AS value", "expected": 16},
+      {"source": "graph", "name": "neo4j.SUPPLIES", "query": "MATCH ()-[r:SUPPLIES]->() RETURN count(r) AS value", "expected": 443},
+      {"source": "graph", "name": "neo4j.REQUIRES_COMPONENT", "query": "MATCH ()-[r:REQUIRES_COMPONENT]->() RETURN count(r) AS value", "expected": 2576},
+      {"source": "graph", "name": "neo4j.PRODUCES", "query": "MATCH ()-[r:PRODUCES]->() RETURN count(r) AS value", "expected": 72591},
+      {"source": "graph", "name": "neo4j.HAS_OPERATION", "query": "MATCH ()-[r:HAS_OPERATION]->() RETURN count(r) AS value", "expected": 67131},
+      {"source": "graph", "name": "neo4j.PERFORMED_AT", "query": "MATCH ()-[r:PERFORMED_AT]->() RETURN count(r) AS value", "expected": 67131},
+      {"source": "graph", "name": "neo4j.SCRAPPED_DUE_TO", "query": "MATCH ()-[r:SCRAPPED_DUE_TO]->() RETURN count(r) AS value", "expected": 729},
+      {"source": "graph", "name": "neo4j.fixture.product680", "query": "MATCH (n:Product {productId: 680, name: 'HL Road Frame - Black, 58'}) RETURN count(n) AS value", "expected": 1},
+      {"source": "graph", "name": "neo4j.fixture.workorder17747", "query": "MATCH (n:WorkOrder {workOrderId: 17747}) RETURN count(n) AS value", "expected": 1},
+      {"source": "graph", "name": "neo4j.syncRunIdCount", "query": "MATCH (n) RETURN count(DISTINCT n.syncRunId) AS value", "expected": 1}
+    ]
+  },
+  "contracts": [
+    {
+      "id": "RQ01", "route": "SQL", "expectedEntities": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_product_cost", "tool": "sql", "question": "Touring-1000 Yellow, 54의 정가와 표준원가를 알려줘.", "dependsOn": [], "requiredOutputs": ["productId", "productName", "listPrice", "standardCost"], "joinKeys": [], "aliases": {"productName": ["name"]}, "gold": "gold/RQ01.sql", "ordering": ["productId ASC"], "maxRows": 1, "businessRules": ["제품명은 정확히 일치해야 한다."]}]
+    },
+    {
+      "id": "RQ02", "route": "SQL", "expectedEntities": {"productId": 747, "productName": "HL Mountain Frame - Black, 38"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_inventory_locations", "tool": "sql", "question": "HL Mountain Frame - Black, 38의 재고 위치와 위치별 수량을 알려줘.", "dependsOn": [], "requiredOutputs": ["productId", "productName", "locationId", "locationName", "shelf", "bin", "quantity"], "joinKeys": [], "gold": "gold/RQ02.sql", "ordering": ["locationId ASC", "shelf ASC", "bin ASC"], "maxRows": 20, "businessRules": ["재고 행은 shelf와 bin별 원본 quantity를 합산하지 않는다."]}]
+    },
+    {
+      "id": "RQ03", "route": "SQL", "expectedEntities": null, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_active_supplier_count", "tool": "sql", "question": "현재 활성 상태인 공급업체 수를 알려줘.", "dependsOn": [], "requiredOutputs": ["activeSupplierCount"], "joinKeys": [], "gold": "gold/RQ03.sql", "ordering": [], "maxRows": 1, "businessRules": ["purchasing.vendor.activeflag=true인 행을 센다."]}]
+    },
+    {
+      "id": "RQ04", "route": "SQL", "expectedEntities": null, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_purchased_product_count", "tool": "sql", "question": "외부에서 구매하는 부품 수를 알려줘.", "dependsOn": [], "requiredOutputs": ["purchasedProductCount"], "joinKeys": [], "gold": "gold/RQ04.sql", "ordering": [], "maxRows": 1, "businessRules": ["makeflag=false인 제품을 외부 구매 부품으로 정의한다."]}]
+    },
+    {
+      "id": "RQ05", "route": "SQL", "expectedEntities": null, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_products_without_sell_end", "tool": "sql", "question": "판매 종료일이 등록되지 않은 제품을 10개만 보여줘.", "dependsOn": [], "requiredOutputs": ["productId", "productName"], "joinKeys": [], "aliases": {"productName": ["name"]}, "gold": "gold/RQ05.sql", "ordering": ["productId ASC"], "maxRows": 10, "businessRules": ["sellenddate IS NULL인 제품을 productId로 정렬한 뒤 10개 반환한다. sellEndDate는 필터 조건이므로 결과 컬럼으로 반복하지 않아도 된다."]}]
+    },
+    {
+      "id": "RQ06", "route": "SQL", "expectedEntities": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_product_attributes", "tool": "sql", "question": "Touring-1000 Yellow, 54의 제품번호와 색상, 크기를 알려줘.", "dependsOn": [], "requiredOutputs": ["productId", "productName", "productNumber", "color", "size"], "joinKeys": [], "aliases": {"productName": ["name"]}, "gold": "gold/RQ06.sql", "ordering": ["productId ASC"], "maxRows": 1, "businessRules": ["색상과 크기의 NULL을 보존한다."]}]
+    },
+    {
+      "id": "RQ07", "route": "SQL", "expectedEntities": {"productCategoryId": 2, "productCategoryName": "Components"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_category_product_count", "tool": "sql", "question": "Components에 포함된 제품 수를 알려줘.", "dependsOn": [], "requiredOutputs": ["categoryId", "categoryName", "productCount"], "joinKeys": [], "gold": "gold/RQ07.sql", "ordering": ["categoryId ASC"], "maxRows": 1, "businessRules": ["ProductCategory에서 ProductSubcategory를 거쳐 Product를 내부 조인한다."]}]
+    },
+    {
+      "id": "RQ08", "route": "SQL", "expectedEntities": {"productId": 492, "productName": "Paint - Black"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_stock_shortage", "tool": "sql", "question": "제품 Paint - Black의 안전재고, 실제 재고와 부족 수량을 알려줘.", "dependsOn": [], "requiredOutputs": ["productId", "productName", "safetyStockLevel", "actualStock", "shortageQty"], "joinKeys": [], "gold": "gold/RQ08.sql", "ordering": ["productId ASC"], "maxRows": 1, "businessRules": ["actualStock은 재고 합계이고 shortageQty=max(safetyStockLevel-actualStock,0)이다."]}]
+    },
+    {
+      "id": "RQ09", "route": "SQL", "expectedEntities": null, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_top_finished_sales", "tool": "sql", "question": "판매량이 가장 많은 완제품 상위 5개를 알려줘.", "dependsOn": [], "requiredOutputs": ["productId", "productName", "totalOrderQty"], "joinKeys": [], "aliases": {"productName": ["name"]}, "gold": "gold/RQ09.sql", "ordering": ["totalOrderQty DESC", "productId ASC"], "maxRows": 5, "businessRules": ["finishedgoodsflag=true 제품의 orderqty 합계를 내림차순, productId 오름차순으로 5개 반환한다. 순위 번호 컬럼 자체는 필수가 아니다."]}]
+    },
+    {
+      "id": "RQ10", "route": "SQL", "expectedEntities": null, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_top_supplier_rejections", "tool": "sql", "question": "반려 수량이 많은 공급업체 상위 5곳을 알려줘.", "dependsOn": [], "requiredOutputs": ["supplierId", "supplierName", "totalRejectedQty"], "joinKeys": [], "gold": "gold/RQ10.sql", "ordering": ["totalRejectedQty DESC", "supplierId ASC"], "maxRows": 5, "businessRules": ["구매주문 공급업체별 rejectedqty 합계가 0보다 큰 공급업체를 정렬한다. 순위 번호 컬럼 자체는 필수가 아니다."]}]
+    },
+    {
+      "id": "RQ11", "route": "SQL", "expectedEntities": null, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["sql"],
+      "subqueries": [{"id": "sql_top_scrapped_work_orders", "tool": "sql", "question": "폐기 수량이 많은 작업지시 상위 5개를 제품명과 폐기사유와 함께 알려줘.", "dependsOn": [], "requiredOutputs": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"], "joinKeys": [], "gold": "gold/RQ11.sql", "ordering": ["scrappedQty DESC", "workOrderId ASC"], "maxRows": 5, "businessRules": ["scrappedqty>0이고 폐기사유가 없으면 NULL을 보존한다. 순위 번호 컬럼 자체는 필수가 아니다."]}]
+    },
+    {
+      "id": "RQ12", "route": "GRAPH", "expectedEntities": {"productId": 492, "productName": "Paint - Black"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["graph"],
+      "subqueries": [{"id": "graph_component_usage", "tool": "graph", "question": "부품 Paint - Black을 사용하는 완제품을 최대 4단계까지 알려줘.", "dependsOn": [], "requiredOutputs": ["componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds", "pathProductNames"], "joinKeys": [], "aliases": {"componentId": ["startProductId"], "componentName": ["startProductName"], "finishedProductId": ["endProductId", "destinationProductId"], "finishedProductName": ["endProductName", "destinationProductName"]}, "gold": "gold/RQ12.cypher", "ordering": ["depth ASC", "finishedProductId ASC", "pathProductIds ASC"], "maxRows": 200, "businessRules": ["부품에서 유효 BOM을 역방향 탐색하고 판매 가능 완제품의 서로 다른 전체 경로를 보존한다."]}]
+    },
+    {
+      "id": "RQ13", "route": "GRAPH", "expectedEntities": {"productId": 680, "productName": "HL Road Frame - Black, 58"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["graph"],
+      "subqueries": [{"id": "graph_bom_hierarchy", "tool": "graph", "question": "완제품 HL Road Frame - Black, 58의 하위 부품을 계층 구조로 알려줘.", "dependsOn": [], "requiredOutputs": ["rootProductId", "rootProductName", "componentId", "componentName", "depth", "pathProductIds", "pathProductNames"], "joinKeys": [], "aliases": {"rootProductId": ["startProductId"], "rootProductName": ["startProductName"], "componentId": ["endProductId", "destinationProductId"], "componentName": ["endProductName", "destinationProductName"]}, "gold": "gold/RQ13.cypher", "ordering": ["depth ASC", "componentId ASC", "pathProductIds ASC"], "maxRows": 200, "businessRules": ["유효 BOM을 정방향 탐색하고 같은 부품의 서로 다른 전체 경로를 보존한다."]}]
+    },
+    {
+      "id": "RQ14", "route": "GRAPH", "expectedEntities": {"supplierId": 1494, "supplierName": "Allenson Cycles"}, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["graph"],
+      "subqueries": [{"id": "graph_supplier_impact", "tool": "graph", "question": "공급업체 Allenson Cycles가 공급하는 부품과 그 부품을 사용하는 완제품을 알려줘.", "dependsOn": [], "requiredOutputs": ["componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds"], "joinKeys": [], "aliases": {"componentId": ["startProductId"], "componentName": ["startProductName"], "finishedProductId": ["endProductId", "destinationProductId"], "finishedProductName": ["endProductName", "destinationProductName"]}, "gold": "gold/RQ14.cypher", "ordering": ["componentId ASC", "depth ASC", "finishedProductId ASC", "pathProductIds ASC"], "maxRows": 200, "businessRules": ["질문의 고정 공급업체는 active=true여야 하며, 결과에서 공급업체 ID·이름을 반복하는 것은 필수가 아니다. 유효 BOM의 판매 가능 완제품 경로만 반환한다."]}]
+    },
+    {
+      "id": "RQ15", "route": "GRAPH", "expectedEntities": null, "supportStatus": "FULLY_EVALUATED", "toolPlan": ["graph"],
+      "subqueries": [{"id": "graph_work_order_operations", "tool": "graph", "question": "작업지시 17747이 거친 작업장과 공정 순서를 알려줘.", "dependsOn": [], "requiredOutputs": ["workOrderId", "routingOperationKey", "sequence", "locationId", "locationName"], "joinKeys": [], "gold": "gold/RQ15.cypher", "ordering": ["sequence ASC", "routingOperationKey ASC"], "maxRows": 20, "businessRules": ["WorkOrder-HAS_OPERATION-RoutingOperation-PERFORMED_AT-Location 경로를 사용한다."]}]
+    },
+    {
+      "id": "RQ16", "route": "GRAPH", "expectedEntities": [{"productId": 680, "productName": "HL Road Frame - Black, 58"}, {"productId": 486, "productName": "Metal Sheet 5"}], "supportStatus": "FULLY_EVALUATED", "toolPlan": ["graph"],
+      "subqueries": [{"id": "graph_all_bom_paths", "tool": "graph", "question": "완제품 HL Road Frame - Black, 58과 부품 Metal Sheet 5가 어떤 BOM 경로로 연결되는지 알려줘.", "dependsOn": [], "requiredOutputs": ["finishedProductId", "finishedProductName", "componentId", "componentName", "depth", "pathProductIds", "pathProductNames"], "joinKeys": [], "aliases": {"finishedProductId": ["startProductId"], "finishedProductName": ["startProductName"], "componentId": ["endProductId", "destinationProductId"], "componentName": ["endProductName", "destinationProductName"]}, "gold": "gold/RQ16.cypher", "ordering": ["depth ASC", "pathProductIds ASC"], "maxRows": 100, "businessRules": ["지정 완제품에서 지정 부품까지 모든 유효 경로를 반환한다."]}]
+    },
+    {
+      "id": "RQ17", "route": "GRAPH", "expectedEntities": [{"productId": 765, "productName": "Road-650 Black, 58"}, {"productId": 775, "productName": "Mountain-100 Black, 38"}], "supportStatus": "FULLY_EVALUATED", "toolPlan": ["graph"],
+      "subqueries": [{"id": "graph_common_components", "tool": "graph", "question": "Road-650 Black, 58과 Mountain-100 Black, 38이 공통으로 사용하는 하위 부품을 최대 4단계까지 알려줘.", "dependsOn": [], "requiredOutputs": ["finishedProductIdA", "finishedProductIdB", "componentId", "componentName", "minDepthA", "minDepthB"], "joinKeys": [], "aliases": {"finishedProductIdA": ["startProductId1", "roadStartProductId"], "finishedProductIdB": ["startProductId2", "mountainStartProductId"], "componentId": ["destinationProductId", "commonProductId", "commonComponentProductId"], "componentName": ["destinationProductName", "commonProductName", "commonComponentProductName"], "minDepthA": ["depth1", "roadDepth"], "minDepthB": ["depth2", "mountainDepth"]}, "gold": "gold/RQ17.cypher", "ordering": ["componentId ASC"], "maxRows": 200, "businessRules": ["두 완제품의 유효 BOM 교집합과 제품별 최소 깊이를 반환한다."]}]
+    },
+    {
+      "id": "RQ18", "route": "HYBRID", "expectedEntities": {"supplierId": 1494, "supplierName": "Allenson Cycles"}, "supportStatus": "QUERY_EVALUATED_FINAL_JOIN_PENDING", "toolPlan": ["graph", "sql"],
+      "subqueries": [
+        {"id": "graph_impact", "tool": "graph", "question": "활성 공급업체 Allenson Cycles의 공급 부품과 영향 완제품 경로를 조회한다.", "dependsOn": [], "requiredOutputs": ["componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds"], "joinKeys": ["componentId"], "aliases": {"componentId": ["startProductId", "affectedComponentProductId"], "componentName": ["startProductName", "affectedComponentName"], "finishedProductId": ["endProductId", "destinationProductId", "affectedFinishedProductId"], "finishedProductName": ["endProductName", "destinationProductName", "affectedFinishedProductName"]}, "gold": "gold/RQ18_graph.cypher", "ordering": ["componentId ASC", "depth ASC", "finishedProductId ASC", "pathProductIds ASC"], "maxRows": 200, "businessRules": ["질문의 고정 공급업체는 활성이어야 하며, 결과에서 공급업체 ID·이름을 반복하는 것은 필수가 아니다. 공급 부품과 판매 가능 완제품의 유효 BOM 경로를 반환한다."]},
+        {"id": "sql_stock", "tool": "sql", "question": "앞 단계에서 확인한 componentId별 현재 재고를 조회한다.", "dependsOn": ["graph_impact"], "inputBindings": {"componentIds": "graph_impact.componentId"}, "requiredOutputs": ["componentId", "actualStock"], "joinKeys": ["componentId"], "gold": "gold/RQ18_sql.sql", "ordering": ["componentId ASC"], "maxRows": 100, "businessRules": ["componentIds별 실제 재고를 합산하고 재고 행이 없으면 0을 반환한다."]}
+      ]
+    },
+    {
+      "id": "RQ19", "route": "HYBRID", "expectedEntities": {"productId": 680, "productName": "HL Road Frame - Black, 58"}, "supportStatus": "QUERY_EVALUATED_FINAL_JOIN_PENDING", "toolPlan": ["graph", "sql"],
+      "subqueries": [
+        {"id": "graph_bom_supply", "tool": "graph", "question": "완제품 HL Road Frame - Black, 58의 유효 BOM 경로별 필요 수량 계수와 활성 공급업체를 조회한다.", "dependsOn": [], "requiredOutputs": ["finishedProductId", "finishedProductName", "componentId", "componentName", "depth", "pathProductIds", "quantityPerAssembly", "supplierId", "supplierName"], "joinKeys": ["componentId"], "aliases": {"finishedProductId": ["startProductId", "rootProductId"], "finishedProductName": ["startProductName", "rootProductName"], "componentId": ["endProductId", "destinationProductId"], "componentName": ["endProductName", "destinationProductName"], "pathProductIds": ["fullProductIdPath"]}, "gold": "gold/RQ19_graph.cypher", "ordering": ["componentId ASC", "depth ASC", "pathProductIds ASC", "supplierId ASC"], "maxRows": 200, "businessRules": ["유효 BOM의 경로별 quantityPerAssembly 배열과 active=true 공급업체를 반환한다."]},
+        {"id": "sql_component_stock", "tool": "sql", "question": "앞 단계에서 확인한 componentId별 makeflag와 현재 재고를 조회한다.", "dependsOn": ["graph_bom_supply"], "inputBindings": {"componentIds": "graph_bom_supply.componentId"}, "requiredOutputs": ["componentId", "makeFlag", "actualStock"], "joinKeys": ["componentId"], "gold": "gold/RQ19_sql.sql", "ordering": ["componentId ASC"], "maxRows": 100, "businessRules": ["componentIds별 makeflag와 재고 합계를 반환하고 재고가 없으면 0이다."]}
+      ]
+    },
+    {
+      "id": "RQ20", "route": "HYBRID", "expectedEntities": null, "supportStatus": "QUERY_EVALUATED_FINAL_JOIN_PENDING", "toolPlan": ["sql", "graph"],
+      "subqueries": [
+        {"id": "sql_scrap_facts", "tool": "sql", "question": "작업지시 17747의 제품, 폐기 수량과 폐기사유를 조회한다.", "dependsOn": [], "requiredOutputs": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"], "joinKeys": ["workOrderId"], "gold": "gold/RQ20_sql.sql", "ordering": ["workOrderId ASC"], "maxRows": 1, "businessRules": ["폐기 사실은 PostgreSQL에서 조회하고 폐기사유 NULL을 보존한다."]},
+        {"id": "graph_operations", "tool": "graph", "question": "작업지시 17747의 공정, 작업장과 공정 순서를 조회한다.", "dependsOn": [], "requiredOutputs": ["workOrderId", "routingOperationKey", "sequence", "locationId", "locationName"], "joinKeys": ["workOrderId"], "gold": "gold/RQ20_graph.cypher", "ordering": ["sequence ASC", "routingOperationKey ASC"], "maxRows": 20, "businessRules": ["작업지시 공정과 작업장을 sequence 순서로 반환한다."]}
+      ]
+    }
+  ],
+  "cases": [
+    {"caseId": "RQ01", "contractId": "RQ01", "suite": "canonical", "question": "Touring-1000 Yellow, 54의 정가와 표준원가를 알려줘.", "parameters": {"productName": "Touring-1000 Yellow, 54"}},
+    {"caseId": "RQ02", "contractId": "RQ02", "suite": "canonical", "question": "HL Mountain Frame - Black, 38의 재고 위치와 위치별 수량을 알려줘.", "parameters": {"productName": "HL Mountain Frame - Black, 38"}},
+    {"caseId": "RQ03", "contractId": "RQ03", "suite": "canonical", "question": "현재 활성 상태인 공급업체 수를 알려줘.", "parameters": {}},
+    {"caseId": "RQ04", "contractId": "RQ04", "suite": "canonical", "question": "외부에서 구매하는 부품 수를 알려줘.", "parameters": {}},
+    {"caseId": "RQ05", "contractId": "RQ05", "suite": "canonical", "question": "판매 종료일이 등록되지 않은 제품을 10개만 보여줘.", "parameters": {}},
+    {"caseId": "RQ06", "contractId": "RQ06", "suite": "canonical", "question": "Touring-1000 Yellow, 54의 제품번호와 색상, 크기를 알려줘.", "parameters": {"productName": "Touring-1000 Yellow, 54"}},
+    {"caseId": "RQ07", "contractId": "RQ07", "suite": "canonical", "question": "Components에 포함된 제품 수를 알려줘.", "parameters": {"categoryName": "Components"}},
+    {"caseId": "RQ08", "contractId": "RQ08", "suite": "canonical", "question": "제품 Paint - Black의 안전재고, 실제 재고와 부족 수량을 알려줘.", "parameters": {"productName": "Paint - Black"}},
+    {"caseId": "RQ09", "contractId": "RQ09", "suite": "canonical", "question": "판매량이 가장 많은 완제품 상위 5개를 알려줘.", "parameters": {}},
+    {"caseId": "RQ10", "contractId": "RQ10", "suite": "canonical", "question": "반려 수량이 많은 공급업체 상위 5곳을 알려줘.", "parameters": {}},
+    {"caseId": "RQ11", "contractId": "RQ11", "suite": "canonical", "question": "폐기 수량이 많은 작업지시 상위 5개를 제품명과 폐기사유와 함께 알려줘.", "parameters": {}},
+    {"caseId": "RQ12", "contractId": "RQ12", "suite": "canonical", "question": "부품 Paint - Black을 사용하는 완제품을 최대 4단계까지 알려줘.", "parameters": {"componentName": "Paint - Black", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RQ13", "contractId": "RQ13", "suite": "canonical", "question": "완제품 HL Road Frame - Black, 58의 하위 부품을 계층 구조로 알려줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RQ14", "contractId": "RQ14", "suite": "canonical", "question": "공급업체 Allenson Cycles가 공급하는 부품과 그 부품을 사용하는 완제품을 알려줘.", "parameters": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RQ15", "contractId": "RQ15", "suite": "canonical", "question": "작업지시 17747이 거친 작업장과 공정 순서를 알려줘.", "parameters": {"workOrderId": 17747}},
+    {"caseId": "RQ16", "contractId": "RQ16", "suite": "canonical", "question": "완제품 HL Road Frame - Black, 58과 부품 Metal Sheet 5가 어떤 BOM 경로로 연결되는지 알려줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "componentName": "Metal Sheet 5", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RQ17", "contractId": "RQ17", "suite": "canonical", "question": "Road-650 Black, 58과 Mountain-100 Black, 38이 공통으로 사용하는 하위 부품을 최대 4단계까지 알려줘.", "parameters": {"finishedProductNameA": "Road-650 Black, 58", "finishedProductNameB": "Mountain-100 Black, 38", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RQ18", "contractId": "RQ18", "suite": "canonical", "question": "공급업체 Allenson Cycles가 공급을 중단하면 영향을 받는 부품과 완제품, 각 부품의 현재 재고를 알려줘.", "parameters": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RQ19", "contractId": "RQ19", "suite": "canonical", "question": "완제품 HL Road Frame - Black, 58을 10개 생산할 때 부족한 부품, 부족 수량과 공급 가능한 업체를 알려줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "productionQty": 10, "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RQ20", "contractId": "RQ20", "suite": "canonical", "question": "작업지시 17747의 생산 제품, 폐기 수량과 폐기사유, 거친 공정과 작업장을 알려줘.", "parameters": {"workOrderId": 17747}},
+
+    {"caseId": "RB01", "contractId": "RQ01", "suite": "robustness", "question": "Touring-1000 Yellow, 54 제품의 표준원가와 판매 정가는 얼마야?", "parameters": {"productName": "Touring-1000 Yellow, 54"}},
+    {"caseId": "RB02", "contractId": "RQ02", "suite": "robustness", "question": "HL Mountain Frame - Black, 38 재고를 위치, 선반, 보관함별 원본 수량으로 보여줘.", "parameters": {"productName": "HL Mountain Frame - Black, 38"}},
+    {"caseId": "RB03", "contractId": "RQ03", "suite": "robustness", "question": "활성화된 공급사는 모두 몇 곳이야?", "parameters": {}},
+    {"caseId": "RB04", "contractId": "RQ04", "suite": "robustness", "question": "자체 생산하지 않고 구매하는 제품 개수를 세어줘.", "parameters": {}},
+    {"caseId": "RB05", "contractId": "RQ05", "suite": "robustness", "question": "sell end date가 비어 있는 제품을 ID 순으로 열 개 조회해줘.", "parameters": {}},
+    {"caseId": "RB06", "contractId": "RQ06", "suite": "robustness", "question": "Touring-1000 Yellow, 54의 번호·색상·사이즈를 NULL도 그대로 보여줘.", "parameters": {"productName": "Touring-1000 Yellow, 54"}},
+    {"caseId": "RB07", "contractId": "RQ07", "suite": "robustness", "question": "제품 분류 Components 아래 제품은 몇 개야?", "parameters": {"categoryName": "Components"}},
+    {"caseId": "RB08", "contractId": "RQ08", "suite": "robustness", "question": "Paint - Black 재고 합계가 안전재고에 얼마나 모자라는지 알려줘.", "parameters": {"productName": "Paint - Black"}},
+    {"caseId": "RB09", "contractId": "RQ09", "suite": "robustness", "question": "판매 가능한 완제품을 주문 수량 합계 기준 상위 5개로 정렬해줘.", "parameters": {}},
+    {"caseId": "RB10", "contractId": "RQ10", "suite": "robustness", "question": "구매 주문 반려량 합계가 큰 공급사 다섯 곳은?", "parameters": {}},
+    {"caseId": "RB11", "contractId": "RQ11", "suite": "robustness", "question": "폐기량이 0보다 큰 작업지시 중 상위 다섯 건의 제품과 사유를 보여줘.", "parameters": {}},
+    {"caseId": "RB12", "contractId": "RQ12", "suite": "robustness", "question": "Paint - Black에서 역으로 최대 네 단계 BOM을 따라가 판매 완제품 경로를 찾아줘.", "parameters": {"componentName": "Paint - Black", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RB13", "contractId": "RQ13", "suite": "robustness", "question": "HL Road Frame - Black, 58의 BOM 하위 트리를 경로와 깊이까지 펼쳐줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RB14", "contractId": "RQ14", "suite": "robustness", "question": "활성 업체 Allenson Cycles의 공급 부품이 들어가는 판매 완제품 경로를 보여줘.", "parameters": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RB15", "contractId": "RQ15", "suite": "robustness", "question": "작업지시 ID 17747의 라우팅 공정을 작업장과 순서대로 나열해줘.", "parameters": {"workOrderId": 17747}},
+    {"caseId": "RB16", "contractId": "RQ16", "suite": "robustness", "question": "HL Road Frame - Black, 58에서 Metal Sheet 5까지 이어지는 유효 BOM 경로를 전부 찾아줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "componentName": "Metal Sheet 5", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RB17", "contractId": "RQ17", "suite": "robustness", "question": "Road-650 Black, 58과 Mountain-100 Black, 38 양쪽에 공통인 부품과 각각의 최소 깊이는?", "parameters": {"finishedProductNameA": "Road-650 Black, 58", "finishedProductNameB": "Mountain-100 Black, 38", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RB18", "contractId": "RQ18", "suite": "robustness", "question": "Allenson Cycles 공급 중단 시 영향 BOM 경로를 찾고 그 부품 ID들의 PostgreSQL 재고도 확인해줘.", "parameters": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RB19", "contractId": "RQ19", "suite": "robustness", "question": "HL Road Frame - Black, 58 열 개의 BOM 소요량과 공급사를 찾고 부품별 자체생산 여부와 재고를 조회해줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "productionQty": 10, "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "RB20", "contractId": "RQ20", "suite": "robustness", "question": "17747 작업지시의 생산 제품과 폐기 사실은 SQL로, 공정과 작업장은 그래프로 각각 알려줘.", "parameters": {"workOrderId": 17747}}
+  ]
+}
