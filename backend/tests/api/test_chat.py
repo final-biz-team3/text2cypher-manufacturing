@@ -95,6 +95,61 @@ def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> Non
     assert params[1] == "그 제품 정가 알려줘."
 
 
+class _FailingHistoryConnection:
+    """대화기록 INSERT만 실패시키고 나머지 쿼리는 내부 mock에 위임한다."""
+
+    def __init__(self, inner: MockPostgresConnection) -> None:
+        self._inner = inner
+
+    def execute(self, query: str, params: tuple = ()):
+        if "INSERT INTO app.conversation_history" in query:
+            raise RuntimeError("db down")
+        return self._inner.execute(query, params)
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        self._inner.rollback()
+
+
+def test_chat_returns_response_even_if_save_conversation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """대화기록 저장이 실패해도 /chat 응답 자체는 정상 반환된다."""
+    openai_client = MockOpenAIClient(
+        make_content_response('["sql"]'),
+        make_content_response("SELECT listprice FROM production.product"),
+    )
+    monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
+    monkeypatch.setattr(
+        chat_module,
+        "get_connection",
+        lambda: _FailingHistoryConnection(
+            MockPostgresConnection(
+                rows_by_name={
+                    "Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")
+                }
+            )
+        ),
+    )
+
+    result = asyncio.run(
+        chat(
+            ChatRequest(
+                query="그 제품 정가 알려줘.",
+                confirmed_entity={
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+            ),
+            user=CurrentUser(username="kim.quality", role="user"),
+        )
+    )
+
+    assert result["sql_query"] == "SELECT listprice FROM production.product"
+
+
 def test_chat_request_rejects_unknown_field() -> None:
     """confirmedEntity처럼 오타난 필드는 조용히 무시되지 않고 검증 에러가 난다."""
     with pytest.raises(ValidationError):

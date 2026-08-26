@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
@@ -6,6 +8,8 @@ from core.history import save_conversation
 from core.openai_client import get_openai_client
 from core.postgres import get_connection
 from orchestrator.graph import build_orchestrator_graph
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -37,14 +41,21 @@ async def chat(
         "graph_result": result.get("graph_result"),
         "final_answer": result.get("final_answer"),
     }
-    save_conversation(
-        connection,
-        user.username,
-        response["query"],
-        response["final_answer"],
-        response["sql_query"],
-        response["cypher_query"],
-        response["sql_result"],
-        response["graph_result"],
-    )
+    try:
+        save_conversation(
+            connection,
+            user.username,
+            response["query"],
+            response["final_answer"],
+            response["sql_query"],
+            response["cypher_query"],
+            response["sql_result"],
+            response["graph_result"],
+        )
+    except Exception:
+        logger.exception(
+            "save_conversation 실패: username=%r query=%r",
+            user.username,
+            response["query"],
+        )
     return response
