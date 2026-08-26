@@ -51,3 +51,6 @@ class MockPostgresConnection:
 
     def rollback(self) -> None:
         self.rollback_called = True
+
+    def commit(self) -> None:
+        pass
