@@ -117,12 +117,27 @@ def _commit_sha() -> str:
         return "unknown"
 
 
+def _working_tree_dirty() -> bool | None:
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return bool(status.strip())
+
+
 def _error_artifacts(
     output_dir: Path,
     message: str,
     *,
     model: str | None,
     validate_gold: bool,
+    working_tree_dirty: bool | None,
 ) -> None:
     result = EvaluationRun([], {}, True)
     summary = build_summary(
@@ -130,6 +145,7 @@ def _error_artifacts(
         model=None if validate_gold else model,
         commit=_commit_sha(),
         validate_gold=validate_gold,
+        working_tree_dirty=working_tree_dirty,
     )
     summary["error"] = message
     write_artifacts(output_dir, summary, [])
@@ -139,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     load_dotenv(PROJECT_ROOT / ".env")
     parser = build_parser()
     args = parser.parse_args(argv)
+    working_tree_dirty = _working_tree_dirty()
     try:
         ids = _parse_ids(args.ids)
         if args.runs < 1:
@@ -202,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model if not args.validate_gold else None,
             commit=_commit_sha(),
             validate_gold=args.validate_gold,
+            working_tree_dirty=working_tree_dirty,
         )
         write_artifacts(args.output_dir, summary, result.records)
         print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
@@ -218,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
             message,
             model=args.model,
             validate_gold=args.validate_gold,
+            working_tree_dirty=working_tree_dirty,
         )
         return 2
     except Exception as exc:
@@ -228,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
             message,
             model=args.model,
             validate_gold=args.validate_gold,
+            working_tree_dirty=working_tree_dirty,
         )
         return 2
     return 2

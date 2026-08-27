@@ -29,7 +29,6 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 jobs:
   evaluate:
@@ -90,15 +89,6 @@ jobs:
       - name: Add report to workflow summary
         if: always() && hashFiles('artifacts/t2c-eval/report.md') != ''
         run: cat artifacts/t2c-eval/report.md >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Publish JUnit result
-        if: always() && hashFiles('artifacts/t2c-eval/junit.xml') != ''
-        uses: dorny/test-reporter@v2
-        with:
-          name: Text-to-query evaluation
-          path: artifacts/t2c-eval/junit.xml
-          reporter: java-junit
-          fail-on-error: false
 
       - name: Upload evaluation artifacts
         if: always()
