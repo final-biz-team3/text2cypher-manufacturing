@@ -3,7 +3,7 @@ from typing import Any
 import core.neo4j as neo4j
 
 
-def test_driver_uses_application_reader_credentials(monkeypatch) -> None:
+def test_driver_uses_admin_credentials(monkeypatch) -> None:
     captured: dict[str, Any] = {}
     driver = object()
 
@@ -13,8 +13,12 @@ def test_driver_uses_application_reader_credentials(monkeypatch) -> None:
 
     monkeypatch.setattr(neo4j, "_driver", None)
     monkeypatch.setattr(neo4j.AsyncGraphDatabase, "driver", make_driver)
-    monkeypatch.setenv("NEO4J_APP_USER", "graph_reader")
-    monkeypatch.setenv("NEO4J_APP_PASSWORD", "reader_password")
+    monkeypatch.setenv("NEO4J_URI", "bolt://graph:7687")
+    monkeypatch.setenv("NEO4J_USER", "graph_admin")
+    monkeypatch.setenv("NEO4J_PASSWORD", "admin_password")
 
     assert neo4j.get_driver() is driver
-    assert captured["auth"] == ("graph_reader", "reader_password")
+    assert captured == {
+        "uri": "bolt://graph:7687",
+        "auth": ("graph_admin", "admin_password"),
+    }

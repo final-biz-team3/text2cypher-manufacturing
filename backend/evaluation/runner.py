@@ -266,6 +266,8 @@ class EvaluationRunner:
         context = entity
         if inputs:
             context = {"resolvedEntities": entity, "upstreamBindings": inputs}
+        # expected의 업무 규칙·출력 계약은 채점 전용이다. 후보 생성에 넣으면
+        # production에는 없는 정답 힌트를 제공하게 된다.
         if expected.tool == "sql":
             query = self._run_async(
                 generate_sql(
@@ -273,8 +275,6 @@ class EvaluationRunner:
                     query=actual["question"],
                     entity=context,
                     schema_text=self.sql_schema_text,
-                    business_rules=expected.business_rules,
-                    required_outputs=expected.required_outputs,
                 )
             )
             validate_read_only_sql(query)
@@ -286,8 +286,6 @@ class EvaluationRunner:
                 entity=context,
                 schema_text=self.graph_schema_text,
                 query_policy=self.graph_query_policy,
-                business_rules=expected.business_rules,
-                required_outputs=expected.required_outputs,
             )
         )
         validate_read_only_cypher(query)
@@ -513,7 +511,7 @@ class EvaluationRunner:
         except OpenAIError as exc:
             raise InfrastructureError(f"OpenAI route 생성 실패: {exc}") from exc
         except RoutePlanError as exc:
-            plan = {"tool_plan": None, "subqueries": []}
+            plan = {"tool_plan": exc.tool_plan, "subqueries": []}
             record["planningError"] = str(exc)
             record["planningResponse"] = exc.raw_response
         except ValueError as exc:
@@ -555,7 +553,8 @@ class EvaluationRunner:
         else:
             result_contract_pass = None
         query_pipeline_pass = (
-            comparison["routingPass"]
+            entity_pass
+            and comparison["routingPass"]
             and comparison["splitPass"]
             and all_subqueries_pass
         )
@@ -576,6 +575,8 @@ class EvaluationRunner:
             "result": semantic_result_pass,
         }
         failure_reasons: list[str] = []
+        if not entity_pass:
+            failure_reasons.append("ENTITY_MISMATCH")
         if not comparison["routingPass"]:
             failure_reasons.append("ROUTE_MISMATCH")
         if not comparison["splitPass"]:
@@ -586,9 +587,6 @@ class EvaluationRunner:
             if item.get("failureCategory") not in {None, "DEPENDENCY_BLOCKED"}
         )
         failure_reasons = list(dict.fromkeys(failure_reasons))
-        contract_warnings: list[str] = []
-        if not entity_pass:
-            contract_warnings.append("ENTITY_MISMATCH")
         record.update(
             {
                 "toolPlan": plan.get("tool_plan"),
@@ -597,7 +595,6 @@ class EvaluationRunner:
                 "subqueries": subquery_records,
                 "checks": checks,
                 "failureReasons": failure_reasons,
-                "contractWarnings": contract_warnings,
                 "queryPipelinePass": query_pipeline_pass,
                 "semanticResultPass": semantic_result_pass,
                 "finalResultEvaluated": contract.support_status == "FULLY_EVALUATED",

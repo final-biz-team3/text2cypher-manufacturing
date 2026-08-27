@@ -616,3 +616,54 @@ async def test_resolve_entity_returns_none_entity_for_invalid_tool_arguments(
 
     assert result == {"entity": None}
     assert pool.last_query is None
+
+
+async def test_resolve_entity_resolves_multiple_ambiguous_entities_via_confirmed_list() -> (
+    None
+):
+    """confirmed_entity가 리스트면 모호한 이름이 여러 개여도 전부 확정된 값으로 매칭한다."""
+    openai_client = MockOpenAIClient(
+        make_tool_calls_response(
+            [
+                (
+                    "extract_entity",
+                    {"entityType": "product", "entityName": "터치링 자전거"},
+                ),
+                (
+                    "extract_entity",
+                    {"entityType": "product", "entityName": "마운틴 자전거"},
+                ),
+            ]
+        )
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={
+            "Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54"),
+            "Mountain-100 Black, 38": (775, "Mountain-100 Black, 38"),
+        },
+        similar_rows_by_name={
+            "터치링 자전거": [
+                (956, "Touring-1000 Yellow, 54", 0.62),
+                (957, "Touring-2000 Blue, 60", 0.41),
+            ],
+            "마운틴 자전거": [
+                (775, "Mountain-100 Black, 38", 0.58),
+                (776, "Mountain-200 Silver, 42", 0.45),
+            ],
+        },
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    confirmed_entities = [
+        {"productId": 956, "productName": "Touring-1000 Yellow, 54"},
+        {"productId": 775, "productName": "Mountain-100 Black, 38"},
+    ]
+
+    result = await node(
+        {
+            "query": "터치링 자전거와 마운틴 자전거의 공통 부품을 알려줘.",
+            "confirmed_entity": confirmed_entities,
+        }
+    )
+
+    assert result == {"entity": confirmed_entities}

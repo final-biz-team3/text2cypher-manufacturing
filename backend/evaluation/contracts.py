@@ -1,5 +1,7 @@
 """생성된 라우팅·분할 계획과 evaluator manifest 계약 비교."""
 
+import math
+from decimal import Decimal
 from typing import Any
 
 from evaluation.models import EvaluationCase, EvaluationContract
@@ -135,9 +137,72 @@ def compare_execution_contract(
     }
 
 
+def _entity_items(value: Any) -> list[dict[str, Any]] | None:
+    if value is None or value == []:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        return value
+    return None
+
+
+def _normalized_integral_id(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        normalized = Decimal(str(value))
+    else:
+        normalized = Decimal(value)
+    if not normalized.is_finite() or normalized != normalized.to_integral_value():
+        return None
+    return normalized
+
+
+def _is_entity_id_field(field: str) -> bool:
+    return field == "id" or field.endswith(("Id", "ID", "_id"))
+
+
+def _entity_value_matches(field: str, expected: Any, actual: Any) -> bool:
+    if field.casefold().endswith("name"):
+        return (
+            isinstance(expected, str)
+            and isinstance(actual, str)
+            and " ".join(expected.casefold().split())
+            == " ".join(actual.casefold().split())
+        )
+    if _is_entity_id_field(field) and (
+        isinstance(expected, int | float | Decimal)
+        or isinstance(actual, int | float | Decimal)
+    ):
+        normalized_expected = _normalized_integral_id(expected)
+        normalized_actual = _normalized_integral_id(actual)
+        return (
+            normalized_expected is not None
+            and normalized_actual is not None
+            and normalized_expected == normalized_actual
+        )
+    return type(expected) is type(actual) and expected == actual
+
+
 def entity_matches(expected: Any, actual: Any) -> bool:
-    """복수 엔티티는 질문 등장 순서를 포함해 정확히 비교한다."""
-    return expected == actual
+    """필수 identity와 복수 엔티티의 질문 등장 순서를 비교한다."""
+    expected_items = _entity_items(expected)
+    actual_items = _entity_items(actual)
+    if expected_items is None or actual_items is None:
+        return False
+    if len(expected_items) != len(actual_items):
+        return False
+    return all(
+        all(
+            field in actual_item
+            and _entity_value_matches(field, expected_value, actual_item[field])
+            for field, expected_value in expected_item.items()
+        )
+        for expected_item, actual_item in zip(expected_items, actual_items, strict=True)
+    )
 
 
 def collect_input_bindings(

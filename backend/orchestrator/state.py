@@ -113,7 +113,7 @@ class OrchestratorState(TypedDict):
     execution_allowed: NotRequired[bool]
     entity: NotRequired[dict | list[dict] | None]
 
-    confirmed_entity: NotRequired[dict | None]
+    confirmed_entity: NotRequired[dict | list[dict] | None]
 
     # route_query가 결정한 실행 계획 (["sql"] / ["graph"] / ["sql", "graph"])
     tool_plan: NotRequired[list[str]]

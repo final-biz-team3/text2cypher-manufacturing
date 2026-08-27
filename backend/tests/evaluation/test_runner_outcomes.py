@@ -16,7 +16,7 @@ from orchestrator.state import OrchestratorState
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_sql_generation_receives_manifest_rules_and_outputs(
+def test_sql_generation_does_not_receive_gold_contract_hints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
@@ -39,11 +39,11 @@ def test_sql_generation_receives_manifest_rules_and_outputs(
         {},
     )
 
-    assert captured["business_rules"] == expected.business_rules
-    assert captured["required_outputs"] == expected.required_outputs
+    assert "business_rules" not in captured
+    assert "required_outputs" not in captured
 
 
-def test_cypher_generation_receives_manifest_rules_and_outputs(
+def test_cypher_generation_does_not_receive_gold_contract_hints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
@@ -69,11 +69,11 @@ def test_cypher_generation_receives_manifest_rules_and_outputs(
         {},
     )
 
-    assert captured["business_rules"] == expected.business_rules
-    assert captured["required_outputs"] == expected.required_outputs
+    assert "business_rules" not in captured
+    assert "required_outputs" not in captured
 
 
-def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() -> None:
+def test_runner_accepts_integral_float_id_and_unused_single_query_output_plan() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
     case = next(case for case in manifest.cases if case.case_id == "RQ02")
     contract = manifest.contracts[case.contract_id]
@@ -82,7 +82,11 @@ def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() ->
 
     runner = object.__new__(EvaluationRunner)
     runner.manifest = manifest
-    runner.resolve_entity = lambda state: {"entity": contract.expected_entities}
+    actual_entity = {
+        **contract.expected_entities,
+        "productId": float(contract.expected_entities["productId"]),
+    }
+    runner.resolve_entity = lambda state: {"entity": actual_entity}
     runner.route_query = lambda state: {"tool_plan": ["sql"], "subqueries": [plan]}
 
     def evaluate_subqueries(
@@ -113,13 +117,64 @@ def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() ->
 
     record = runner._evaluate_case(case, 1)
 
+    assert record["checks"]["entity"] is True
     assert record["checks"]["result"] is True
     assert record["semanticResultPass"] is True
     assert record["finalResultPass"] is True
     assert record["queryPipelinePass"] is True
     assert record["status"] == "PASS"
     assert record["failureReasons"] == []
-    assert record["contractWarnings"] == []
+
+
+def test_entity_mismatch_keeps_result_evaluation_but_fails_pipeline() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    case = next(case for case in manifest.cases if case.case_id == "RQ16")
+    contract = manifest.contracts[case.contract_id]
+    plan = contract.subqueries[0].planning_shape()
+
+    runner = object.__new__(EvaluationRunner)
+    runner.manifest = manifest
+    runner.resolve_entity = lambda state: {"entity": contract.expected_entities[0]}
+    runner.route_query = lambda state: {
+        "tool_plan": ["graph"],
+        "subqueries": [plan],
+    }
+
+    def evaluate_subqueries(
+        self: EvaluationRunner,
+        contract: Any,
+        case: Any,
+        actual_subqueries: Any,
+        entity: Any,
+        id_mapping: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "graph_all_bom_paths",
+                "tool": "graph",
+                "status": "PASS",
+                "checks": {
+                    "generation": True,
+                    "readOnly": True,
+                    "execution": True,
+                    "resultContract": True,
+                    "result": True,
+                },
+            }
+        ]
+
+    runner._evaluate_subqueries = MethodType(  # type: ignore[method-assign]
+        evaluate_subqueries, runner
+    )
+
+    record = runner._evaluate_case(case, 1)
+
+    assert record["checks"]["entity"] is False
+    assert record["semanticResultPass"] is True
+    assert record["finalResultPass"] is True
+    assert record["queryPipelinePass"] is False
+    assert record["status"] == "FAIL"
+    assert record["failureReasons"] == ["ENTITY_MISMATCH"]
 
 
 def test_query_safety_failure_is_classified_without_execution() -> None:
@@ -232,4 +287,9 @@ def test_invalid_route_plan_keeps_the_model_response_for_review() -> None:
 
     assert record["planningError"] == "invalid join key"
     assert record["planningResponse"] == '{"tool_plan":["sql"]}'
+    assert record["toolPlan"] == ["sql"]
+    assert record["checks"]["routing"] is True
+    assert record["checks"]["split"] is False
+    assert "ROUTE_MISMATCH" not in record["failureReasons"]
+    assert "SUBQUERY_INTEGRATION_CONTRACT_MISMATCH" in record["failureReasons"]
     assert record["status"] == "FAIL"

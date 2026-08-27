@@ -216,6 +216,26 @@ def _confirmed_entity_config(
     return None
 
 
+def _normalize_confirmed_entities(confirmed_entity: Any) -> list[dict]:
+    """confirmed_entity(dict/list/None)를 항상 리스트 형태로 통일한다."""
+    if confirmed_entity is None:
+        return []
+    if isinstance(confirmed_entity, dict):
+        return [confirmed_entity]
+    if isinstance(confirmed_entity, list):
+        return [item for item in confirmed_entity if isinstance(item, dict)]
+    return []
+
+
+def _collapse_entities(entities: list[dict]) -> dict | list[dict] | None:
+    """엔티티 리스트를 개수에 따라 entity 필드 shape(dict/list/None)으로 접는다."""
+    if not entities:
+        return None
+    if len(entities) == 1:
+        return entities[0]
+    return entities
+
+
 async def _confirmed_entity_exists(
     confirmed_entity: dict, config: NamedEntityType, pool: AsyncConnectionPool
 ) -> bool:
@@ -239,33 +259,34 @@ def make_resolve_entity_node(
 
     async def resolve_entity(state: OrchestratorState) -> dict:
         query = get_effective_query(state)
-        confirmed_entity = state.get("confirmed_entity")
-        confirmed_config: NamedEntityType | None = None
-        if confirmed_entity is not None:
-            confirmed_config = _confirmed_entity_config(confirmed_entity, entity_types)
-            if confirmed_config is not None and await _confirmed_entity_exists(
-                confirmed_entity, confirmed_config, pool
+        raw_confirmed_entities = _normalize_confirmed_entities(
+            state.get("confirmed_entity")
+        )
+        valid_confirmed: list[dict] = []
+        for candidate_entity in raw_confirmed_entities:
+            config = _confirmed_entity_config(candidate_entity, entity_types)
+            if config is not None and await _confirmed_entity_exists(
+                candidate_entity, config, pool
             ):
                 logger.info(
                     "resolve_entity: query=%r -> confirmed_entity=%s 검증 완료 "
                     "(나머지 엔티티 재추출)",
                     query,
-                    confirmed_entity,
+                    candidate_entity,
                 )
+                valid_confirmed.append(candidate_entity)
             else:
                 logger.warning(
                     "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
                     "(무시하고 재추출)",
                     query,
-                    confirmed_entity,
+                    candidate_entity,
                 )
-                confirmed_entity = None
-                confirmed_config = None
 
         extractions = await _extract_entities(query, openai_client, extract_tool)
         if not extractions:
-            if confirmed_entity is not None:
-                return {"entity": confirmed_entity}
+            if valid_confirmed:
+                return {"entity": _collapse_entities(valid_confirmed)}
             logger.info("resolve_entity: query=%r -> entity=None (대상 미언급)", query)
             return {"entity": None}
 
@@ -314,7 +335,7 @@ def make_resolve_entity_node(
             )
 
         resolved: list[dict] = []
-        for index, (entity_type, entity_name, config) in enumerate(lookups):
+        for index, (entity_type, entity_name, _config) in enumerate(lookups):
             entity = found_entities[index]
             if entity is None:
                 candidates = candidates_by_index[index]
@@ -322,8 +343,7 @@ def make_resolve_entity_node(
                     (
                         candidate["entity"]
                         for candidate in candidates
-                        if confirmed_config == config
-                        and candidate["entity"] == confirmed_entity
+                        if candidate["entity"] in valid_confirmed
                     ),
                     None,
                 )
@@ -354,7 +374,7 @@ def make_resolve_entity_node(
 
         result: dict | list[dict] | None
         if not resolved:
-            result = confirmed_entity
+            result = _collapse_entities(valid_confirmed)
         elif len(resolved) == 1:
             result = resolved[0]
         else:

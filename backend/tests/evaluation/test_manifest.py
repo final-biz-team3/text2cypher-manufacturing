@@ -1,5 +1,7 @@
+import hashlib
 import json
 import re
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from evaluation.models import load_manifest
@@ -7,17 +9,157 @@ from evaluation.models import load_manifest
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_manifest_covers_all_rq_contracts_and_two_suites() -> None:
+def _digest(value: object) -> str:
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode()).hexdigest()
+
+
+def _effective_aliases(prefix: str) -> dict[str, object]:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    return {
+        contract_id: {subquery.id: subquery.aliases for subquery in contract.subqueries}
+        for contract_id, contract in manifest.contracts.items()
+        if contract_id.startswith(prefix)
+    }
+
+
+def test_manifest_covers_rq_and_hq_contracts_and_three_suites() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
 
-    assert set(manifest.contracts) == {f"RQ{number:02d}" for number in range(1, 21)}
+    assert set(manifest.contracts) == {
+        *(f"RQ{number:02d}" for number in range(1, 21)),
+        *(f"HQ{number:02d}" for number in range(1, 11)),
+    }
     assert sum(case.suite == "canonical" for case in manifest.cases) == 20
-    assert sum(case.suite == "robustness" for case in manifest.cases) == 20
+    assert sum(case.suite == "robustness" for case in manifest.cases) == 60
+    assert sum(case.suite == "holdout" for case in manifest.cases) == 10
     assert all(contract.subqueries for contract in manifest.contracts.values())
     assert (
         "active_vendor_count"
         in manifest.contracts["RQ03"].subqueries[0].aliases["activeSupplierCount"]
     )
+
+
+def test_canonical_rq_contracts_cases_and_gold_are_frozen() -> None:
+    manifest_path = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    contracts = [item for item in raw["contracts"] if item["id"].startswith("RQ")]
+    cases = [item for item in raw["cases"] if item["suite"] == "canonical"]
+    gold = [
+        (
+            f"queries/evaluation/{subquery['gold']}",
+            (manifest_path.parent / subquery["gold"]).read_text(encoding="utf-8"),
+        )
+        for contract in contracts
+        for subquery in contract["subqueries"]
+    ]
+
+    assert _digest(contracts) == (
+        "83228cb969449c0eeaf31059e854ab00bb355724985e4b584a86c98fe29e7368"
+    )
+    assert _digest(cases) == (
+        "886a90caa937626181f7cf4af8bb498c4cfba16aface24c6aece6e442896dd77"
+    )
+    assert _digest(gold) == (
+        "2df6294af3a6061966bf4a31ae932e2f25ff3540bd9c826a0d64aa67c13ce9bb"
+    )
+    assert _digest(_effective_aliases("RQ")) == (
+        "58fb87d954acbff60bb10b7389924a1fbbdc6a4d8ba06fbebd4699daa369257b"
+    )
+
+
+def test_holdout_contracts_cases_and_gold_are_frozen() -> None:
+    manifest_path = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    contracts = [item for item in raw["contracts"] if item["id"].startswith("HQ")]
+    cases = [item for item in raw["cases"] if item["suite"] == "holdout"]
+    gold = [
+        (
+            f"queries/evaluation/{subquery['gold']}",
+            (manifest_path.parent / subquery["gold"]).read_text(encoding="utf-8"),
+        )
+        for contract in contracts
+        for subquery in contract["subqueries"]
+    ]
+
+    assert _digest(contracts) == (
+        "f9daf433ad35b6f3c1ada6ded8b8d634f1e2914953a59fcf189233157131d32b"
+    )
+    assert _digest(cases) == (
+        "e2877a0411c91ad58e2f1827955e6ec3ed8ed67623e5cb42aa90a7f980f97747"
+    )
+    assert _digest(gold) == (
+        "6b319499112956e7628f07800a545cf83ef5ae10b5ba1f8f4b546ece9e81d046"
+    )
+    assert _digest(_effective_aliases("HQ")) == (
+        "2794f34c0a616b41683f75b60a353b9a383753f00b12c80fa74a8a9a92d1be9e"
+    )
+
+
+def test_robustness_has_scr_variants_with_canonical_parameters() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    canonical = {
+        case.contract_id: case for case in manifest.cases if case.suite == "canonical"
+    }
+    variants: dict[str, set[str]] = defaultdict(set)
+
+    for case in (item for item in manifest.cases if item.suite == "robustness"):
+        match = re.fullmatch(r"RB(\d{2})-([SCR])", case.case_id)
+        assert match is not None
+        contract_id = f"RQ{match.group(1)}"
+        assert case.contract_id == contract_id
+        assert case.parameters == canonical[contract_id].parameters
+        variants[contract_id].add(match.group(2))
+
+    assert variants == {f"RQ{number:02d}": {"S", "C", "R"} for number in range(1, 21)}
+
+
+def test_manifest_questions_are_nonempty_and_unique() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    questions = [case.question.strip() for case in manifest.cases]
+
+    assert all(questions)
+    assert not [question for question, count in Counter(questions).items() if count > 1]
+
+
+def test_holdout_route_and_support_distribution_is_locked() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    contracts = [manifest.contracts[f"HQ{number:02d}"] for number in range(1, 11)]
+
+    assert Counter(contract.route for contract in contracts) == {
+        "SQL": 6,
+        "GRAPH": 2,
+        "HYBRID": 2,
+    }
+    assert Counter(contract.support_status for contract in contracts) == {
+        "FULLY_EVALUATED": 8,
+        "QUERY_EVALUATED_FINAL_JOIN_PENDING": 2,
+    }
+    assert manifest.contracts["HQ01"].expected_entities == [
+        {"productId": 771, "productName": "Mountain-100 Silver, 38"},
+        {"productId": 775, "productName": "Mountain-100 Black, 38"},
+    ]
+    assert manifest.contracts["HQ06"].expected_entities == {
+        "productId": 680,
+        "productName": "HL Road Frame - Black, 58",
+    }
+    assert manifest.contracts["HQ09"].expected_entities == {
+        "productId": 680,
+        "productName": "HL Road Frame - Black, 58",
+    }
+    assert manifest.contracts["HQ08"].expected_entities == {
+        "scrapReasonId": 13,
+        "scrapReasonName": "Thermoform temperature too low",
+    }
+    assert manifest.contracts["HQ10"].expected_entities == {
+        "locationId": 10,
+        "locationName": "Frame Forming",
+    }
 
 
 def test_hybrid_contracts_are_partial_query_evaluated() -> None:
@@ -54,12 +196,14 @@ def test_manifest_routes_support_and_step_counts_match_rq_contract() -> None:
 
 def test_gold_parameters_are_available_from_case_or_upstream_binding() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
-    canonical = {
-        case.contract_id: case for case in manifest.cases if case.suite == "canonical"
+    primary_cases = {
+        case.contract_id: case
+        for case in manifest.cases
+        if case.suite in {"canonical", "holdout"}
     }
 
     for contract_id, contract in manifest.contracts.items():
-        case = canonical[contract_id]
+        case = primary_cases[contract_id]
         for subquery in contract.subqueries:
             gold = subquery.gold_file.read_text(encoding="utf-8")
             referenced = set(re.findall(r"%\((\w+)\)s", gold))
@@ -115,6 +259,24 @@ def test_hybrid_responsibilities_dependencies_and_join_keys_are_locked() -> None
             ("sql", (), ("workOrderId",), {}),
             ("graph", (), ("workOrderId",), {}),
         ],
+        "HQ09": [
+            ("graph", (), ("componentId",), {}),
+            (
+                "sql",
+                ("graph_leaf_components",),
+                ("componentId",),
+                {"componentIds": "graph_leaf_components.componentId"},
+            ),
+        ],
+        "HQ10": [
+            ("graph", (), ("productId",), {}),
+            (
+                "sql",
+                ("graph_location_products",),
+                ("productId",),
+                {"productIds": "graph_location_products.productId"},
+            ),
+        ],
     }
 
     for contract_id, expected_steps in expected.items():
@@ -140,7 +302,8 @@ def test_evaluation_manifest_stays_aligned_with_query_contracts() -> None:
         case.contract_id: case for case in manifest.cases if case.suite == "canonical"
     }
 
-    for contract_id, contract in manifest.contracts.items():
+    for contract_id in (f"RQ{number:02d}" for number in range(1, 21)):
+        contract = manifest.contracts[contract_id]
         source_contract = source_by_id[contract_id]
         assert source_contract["route"] == contract.route
         assert source_contract["sampleQuestion"] == canonical[contract_id].question

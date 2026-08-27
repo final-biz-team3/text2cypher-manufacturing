@@ -16,6 +16,8 @@ from guard.natural_language import (
     route_after_natural_guard,
 )
 from ontology.loader import load_term_dictionary
+from orchestrator.execution.cypher_executor import execute_cypher
+from orchestrator.execution.sql_executor import execute_sql
 from orchestrator.nodes.generate_answer import make_generate_answer_node
 from orchestrator.nodes.normalize_terms import (
     make_normalize_terms_node,
@@ -90,21 +92,11 @@ def _retry_agent_result_summary(result: dict) -> dict:
     }
 
 
-async def _execute_sql_stub(sql: str) -> Any:
-    """self-correction 구현자가 실제 SQL 검증·실행 로직으로 교체할 자리."""
-    raise NotImplementedError("SQL 실행/검증은 self-correction 구현에서 채운다.")
-
-
-async def _execute_cypher_stub(cypher: str) -> Any:
-    """self-correction 구현자가 실제 Cypher 검증·실행 로직으로 교체할 자리."""
-    raise NotImplementedError("Cypher 실행/검증은 self-correction 구현에서 채운다.")
-
-
 def _make_sql_agent_node(
     openai_client: Any, sql_schema_text: str
 ) -> Callable[[OrchestratorState], Awaitable[dict]]:
     """SQL Agent SubGraph를 감싸 OrchestratorState와 주고받는 노드를 만든다."""
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=_execute_sql_stub)
+    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
 
     async def sql_agent(state: OrchestratorState) -> dict:
         if "sql" not in (state.get("tool_plan") or []):
@@ -128,7 +120,7 @@ def _make_cypher_agent_node(
     """Cypher Agent SubGraph를 감싸 OrchestratorState와 주고받는 노드를 만든다."""
     subgraph = make_cypher_agent_subgraph(
         openai_client,
-        execute_cypher=_execute_cypher_stub,
+        execute_cypher=execute_cypher,
         query_policy=cypher_query_policy,
     )
 
