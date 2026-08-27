@@ -67,6 +67,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       APP_ENV: ${APP_ENV:-development}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-5000}
+      POSTGRES_POOL_MIN_SIZE: ${POSTGRES_POOL_MIN_SIZE:-1}
+      POSTGRES_POOL_MAX_SIZE: ${POSTGRES_POOL_MAX_SIZE:-5}
+      POSTGRES_WRITE_POOL_MIN_SIZE: ${POSTGRES_WRITE_POOL_MIN_SIZE:-1}
+      POSTGRES_WRITE_POOL_MAX_SIZE: ${POSTGRES_WRITE_POOL_MAX_SIZE:-2}
     depends_on:
       neo4j:
         condition: service_started
@@ -74,10 +79,10 @@ services:
         condition: service_healthy  # postgres 준비 완료 후 백엔드 시작
     volumes:
       - ./backend:/app
-    # --loop none: uvicorn이 기본으로 asyncio.run()에 loop_factory를 직접 넘겨
-    # main.py에서 건 이벤트 루프 정책(Windows ProactorEventLoop 회피용)을
-    # 무시해버린다 - none으로 두면 asyncio.run()이 정책을 그대로 따른다.
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --loop none
+    # 이 컨테이너는 항상 Linux라 --loop none이 필요 없다(그 플래그는
+    # Windows 호스트에서 ProactorEventLoop를 우회하기 위한 것 - main.py 참고).
+    # 여기서 강제로 걸면 uvicorn의 자동 uvloop 적용만 이유 없이 막힌다.
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
   neo4j_data:

@@ -67,6 +67,7 @@ class EvaluationRunner:
         openai_client: Any | None,
         *,
         project_root: Path,
+        loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self.manifest = manifest
         self.database = database
@@ -79,21 +80,33 @@ class EvaluationRunner:
         self.graph_schema_text = serialize_graph_schema(graph_schema)
         self.graph_query_policy = graph_schema.query_policy
         # resolve_entity/route_query 노드는 async다 - 이 클래스(그리고
-        # 아래를 호출하는 _evaluate_case)는 전부 동기라, asyncio.run()으로
-        # 감싸 동기 호출부 입장에서는 평범한 함수처럼 보이게 한다. resolve_entity의
+        # 아래를 호출하는 _evaluate_case)는 전부 동기라, 호출부 입장에서는
+        # 평범한 함수처럼 보이게 감싼다. 감쌀 때 매번 asyncio.run()을 쓰면 안
+        # 된다 - asyncio.run()은 호출마다 새 이벤트 루프를 만들고 끝나면 닫는데,
+        # get_pool()이 반환하는 AsyncConnectionPool은 내부 락/큐가 "풀을 연
+        # 시점의 루프"에 묶여 있다. cli.py가 이미 닫힌 루프에서 연 풀을, 여기서
+        # 매번 새로 만드는 다른 루프가 재사용하려 들면 다른 루프에 붙은
+        # 객체를 건드리는 에러가 난다. 그래서 cli.py가 풀을 열 때 쓴 것과
+        # 동일한 loop를 주입받아 run_until_complete로 재사용한다. resolve_entity의
         # DB 조회는 database.postgres(평가 전용 sync 커넥션)가 아니라
         # core.postgres.get_pool()을 쓴다 - resolve_entity.py가 이제
         # `async with pool.connection()` 형태의 풀 객체를 요구하기 때문에,
         # 앱 전체가 쓰는 것과 같은(읽기 전용) 풀을 그대로 재사용한다.
+        self._loop = loop
         self.resolve_entity: Callable[[Any], Any] | None
         self.route_query: Callable[[Any], Any] | None
         if openai_client is not None:
+            assert loop is not None, "openai_client가 있으면 loop도 필요합니다."
             resolve_entity_node = make_resolve_entity_node(
                 openai_client, get_pool(), graph_schema
             )
             route_query_node = make_route_query_node(openai_client)
-            self.resolve_entity = lambda state: asyncio.run(resolve_entity_node(state))
-            self.route_query = lambda state: asyncio.run(route_query_node(state))
+            self.resolve_entity = lambda state: loop.run_until_complete(
+                resolve_entity_node(state)
+            )
+            self.route_query = lambda state: loop.run_until_complete(
+                route_query_node(state)
+            )
         else:
             self.resolve_entity = None
             self.route_query = None
@@ -229,6 +242,16 @@ class EvaluationRunner:
             )
         return EvaluationRun(records, snapshot, False)
 
+    def _run_async(self, coro: Any) -> Any:
+        """__init__에서 주입받은 loop가 있으면 그걸 재사용하고(같은 loop에
+        묶인 커넥션 풀과의 불일치를 막기 위해), 없으면(예: 테스트에서
+        object.__new__로 __init__을 건너뛴 경우) asyncio.run()으로 대체한다
+        - 그 경우엔 공유 풀이 얽혀 있지 않아 매번 새 loop를 써도 안전하다."""
+        loop = getattr(self, "_loop", None)
+        if loop is not None:
+            return loop.run_until_complete(coro)
+        return asyncio.run(coro)
+
     def _generate_query(
         self,
         expected: ExpectedSubquery,
@@ -237,13 +260,14 @@ class EvaluationRunner:
         inputs: dict[str, list[Any]],
     ) -> str:
         # generate_sql/generate_cypher는 async다 - 이 메서드는 동기 호출부
-        # (_evaluate_subqueries)에서 그대로 쓸 수 있어야 해서 asyncio.run()으로
-        # 감싼다(위 __init__의 resolve_entity/route_query와 동일한 이유).
+        # (_evaluate_subqueries)에서 그대로 쓸 수 있어야 해서 _run_async로
+        # 감싼다(왜 매번 asyncio.run()을 쓰면 안 되는지는 __init__의
+        # resolve_entity/route_query 주석 참고 - 동일하게 적용됨).
         context = entity
         if inputs:
             context = {"resolvedEntities": entity, "upstreamBindings": inputs}
         if expected.tool == "sql":
-            query = asyncio.run(
+            query = self._run_async(
                 generate_sql(
                     self.openai_client,
                     query=actual["question"],
@@ -255,7 +279,7 @@ class EvaluationRunner:
             )
             validate_read_only_sql(query)
             return query
-        query = asyncio.run(
+        query = self._run_async(
             generate_cypher(
                 self.openai_client,
                 query=actual["question"],

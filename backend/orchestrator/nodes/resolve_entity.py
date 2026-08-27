@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -271,7 +272,7 @@ def make_resolve_entity_node(
             )
             return {"entity": None}
 
-        resolved: list[dict] = []
+        lookups: list[tuple[str, str, NamedEntityType]] = []
         for entity_type, entity_name in extractions:
             if _is_entity_type_alias(entity_name, entity_types):
                 logger.info(
@@ -291,9 +292,35 @@ def make_resolve_entity_node(
                 )
                 continue
 
-            entity = await _find_entity_by_name(config, entity_name, pool)
+            lookups.append((entity_type, entity_name, config))
+
+        # 이름별 조회는 서로 독립적이라 asyncio.gather로 동시에 실행해
+        # 지연시간과 풀 점유시간을 줄인다. gather는 입력 순서를 그대로
+        # 보존한 리스트를 반환하므로, 아래에서 "질문에 등장한 순서대로
+        # 처리하고 첫 실패에서 raise"하는 기존 동작은 그대로 유지된다.
+        found_entities = await asyncio.gather(
+            *(_find_entity_by_name(config, name, pool) for _, name, config in lookups)
+        )
+        missing_indices = [
+            index for index, entity in enumerate(found_entities) if entity is None
+        ]
+        candidates_by_index: dict[int, list[dict]] = {}
+        if missing_indices:
+            candidates_list = await asyncio.gather(
+                *(
+                    _find_similar_entities(lookups[index][2], lookups[index][1], pool)
+                    for index in missing_indices
+                )
+            )
+            candidates_by_index = dict(
+                zip(missing_indices, candidates_list, strict=True)
+            )
+
+        resolved: list[dict] = []
+        for index, (entity_type, entity_name, config) in enumerate(lookups):
+            entity = found_entities[index]
             if entity is None:
-                candidates = await _find_similar_entities(config, entity_name, pool)
+                candidates = candidates_by_index[index]
                 confirmed_candidate = next(
                     (
                         candidate["entity"]

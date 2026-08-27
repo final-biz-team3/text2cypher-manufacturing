@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict
+from starlette.concurrency import run_in_threadpool
 
 from core.auth import (
     COOKIE_NAME,
@@ -48,7 +49,13 @@ async def _find_user_row(pool: Any, username: str) -> tuple[str, str, str] | Non
 async def login(request: LoginRequest, response: Response) -> dict[str, str]:
     row = await _find_user_row(get_pool(), request.username)
     password_hash = row[1] if row is not None else _DUMMY_HASH
-    password_ok = verify_password(request.password, password_hash)
+    # bcrypt.checkpw는 의도적으로 느린(~100-300ms) CPU 바운드 동기 함수라,
+    # async 핸들러 안에서 직접 부르면 그동안 이벤트 루프가 통째로 막혀
+    # 동시에 들어온 다른 모든 요청(예: /chat)이 대기하게 된다. 스레드풀로
+    # 넘겨 이벤트 루프를 막지 않게 한다.
+    password_ok = await run_in_threadpool(
+        verify_password, request.password, password_hash
+    )
     if row is None or not password_ok:
         raise HTTPException(
             status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다"

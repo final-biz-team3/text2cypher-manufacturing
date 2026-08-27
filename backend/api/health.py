@@ -1,9 +1,10 @@
 import os
 
+import psycopg
 from fastapi import APIRouter
 
 from core.neo4j import get_driver
-from core.postgres import get_pool
+from core.postgres import postgres_conninfo
 
 router = APIRouter()
 
@@ -24,7 +25,10 @@ async def health_check():
     postgres_detail = None
 
     try:
-        async with get_pool().connection() as conn:
+        # 트래픽용 read pool(get_pool())을 빌리지 않는다 - 부하로 풀이 꽉 차
+        # 있으면 DB 자체는 멀쩡한데도 헬스체크만 커넥션을 못 받아 타임아웃
+        # 나고, liveness probe로 쓰이는 경우 멀쩡한 pod가 재시작될 수 있다.
+        async with await psycopg.AsyncConnection.connect(postgres_conninfo()) as conn:
             await conn.execute("SELECT 1")
     except Exception as e:
         postgres_status = "error"

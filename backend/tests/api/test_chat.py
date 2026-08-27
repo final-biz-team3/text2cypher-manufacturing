@@ -2,7 +2,7 @@
 사용자 이름으로 대화기록을 저장하는 동작을 테스트한다."""
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -15,6 +15,14 @@ from tests.mocks.openai import (
     make_no_tool_call_response,
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
+
+
+def _fake_request() -> Request:
+    """chat()이 캐시된 그래프를 찾아보는 request.app.state.graph 접근을 만족시키는
+    최소 Request. lifespan을 거치지 않은 맨 FastAPI() 앱을 물려서, chat()이
+    캐시를 못 찾고(app.state에 graph가 없음) 기존처럼 그 자리에서 새로
+    그래프를 빌드하는 경로로 자연스럽게 빠지게 한다."""
+    return Request({"type": "http", "app": FastAPI(), "headers": []})
 
 
 async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
@@ -46,6 +54,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
                 "productName": "Touring-1000 Yellow, 54",
             },
         ),
+        request=_fake_request(),
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
@@ -88,6 +97,7 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
                 "productName": "Touring-1000 Yellow, 54",
             },
         ),
+        request=_fake_request(),
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
@@ -104,6 +114,9 @@ class _FailingWritePool:
 
     def connection(self) -> "_FailingWriteConnectionContext":
         return _FailingWriteConnectionContext()
+
+    def get_stats(self) -> dict[str, int]:
+        return {}
 
 
 class _FailingWriteConnectionContext:
@@ -146,6 +159,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
                 "productName": "Touring-1000 Yellow, 54",
             },
         ),
+        request=_fake_request(),
         user=CurrentUser(username="kim.quality", role="user"),
     )
 

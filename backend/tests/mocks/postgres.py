@@ -128,3 +128,6 @@ class MockAsyncWritePool:
 
     def connection(self) -> _WriteConnectionContext:
         return _WriteConnectionContext(self)
+
+    def get_stats(self) -> dict[str, Any]:
+        return {}

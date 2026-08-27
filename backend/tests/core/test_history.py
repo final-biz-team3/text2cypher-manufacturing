@@ -44,7 +44,7 @@ class _FakePool:
         self.committed = False
         self.rows = rows or []
 
-    def connection(self) -> _FakeConnectionContext:
+    def connection(self, timeout: float | None = None) -> _FakeConnectionContext:
         return _FakeConnectionContext(self)
 
 

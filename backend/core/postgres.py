@@ -10,7 +10,9 @@ _pool: AsyncConnectionPool | None = None
 _write_pool: AsyncConnectionPool | None = None
 
 
-def _conninfo() -> str:
+def postgres_conninfo() -> str:
+    """풀을 거치지 않는 일회성 커넥션(헬스체크 등)에도 재사용할 수 있도록
+    공개 함수로 둔다."""
     return psycopg.conninfo.make_conninfo(
         host=os.getenv("POSTGRES_HOST", "localhost"),
         port=os.getenv("POSTGRES_PORT", "5432"),
@@ -23,7 +25,7 @@ def _conninfo() -> str:
 async def bootstrap_postgres() -> None:
     """앱 시작 시 1회: pg_trgm 확장을 풀과 무관한 임시 커넥션으로 준비한다.
     read_only가 아닌 일반 커넥션이라 CREATE EXTENSION(쓰기)이 가능하다."""
-    async with await psycopg.AsyncConnection.connect(_conninfo()) as conn:
+    async with await psycopg.AsyncConnection.connect(postgres_conninfo()) as conn:
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
             await conn.commit()
@@ -54,7 +56,7 @@ def get_pool() -> AsyncConnectionPool:
     global _pool
     if _pool is None:
         _pool = AsyncConnectionPool(
-            _conninfo(),
+            postgres_conninfo(),
             configure=configure_connection,
             open=False,
             min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1")),
@@ -79,7 +81,7 @@ def get_write_pool() -> AsyncConnectionPool:
     global _write_pool
     if _write_pool is None:
         _write_pool = AsyncConnectionPool(
-            _conninfo(),
+            postgres_conninfo(),
             configure=configure_write_connection,
             open=False,
             min_size=int(os.getenv("POSTGRES_WRITE_POOL_MIN_SIZE", "1")),
@@ -89,8 +91,13 @@ def get_write_pool() -> AsyncConnectionPool:
 
 
 async def open_pool() -> None:
-    await get_pool().open()
-    await get_write_pool().open()
+    """wait=True로 풀이 min_size만큼 실제로 채워질 때까지 기다린다 - 안 그러면
+    open()이 바로 반환해 configure_connection() 실패나 DB 접속 불가 같은
+    문제가 있어도 시작은 성공한 것처럼 보이고, 첫 요청이 PoolTimeout까지
+    대기한 뒤에야 문제가 드러난다. 여기서 기다리면 시작 시점에 바로
+    실패해서(lifespan에서 예외가 위로 전파됨) 원인 파악이 쉬워진다."""
+    await get_pool().open(wait=True)
+    await get_write_pool().open(wait=True)
 
 
 async def close_pool() -> None:
