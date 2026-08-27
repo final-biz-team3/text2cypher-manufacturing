@@ -27,6 +27,14 @@ _FORBIDDEN_KEYWORDS = {
     "REINDEX",
     "REFRESH",
     "EXECUTE",
+    # evaluation/safety.py의 _SQL_WRITE와 대조하다 빠져있는 걸 발견해 추가함
+    # (2026-08-27) - 특히 DO는 익명 PL/pgSQL 블록이라 그 안에서 사실상
+    # 임의 코드를 실행할 수 있어 가장 우려됐던 항목.
+    "ANALYZE",
+    "CLUSTER",
+    "COMMENT",
+    "DO",
+    "LOCK",
 }
 
 _TABLE_REF_PATTERN = re.compile(

@@ -74,3 +74,27 @@ def test_sql_guard_blocks_unknown_table() -> None:
 
     assert result.allowed is False
     assert result.reason_code == "UNKNOWN_TABLE"
+
+
+def test_sql_guard_blocks_do_block() -> None:
+    """DO $$ ... $$는 익명 PL/pgSQL 블록으로 그 안에서 사실상 임의 코드를
+    실행할 수 있다 - $$...$$ 안에 세미콜론이 있어도 sqlparse가 단일
+    statement로 인식하므로(실측 확인) MULTIPLE_STATEMENTS가 아니라
+    WRITE_KEYWORD_DETECTED로 잡혀야 한다."""
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard(
+        "DO $$ BEGIN " "UPDATE production.product SET name = 'x'; " "END $$;"
+    )
+
+    assert result.allowed is False
+    assert result.reason_code == "WRITE_KEYWORD_DETECTED"
+
+
+def test_sql_guard_blocks_lock_table() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard("LOCK TABLE production.product")
+
+    assert result.allowed is False
+    assert result.reason_code == "WRITE_KEYWORD_DETECTED"
