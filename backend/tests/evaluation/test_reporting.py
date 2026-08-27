@@ -9,12 +9,12 @@ from evaluation.reporting import (
 from evaluation.runner import EvaluationRun
 
 
-def _record(case_id: str, *, passed: bool, route: str = "SQL") -> dict:
+def _record(case_id: str, *, passed: bool, route: str = "SQL", run: int = 1) -> dict:
     return {
         "caseId": case_id,
         "contractId": case_id,
         "suite": "canonical",
-        "run": 1,
+        "run": run,
         "route": route,
         "status": "PASS" if passed else "FAIL",
         "supportStatus": "FULLY_EVALUATED",
@@ -43,17 +43,64 @@ def _record(case_id: str, *, passed: bool, route: str = "SQL") -> dict:
 def test_metrics_calculate_stability_across_repeated_runs() -> None:
     metrics = calculate_metrics(
         [
-            _record("RQ01", passed=True),
-            _record("RQ01", passed=True),
-            _record("RQ02", passed=True),
-            _record("RQ02", passed=False),
+            _record("RQ01", passed=True, run=1),
+            _record("RQ01", passed=True, run=2),
+            _record("RQ02", passed=True, run=1),
+            _record("RQ02", passed=False, run=2),
+            _record("RQ03", passed=False, run=1),
+            _record("RQ03", passed=False, run=2),
         ]
     )
 
-    assert metrics["queryPipelineAccuracy"] == 0.75
-    assert metrics["caseStability"] == 0.5
+    assert metrics["queryPipelineAccuracy"] == 0.5
+    assert metrics["caseStability"] == 0.333333
     assert metrics["stablePassCaseIds"] == ["RQ01"]
-    assert metrics["persistentFailureCaseIds"] == []
+    assert metrics["persistentFailureCaseIds"] == ["RQ03"]
+    assert metrics["consistentPassCaseRate"] == 0.333333
+    assert metrics["caseOutcomeConsistency"] == 0.666667
+    assert metrics["consistentPassCaseIds"] == ["RQ01"]
+    assert metrics["variableCaseIds"] == ["RQ02"]
+    assert metrics["consistentFailCaseIds"] == ["RQ03"]
+    assert metrics["incompleteCaseIds"] == []
+    assert metrics["caseTrialSummary"]["RQ02"] == {
+        "totalTrials": 2,
+        "completedTrials": 2,
+        "passCount": 1,
+        "passRate": 0.5,
+        "outcome": "VARIABLE",
+    }
+
+
+def test_report_summarizes_repeated_trial_outcomes(tmp_path: Path) -> None:
+    records = [
+        _record("RQ01", passed=True, run=1),
+        _record("RQ01", passed=True, run=2),
+        _record("RQ02", passed=True, run=1),
+        _record("RQ02", passed=False, run=2),
+        _record("RQ03", passed=False, run=1),
+        _record("RQ03", passed=False, run=2),
+    ]
+    result = EvaluationRun(records, {"sha256": "snapshot"}, False)
+    summary = build_summary(
+        result,
+        model="test-model",
+        commit="commit",
+        validate_gold=False,
+        working_tree_dirty=False,
+    )
+
+    write_artifacts(tmp_path, summary, records)
+
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "## 반복 실행 안정성" in report
+    assert "| 전회 PASS case | 1/3 | 33.3% |" in report
+    assert "| 실행별 변동 case | 1/3 | 33.3% |" in report
+    assert "| 전회 FAIL case | 1/3 | 33.3% |" in report
+    assert "| 결과 일관 case | 2/3 | 66.7% |" in report
+    assert "전회 FAIL도 일관 case에 포함됩니다" in report
+    assert "| RQ01 | 2/2 | 2/2 | 전회 PASS |" in report
+    assert "| RQ02 | 2/2 | 1/2 | 실행별 변동 |" in report
+    assert "| RQ03 | 2/2 | 0/2 | 전회 FAIL |" in report
 
 
 def test_metrics_separate_pipeline_from_result_coverage() -> None:
@@ -204,7 +251,8 @@ def test_report_is_compact_and_keeps_query_details_in_evaluation_json(
     assert "| 채점 실행 완료 (인프라 정상) | 1/1 | 100% |" in report
     assert "| 엄격 파이프라인 PASS | 0/1 | 0% |" in report
     assert "| 의미 결과 비교 가능 | 1/1 | 100% |" in report
-    assert "| 의미 결과 정확도 | 0/1 | 0% |" in report
+    assert "| 검증된 의미 PASS | 0/1 | 0% |" in report
+    assert "| 비교 가능한 결과 중 정확도 | 0/1 | 0% |" in report
     assert "## Route별 엄격 PASS" in report
     assert "| SQL | 0/1 | 0% |" in report
     assert "| RQ01 | 1 | SQL |" in report
@@ -304,6 +352,8 @@ def test_gold_report_shows_validation_status_route_and_partial_count(
     assert "| 작업 상태 | dirty |" in report
     assert "| Gold 검증 완료 | 1/1 | 100% |" in report
     assert "| Gold 부분 쿼리 PASS | 2/2 | 100% |" in report
+    assert "| Case ID | Run | Route |" in report
+    assert "| RQ ID |" not in report
     assert "| RQ18 | 1 | HYBRID | - | - | - | PASS | PASS | - | - |" in report
     assert "Gold 검증 질문" not in report
 

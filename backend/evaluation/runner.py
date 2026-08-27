@@ -266,6 +266,8 @@ class EvaluationRunner:
         context = entity
         if inputs:
             context = {"resolvedEntities": entity, "upstreamBindings": inputs}
+        # expected의 업무 규칙·출력 계약은 채점 전용이다. 후보 생성에 넣으면
+        # production에는 없는 정답 힌트를 제공하게 된다.
         if expected.tool == "sql":
             query = self._run_async(
                 generate_sql(
@@ -273,8 +275,6 @@ class EvaluationRunner:
                     query=actual["question"],
                     entity=context,
                     schema_text=self.sql_schema_text,
-                    business_rules=expected.business_rules,
-                    required_outputs=expected.required_outputs,
                 )
             )
             validate_read_only_sql(query)
@@ -286,8 +286,6 @@ class EvaluationRunner:
                 entity=context,
                 schema_text=self.graph_schema_text,
                 query_policy=self.graph_query_policy,
-                business_rules=expected.business_rules,
-                required_outputs=expected.required_outputs,
             )
         )
         validate_read_only_cypher(query)
@@ -513,7 +511,7 @@ class EvaluationRunner:
         except OpenAIError as exc:
             raise InfrastructureError(f"OpenAI route 생성 실패: {exc}") from exc
         except RoutePlanError as exc:
-            plan = {"tool_plan": None, "subqueries": []}
+            plan = {"tool_plan": exc.tool_plan, "subqueries": []}
             record["planningError"] = str(exc)
             record["planningResponse"] = exc.raw_response
         except ValueError as exc:

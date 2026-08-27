@@ -109,3 +109,28 @@ async def test_route_query_rejects_invalid_plan(tool_plan_json: str) -> None:
         await node({"query": "질의", "entity": None})
 
     assert exc_info.value.raw_response == tool_plan_json
+    assert exc_info.value.tool_plan is None
+
+
+async def test_route_query_preserves_valid_route_when_subquery_plan_is_invalid() -> (
+    None
+):
+    """하위 계획 검증 실패가 올바른 HYBRID route 선택까지 지우지 않는다."""
+    raw_response = (
+        '{"tool_plan":["graph","sql"],"subqueries":['
+        '{"id":"graph_step","tool":"graph","question":"경로 조회",'
+        '"dependsOn":[],"requiredOutputs":["componentId"],'
+        '"joinKeys":["componentId"]},'
+        '{"id":"sql_step","tool":"sql","question":"재고 조회",'
+        '"dependsOn":["graph_step"],'
+        '"inputBindings":{"componentIds":"graph_step.componentId"},'
+        '"requiredOutputs":[],"joinKeys":["componentId"]}]}'
+    )
+    openai_client = MockOpenAIClient(make_content_response(raw_response))
+    node = make_route_query_node(openai_client)
+
+    with pytest.raises(RoutePlanError) as exc_info:
+        await node({"query": "영향 경로와 재고를 알려줘.", "entity": None})
+
+    assert "joinKeys는 requiredOutputs에 포함" in str(exc_info.value)
+    assert exc_info.value.tool_plan == ["graph", "sql"]

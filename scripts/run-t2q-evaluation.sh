@@ -19,6 +19,8 @@ if [[ -n "${EVAL_PYTHON:-}" ]]; then
   eval_python="${EVAL_PYTHON}"
 elif [[ -x "${project_root}/backend/venv/bin/python" ]]; then
   eval_python="${project_root}/backend/venv/bin/python"
+elif [[ -x "${project_root}/backend/venv/Scripts/python.exe" ]]; then
+  eval_python="${project_root}/backend/venv/Scripts/python.exe"
 elif command -v python3 >/dev/null 2>&1; then
   eval_python="$(command -v python3)"
 else
@@ -115,7 +117,12 @@ else:
         len(completed),
     )
     score(
-        "의미 결과 정확도",
+        "검증된 의미 PASS",
+        sum(record.get("semanticResultPass") is True for record in completed),
+        len(completed),
+    )
+    score(
+        "비교 가능한 결과 중 정확도",
         sum(record.get("semanticResultPass") is True for record in semantic_applicable),
         len(semantic_applicable),
     )

@@ -141,6 +141,60 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     records_by_case: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
         records_by_case[record["caseId"]].append(record)
+
+    case_trial_summary: dict[str, dict[str, Any]] = {}
+    for case_id, case_records in sorted(records_by_case.items()):
+        completed = [
+            record for record in case_records if record.get("status") != "ERROR"
+        ]
+        pass_count = sum(
+            record.get("queryPipelinePass") is True for record in completed
+        )
+        if len(completed) != len(case_records):
+            outcome = "INCOMPLETE"
+        elif pass_count == len(completed):
+            outcome = "CONSISTENT_PASS"
+        elif pass_count == 0:
+            outcome = "CONSISTENT_FAIL"
+        else:
+            outcome = "VARIABLE"
+        case_trial_summary[case_id] = {
+            "totalTrials": len(case_records),
+            "completedTrials": len(completed),
+            "passCount": pass_count,
+            "passRate": _ratio(pass_count, len(completed)),
+            "outcome": outcome,
+        }
+
+    complete_trial_cases = [
+        case_id
+        for case_id, trial in case_trial_summary.items()
+        if trial["outcome"] != "INCOMPLETE"
+    ]
+    consistent_pass_case_ids = [
+        case_id
+        for case_id in complete_trial_cases
+        if case_trial_summary[case_id]["outcome"] == "CONSISTENT_PASS"
+    ]
+    variable_case_ids = [
+        case_id
+        for case_id in complete_trial_cases
+        if case_trial_summary[case_id]["outcome"] == "VARIABLE"
+    ]
+    consistent_fail_case_ids = [
+        case_id
+        for case_id in complete_trial_cases
+        if case_trial_summary[case_id]["outcome"] == "CONSISTENT_FAIL"
+    ]
+    incomplete_case_ids = [
+        case_id
+        for case_id, trial in case_trial_summary.items()
+        if trial["outcome"] == "INCOMPLETE"
+    ]
+
+    # 기존 필드는 evaluation.json 소비자를 위해 그대로 유지한다. 이름과 달리
+    # 실제 의미는 "모든 완료 trial을 통과한 case 비율"이므로, 아래의 명확한
+    # 신규 필드를 보고서와 신규 소비자에서 사용한다.
     stable_pass_case_ids = sorted(
         case_id
         for case_id, case_records in records_by_case.items()
@@ -226,6 +280,18 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "caseStability": _ratio(len(stable_pass_case_ids), len(records_by_case)),
         "stablePassCaseIds": stable_pass_case_ids,
         "persistentFailureCaseIds": persistent_failure_case_ids,
+        "consistentPassCaseRate": _ratio(
+            len(consistent_pass_case_ids), len(complete_trial_cases)
+        ),
+        "caseOutcomeConsistency": _ratio(
+            len(consistent_pass_case_ids) + len(consistent_fail_case_ids),
+            len(complete_trial_cases),
+        ),
+        "consistentPassCaseIds": consistent_pass_case_ids,
+        "variableCaseIds": variable_case_ids,
+        "consistentFailCaseIds": consistent_fail_case_ids,
+        "incompleteCaseIds": incomplete_case_ids,
+        "caseTrialSummary": case_trial_summary,
         "fullyEvaluatedCount": len(fully_contracts),
         "suiteScores": suite_scores,
     }
@@ -449,8 +515,11 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                 score_row(
                     "의미 결과 비교 가능", len(semantic_applicable), len(completed)
                 ),
+                score_row("검증된 의미 PASS", semantic_passed, len(completed)),
                 score_row(
-                    "의미 결과 정확도", semantic_passed, len(semantic_applicable)
+                    "비교 가능한 결과 중 정확도",
+                    semantic_passed,
+                    len(semantic_applicable),
                 ),
                 score_row("최종 결과 평가 대상", len(final_evaluated), len(completed)),
                 score_row(
@@ -464,6 +533,64 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
             [
                 "",
                 "> 채점 실행 완료는 정답률이 아니라 인프라 오류 없이 채점된 비율입니다.",
+            ]
+        )
+        if runs > 1:
+            trial_summary = summary.get("metrics", {}).get("caseTrialSummary", {})
+            complete_trials = [
+                trial
+                for trial in trial_summary.values()
+                if trial.get("outcome") != "INCOMPLETE"
+            ]
+            consistent_pass = sum(
+                trial.get("outcome") == "CONSISTENT_PASS" for trial in complete_trials
+            )
+            variable = sum(
+                trial.get("outcome") == "VARIABLE" for trial in complete_trials
+            )
+            consistent_fail = sum(
+                trial.get("outcome") == "CONSISTENT_FAIL" for trial in complete_trials
+            )
+            outcome_labels = {
+                "CONSISTENT_PASS": "전회 PASS",
+                "VARIABLE": "실행별 변동",
+                "CONSISTENT_FAIL": "전회 FAIL",
+                "INCOMPLETE": "인프라 오류 포함",
+            }
+            lines.extend(
+                [
+                    "",
+                    "## 반복 실행 안정성",
+                    "",
+                    "| 지표 | 건수 | 비율 |",
+                    "|---|---:|---:|",
+                    score_row(
+                        "trial 완료 case", len(complete_trials), len(trial_summary)
+                    ),
+                    score_row("전회 PASS case", consistent_pass, len(complete_trials)),
+                    score_row("실행별 변동 case", variable, len(complete_trials)),
+                    score_row("전회 FAIL case", consistent_fail, len(complete_trials)),
+                    score_row(
+                        "결과 일관 case",
+                        consistent_pass + consistent_fail,
+                        len(complete_trials),
+                    ),
+                    "",
+                    "> 결과 일관성은 정답률이 아닙니다. 전회 FAIL도 일관 case에 포함됩니다.",
+                    "",
+                    "| Case ID | 완료 trial | 엄격 PASS | 판정 |",
+                    "|---|---:|---:|---|",
+                ]
+            )
+            for case_id, trial in trial_summary.items():
+                lines.append(
+                    f"| {cell(case_id)} | "
+                    f"{trial.get('completedTrials', 0)}/{trial.get('totalTrials', 0)} | "
+                    f"{trial.get('passCount', 0)}/{trial.get('completedTrials', 0)} | "
+                    f"{outcome_labels.get(str(trial.get('outcome')), '-')} |"
+                )
+        lines.extend(
+            [
                 "",
                 "## Route별 엄격 PASS",
                 "",
@@ -486,7 +613,7 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
             "",
             "## 질의별 결과",
             "",
-            "| RQ ID | Run | Route | Entity | Routing | Split | Execution | Result | 엄격 PASS | 실패 사유 |",
+            "| Case ID | Run | Route | Entity | Routing | Split | Execution | Result | 엄격 PASS | 실패 사유 |",
             "|---|---:|---|---|---|---|---|---|---|---|",
         ]
     )

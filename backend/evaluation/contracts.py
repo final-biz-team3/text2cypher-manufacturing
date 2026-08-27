@@ -1,5 +1,7 @@
 """생성된 라우팅·분할 계획과 evaluator manifest 계약 비교."""
 
+import math
+from decimal import Decimal
 from typing import Any
 
 from evaluation.models import EvaluationCase, EvaluationContract
@@ -145,6 +147,24 @@ def _entity_items(value: Any) -> list[dict[str, Any]] | None:
     return None
 
 
+def _normalized_integral_id(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        normalized = Decimal(str(value))
+    else:
+        normalized = Decimal(value)
+    if not normalized.is_finite() or normalized != normalized.to_integral_value():
+        return None
+    return normalized
+
+
+def _is_entity_id_field(field: str) -> bool:
+    return field == "id" or field.endswith(("Id", "ID", "_id"))
+
+
 def _entity_value_matches(field: str, expected: Any, actual: Any) -> bool:
     if field.casefold().endswith("name"):
         return (
@@ -152,6 +172,17 @@ def _entity_value_matches(field: str, expected: Any, actual: Any) -> bool:
             and isinstance(actual, str)
             and " ".join(expected.casefold().split())
             == " ".join(actual.casefold().split())
+        )
+    if _is_entity_id_field(field) and (
+        isinstance(expected, int | float | Decimal)
+        or isinstance(actual, int | float | Decimal)
+    ):
+        normalized_expected = _normalized_integral_id(expected)
+        normalized_actual = _normalized_integral_id(actual)
+        return (
+            normalized_expected is not None
+            and normalized_actual is not None
+            and normalized_expected == normalized_actual
         )
     return type(expected) is type(actual) and expected == actual
 
