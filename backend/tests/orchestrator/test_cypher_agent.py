@@ -105,7 +105,7 @@ async def test_cypher_agent_does_not_retry_on_connection_error() -> None:
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "could not connect to server"
+    assert result["error"] == "접속 오류가 발생했습니다."
     assert len(openai_client.calls) == 1
 
 

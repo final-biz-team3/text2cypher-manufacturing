@@ -12,6 +12,9 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from orchestrator.guards.audit import log_guard_decision
+from orchestrator.guards.result import GuardResult
+
 # 원본 1회 + 재시도 2회 = 총 3회
 MAX_ATTEMPTS = 3
 
@@ -56,6 +59,7 @@ def make_retry_agent_subgraph(
     connection_exceptions: tuple[type[Exception], ...],
     retryable_exceptions: tuple[type[Exception], ...],
     empty_result_feedback: str,
+    guard: Callable[[str], GuardResult] | None = None,
 ) -> CompiledStateGraph:
     """query/entity/schema를 state에서 읽어 쿼리 문자열을 생성하는 generate와,
     쿼리 문자열을 실행하는 execute를 주입받아 재시도 SubGraph를 만든다.
@@ -64,7 +68,9 @@ def make_retry_agent_subgraph(
     순서를 바꾸면 재시도 대상인데도 접속 오류로 오분류된다). execute 내부 구현
     (DB 접속, READ 전용 가드, rollback/commit)은 이 함수의 책임이 아니며 이미
     올바르게 구현되어 있다는 전제로 호출만 한다. 그래프 내부에서는 절대
-    raise하지 않고 error 필드로만 실패를 전달한다."""
+    raise하지 않고 error 필드로만 실패를 전달한다.
+    guard가 주어지면 execute 호출 직전에 쿼리를 검증하고, 차단 시 execute를
+    호출하지 않은 채 재시도 대상으로 처리한다(attempt_count에 포함)."""
 
     def feedback_text(error: str | None) -> str | None:
         if error is None:
@@ -97,24 +103,46 @@ def make_retry_agent_subgraph(
         query_text = state["messages"][-1]["content"]
         attempts = state.get("attempts", [])
 
-        def failure(exc: Exception, *, retryable: bool) -> dict:
+        def failure(message: str, *, retryable: bool) -> dict:
             return {
-                "error": str(exc),
+                "error": message,
                 "result": None,
-                "attempts": [*attempts, {"query": query_text, "error": str(exc)}],
+                "attempts": [*attempts, {"query": query_text, "error": message}],
                 "retryable": retryable,
             }
+
+        if guard is not None:
+            guard_result = guard(query_text)
+            log_guard_decision(
+                query_type=label,
+                intent=state["query"],
+                decision="ALLOW" if guard_result.allowed else "BLOCK",
+                stage="pre_execution_guard",
+                reason=guard_result.reason_code,
+            )
+            if not guard_result.allowed:
+                logger.warning(
+                    "%s: 쿼리 가드 차단(%s): %s",
+                    label,
+                    guard_result.reason_code,
+                    guard_result.reason_detail,
+                )
+                return failure(
+                    f"쿼리 검증 실패({guard_result.reason_code}): "
+                    f"{guard_result.reason_detail}",
+                    retryable=True,
+                )
 
         try:
             result = await execute(query_text)
         except retryable_exceptions as exc:
             logger.warning("%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True)
-            return failure(exc, retryable=True)
+            return failure(str(exc), retryable=True)
         except connection_exceptions as exc:
             logger.error(
                 "%s: 접속 오류(재시도 대상 아님): %s", label, exc, exc_info=True
             )
-            return failure(exc, retryable=False)
+            return failure("접속 오류가 발생했습니다.", retryable=False)
         except Exception as exc:
             # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망
             logger.error(
@@ -123,7 +151,7 @@ def make_retry_agent_subgraph(
                 exc,
                 exc_info=True,
             )
-            return failure(exc, retryable=False)
+            return failure(str(exc), retryable=False)
 
         if not result:
             new_attempts = [
