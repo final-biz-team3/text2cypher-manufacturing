@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 from core.auth import CurrentUser, get_current_user
 from core.history import save_conversation
 from core.openai_client import get_openai_client
-from core.postgres import get_connection
+from core.postgres import get_connection, get_history_write_connection
 from orchestrator.graph import build_orchestrator_graph
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ async def chat(
     }
     try:
         save_conversation(
-            connection,
+            get_history_write_connection(),
             user.username,
             response["query"],
             response["final_answer"],

@@ -71,6 +71,19 @@ FROM pg_namespace
 WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema'
 \gexec
 
+-- 사용자 생성 SQL은 default_transaction_read_only 세션으로 실행하고,
+-- 대화기록 저장 전용 세션에만 아래의 최소 INSERT 권한을 사용한다.
+SELECT format('GRANT INSERT ON TABLE app.conversation_history TO %I', :'app_user')
+WHERE to_regclass('app.conversation_history') IS NOT NULL
+\gexec
+
+SELECT format(
+  'GRANT USAGE, SELECT ON SEQUENCE app.conversation_history_id_seq TO %I',
+  :'app_user'
+)
+WHERE to_regclass('app.conversation_history_id_seq') IS NOT NULL
+\gexec
+
 SELECT format(
   'ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT ON TABLES TO %I',
   nspname,

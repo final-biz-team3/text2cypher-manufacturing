@@ -22,6 +22,16 @@ _READ = make_content_response(
 )
 
 
+@pytest.fixture(autouse=True)
+def _use_test_connection_for_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """API 단위 테스트에서는 각 테스트가 주입한 fake를 저장 세션에도 쓴다."""
+    monkeypatch.setattr(
+        chat_module,
+        "get_history_write_connection",
+        lambda: chat_module.get_connection(),
+    )
+
+
 def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

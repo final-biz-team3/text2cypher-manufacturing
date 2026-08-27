@@ -30,6 +30,10 @@ def test_postgres_provisioning_runs_for_new_and_existing_volumes() -> None:
     assert "'TEMPORARY'" in provisioner
     assert "database.datdba = app_role.oid" in provisioner
     assert "application_role_is_read_only" in provisioner
+    assert "GRANT INSERT ON TABLE app.conversation_history" in provisioner
+    assert (
+        "GRANT USAGE, SELECT ON SEQUENCE app.conversation_history_id_seq" in provisioner
+    )
 
 
 def test_neo4j_readiness_and_password_provisioning_avoid_shell_injection() -> None:

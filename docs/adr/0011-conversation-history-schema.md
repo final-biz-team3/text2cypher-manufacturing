@@ -41,6 +41,20 @@ CREATE TABLE IF NOT EXISTS app.conversation_history (
 
 현재 공유 DB에 이미 만들어져 있어 지금 당장 실행할 절차는 아니다. DB가 재생성되는 상황이 오면 위 DDL을 그대로 실행하면 된다.
 
+### 4. 조회 쿼리와 대화기록 저장 세션 분리
+
+사용자 질문에서 생성한 SQL은 `default_transaction_read_only=on`인 조회 전용
+세션으로만 실행한다. 대화기록 INSERT는 같은 애플리케이션 역할의 별도 세션을
+사용하며, 이 역할에는 `app.conversation_history`의 INSERT와 ID 시퀀스 사용
+권한만 예외적으로 부여한다. 저장 세션은 오케스트레이터나 생성 SQL 실행기에
+전달하지 않는다.
+
+기존 볼륨을 포함한 권한 적용은 다음 명령으로 다시 실행할 수 있다.
+
+```bash
+docker compose run --rm postgres-init
+```
+
 ## 검토했으나 채택하지 않은 대안
 
 **컬럼을 TEXT로 두고 애플리케이션에서 직접 `json.dumps`/`json.loads`.** JSONB를 쓰면 얻는 자동 역직렬화, 인덱싱·쿼리 가능성(예: `sql_result->>'error'` 조건 검색)을 포기하는 대신 얻는 이점이 없어서 기각했다.

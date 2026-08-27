@@ -54,6 +54,22 @@ def test_postgres_app_role_can_read_but_cannot_write() -> None:
             "SELECT has_database_privilege("
             "current_user, current_database(), 'TEMPORARY')"
         ).fetchone() == (False,)
+        assert connection.execute(
+            "SELECT to_regclass('app.conversation_history') IS NOT NULL"
+        ).fetchone() == (True,)
+        history_privileges = connection.execute("""
+            SELECT
+              has_table_privilege(
+                current_user, 'app.conversation_history', 'INSERT'
+              ),
+              has_table_privilege(
+                current_user, 'app.conversation_history', 'UPDATE'
+              ),
+              has_table_privilege(
+                current_user, 'app.conversation_history', 'DELETE'
+              )
+            """).fetchone()
+        assert history_privileges == (True, False, False)
 
         with pytest.raises(InsufficientPrivilege):
             connection.execute("DELETE FROM production.product WHERE false")
