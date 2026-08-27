@@ -179,3 +179,24 @@ def test_cypher_agent_marks_empty_result_inconclusive_after_budget_exhausted() -
     assert result["empty_reason"] == "INCONCLUSIVE"
     assert result["attempt_count"] == 3
     assert len(result["attempts"]) == 3
+
+
+def test_cypher_agent_rejects_write_before_executor_is_called() -> None:
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:Product) DELETE n RETURN n"),
+        make_content_response("MATCH (n:Product) DELETE n RETURN n"),
+        make_content_response("MATCH (n:Product) DELETE n RETURN n"),
+    )
+    executed: list[str] = []
+    subgraph = make_cypher_agent_subgraph(
+        openai_client,
+        execute_cypher=lambda cypher: executed.append(cypher),
+        query_policy=QUERY_POLICY,
+    )
+
+    result = subgraph.invoke(_initial_state())
+
+    assert executed == []
+    assert result["result"] is None
+    assert "쓰기 구문은 허용되지 않습니다" in result["error"]
+    assert result["attempt_count"] == 3

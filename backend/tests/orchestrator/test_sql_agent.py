@@ -20,7 +20,7 @@ def _initial_state(query: str = "제품 수를 알려줘.") -> dict:
 def test_sql_agent_returns_result_when_execution_succeeds() -> None:
     """실행이 성공하면 result를 채우고 error는 None이다."""
     openai_client = MockOpenAIClient(
-        make_content_response("SELECT COUNT(*) FROM production.product")
+        make_content_response("SELECT pg_catalog.count(*) FROM production.product")
     )
     subgraph = make_sql_agent_subgraph(
         openai_client, execute_sql=lambda sql: [{"count": 10}]
@@ -31,7 +31,8 @@ def test_sql_agent_returns_result_when_execution_succeeds() -> None:
     assert result["result"] == [{"count": 10}]
     assert result["error"] is None
     assert (
-        result["messages"][-1]["content"] == "SELECT COUNT(*) FROM production.product"
+        result["messages"][-1]["content"]
+        == "SELECT pg_catalog.count(*) FROM production.product"
     )
     assert len(openai_client.calls) == 1
 
@@ -58,7 +59,7 @@ def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
     """실행 오류(화이트리스트)가 나면 쿼리를 재생성해 재시도하고, 성공하면 종료한다."""
     openai_client = MockOpenAIClient(
         make_content_response("SELECT bad_column FROM production.product"),
-        make_content_response("SELECT COUNT(*) FROM production.product"),
+        make_content_response("SELECT pg_catalog.count(*) FROM production.product"),
     )
     calls = []
 
@@ -86,7 +87,7 @@ def test_sql_agent_retries_after_query_canceled_then_succeeds() -> None:
     종료되면 안 된다."""
     openai_client = MockOpenAIClient(
         make_content_response("SELECT * FROM production.product"),
-        make_content_response("SELECT COUNT(*) FROM production.product"),
+        make_content_response("SELECT pg_catalog.count(*) FROM production.product"),
     )
     calls = []
 
@@ -108,7 +109,7 @@ def test_sql_agent_retries_after_query_canceled_then_succeeds() -> None:
 def test_sql_agent_does_not_retry_on_connection_error() -> None:
     """접속(인프라) 오류는 쿼리를 재생성해도 해결되지 않으므로 재시도하지 않는다."""
     openai_client = MockOpenAIClient(
-        make_content_response("SELECT COUNT(*) FROM production.product")
+        make_content_response("SELECT pg_catalog.count(*) FROM production.product")
     )
 
     def execute_sql(sql: str) -> None:

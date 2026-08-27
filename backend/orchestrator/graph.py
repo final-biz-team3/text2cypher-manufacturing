@@ -23,7 +23,10 @@ from orchestrator.nodes.normalize_terms import (
 )
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import make_route_query_node
-from orchestrator.nodes.validate_generated_queries import validate_generated_queries
+from orchestrator.nodes.validate_generated_queries import (
+    route_after_query_guard,
+    validate_generated_queries,
+)
 from orchestrator.state import OrchestratorState, get_effective_query
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
 from orchestrator.subgraphs.sql_agent import make_sql_agent_subgraph
@@ -206,6 +209,10 @@ def build_orchestrator_graph(
     graph.add_edge("route_query", "sql_agent")
     graph.add_edge("sql_agent", "cypher_agent")
     graph.add_edge("cypher_agent", "validate_generated_queries")
-    graph.add_edge("validate_generated_queries", "generate_answer")
+    graph.add_conditional_edges(
+        "validate_generated_queries",
+        route_after_query_guard,
+        {"continue": "generate_answer", "stop": END},
+    )
     graph.add_edge("generate_answer", END)
     return graph.compile()

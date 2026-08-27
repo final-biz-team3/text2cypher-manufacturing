@@ -1,6 +1,7 @@
 """라우팅 결과에 따라 생성된 SQL과 Cypher를 읽기 전용으로 검증한다."""
 
 import logging
+from collections.abc import Mapping
 
 from guard.query_read_guard import validate_cypher_read_only, validate_sql_read_only
 from orchestrator.state import (
@@ -58,3 +59,10 @@ def validate_generated_queries(state: OrchestratorState) -> QueryGuardNodeResult
     if not allowed:
         response["error"] = "생성된 쿼리가 읽기 전용 정책을 통과하지 못했습니다."
     return response
+
+
+def route_after_query_guard(state: Mapping[str, object]) -> str:
+    """최종 생성 쿼리까지 통과한 경우에만 답변 생성으로 보낸다."""
+    if state.get("execution_allowed") is True:
+        return "continue"
+    return "stop"

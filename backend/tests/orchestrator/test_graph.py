@@ -69,8 +69,7 @@ def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
     }
     assert result["tool_plan"] == ["sql"]
     assert result["sql_query"] == (
-        "SELECT listprice, standardcost FROM production.product "
-        "WHERE productid = 956"
+        "SELECT listprice, standardcost FROM production.product WHERE productid = 956"
     )
     assert result["sql_result"]["result"] is None
     assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
@@ -130,7 +129,7 @@ def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
             "WHERE productid = 956"
         ),
         make_content_response(
-            "MATCH (p:Product {productId: 956})<-[:SUPPLIES]-(s:Supplier) " "RETURN s"
+            "MATCH (p:Product {productId: 956})<-[:SUPPLIES]-(s:Supplier) RETURN s"
         ),
     )
     postgres_connection = MockPostgresConnection(
@@ -150,8 +149,7 @@ def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
     assert result["tool_plan"] == ["sql", "graph"]
 
     assert result["sql_query"] == (
-        "SELECT listprice, standardcost FROM production.product "
-        "WHERE productid = 956"
+        "SELECT listprice, standardcost FROM production.product WHERE productid = 956"
     )
     assert result["sql_result"]["result"] is None
     assert "SQL 실행/검증은" in result["sql_result"]["error"]
@@ -200,3 +198,25 @@ def test_graph_stops_before_llm_when_user_requests_write(caplog) -> None:
     assert result.get("tool_plan") is None
     assert openai_client.calls == []
     assert "detected_actions" in caplog.text
+
+
+def test_graph_stops_before_answer_when_generated_query_is_blocked() -> None:
+    unsafe = make_content_response("MATCH (p:Product) DELETE p RETURN p")
+    openai_client = MockOpenAIClient(
+        _READ,
+        make_content_response("[]"),
+        make_content_response('["graph"]'),
+        unsafe,
+        unsafe,
+        unsafe,
+    )
+    graph = build_orchestrator_graph(
+        openai_client, MockPostgresConnection(rows_by_name={})
+    )
+
+    result = graph.invoke({"query": "제품 관계를 조회해줘."})
+
+    assert result["query_guard"]["decision"] == "BLOCKED"
+    assert result["execution_allowed"] is False
+    assert result.get("final_answer") is None
+    assert "읽기 전용 정책" in result["error"]

@@ -39,6 +39,7 @@ _CYPHER_WRITE_TOKENS = {
     "CALL",
     "CREATE",
     "DELETE",
+    "DETACH",
     "DROP",
     "FOREACH",
     "LOAD",
@@ -48,19 +49,27 @@ _CYPHER_WRITE_TOKENS = {
 }
 
 
-def _strip_literals_and_comments(query: str) -> str:
+def _mask_cypher_literals_and_comments(query: str) -> str:
+    """Cypher 문법에 맞춰 문자열·백틱 식별자·주석을 공백으로 가린다.
+
+    문자열은 백슬래시 이스케이프를 허용하지만 백틱 식별자는 연속 백틱(``)
+    으로만 백틱을 표현한다. PostgreSQL의 dollar-quoted string과 ``--`` 주석은
+    Cypher 문법이 아니므로 특별 취급하지 않는다.
+    """
     clean: list[str] = []
     index = 0
 
     while index < len(query):
         character = query[index]
 
-        if character in {"'", '"', "`"}:
+        if character in {"'", '"'}:
             quote = character
-            clean.append(quote * 2)
+            clean.append(" ")
             index += 1
             while index < len(query):
-                if query[index] == "\\":
+                clean.append(" ")
+                if query[index] == "\\" and index + 1 < len(query):
+                    clean.append(" ")
                     index += 2
                     continue
                 if query[index] == quote:
@@ -72,18 +81,22 @@ def _strip_literals_and_comments(query: str) -> str:
                 index += 1
             continue
 
-        if character == "$":
-            delimiter_match = re.match(
-                r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$", query[index:]
-            )
-            if delimiter_match is not None:
-                delimiter = delimiter_match.group(0)
-                closing = query.find(delimiter, index + len(delimiter))
-                clean.append("''")
-                index = len(query) if closing < 0 else closing + len(delimiter)
-                continue
+        if character == "`":
+            clean.append(" ")
+            index += 1
+            while index < len(query):
+                clean.append(" ")
+                if query[index] == "`":
+                    if index + 1 < len(query) and query[index + 1] == "`":
+                        clean.append(" ")
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            continue
 
-        if query.startswith("--", index) or query.startswith("//", index):
+        if query.startswith("//", index):
             newline = query.find("\n", index + 2)
             if newline < 0:
                 break
@@ -112,16 +125,15 @@ def _strip_literals_and_comments(query: str) -> str:
     return "".join(clean)
 
 
-def _has_multiple_statements(query: str) -> bool:
-    body = _strip_literals_and_comments(query).strip()
+def _has_multiple_statements(masked_query: str) -> bool:
+    body = masked_query.strip()
     if body.endswith(";"):
         body = body[:-1]
     return ";" in body
 
 
-def _tokens(query: str) -> list[str]:
-    clean = _strip_literals_and_comments(query)
-    return re.findall(r"[A-Za-z_]+", clean.upper())
+def _tokens(masked_query: str) -> list[str]:
+    return re.findall(r"[A-Za-z_]+", masked_query.upper())
 
 
 def _walk_ast(value: Any):
@@ -143,12 +155,18 @@ def _function_name(func_call: dict[str, Any]) -> str:
     return ".".join(parts).upper()
 
 
-def _is_allowed_function(function_name: str) -> bool:
+def _is_allowed_function(
+    function_name: str, *, allow_unqualified_functions: bool
+) -> bool:
     schema, separator, name = function_name.rpartition(".")
+    if not separator:
+        return allow_unqualified_functions and function_name in _SQL_ALLOWED_FUNCTIONS
     return bool(separator and schema == "PG_CATALOG" and name in _SQL_ALLOWED_FUNCTIONS)
 
 
-def validate_sql_read_only(query: str | None) -> list[GuardViolation]:
+def validate_sql_read_only(
+    query: str | None, *, allow_unqualified_functions: bool = False
+) -> list[GuardViolation]:
     if not query or not query.strip():
         return [
             {
@@ -224,7 +242,10 @@ def validate_sql_read_only(query: str | None) -> list[GuardViolation]:
     unsafe_functions = sorted(
         function_name
         for function_name in called_functions
-        if not _is_allowed_function(function_name)
+        if not _is_allowed_function(
+            function_name,
+            allow_unqualified_functions=allow_unqualified_functions,
+        )
     )
     if unsafe_functions:
         return [
@@ -249,7 +270,8 @@ def validate_cypher_read_only(query: str | None) -> list[GuardViolation]:
                 "message": "Cypher가 비어 있습니다.",
             }
         ]
-    if _has_multiple_statements(query):
+    masked_query = _mask_cypher_literals_and_comments(query)
+    if _has_multiple_statements(masked_query):
         return [
             {
                 "database": "neo4j",
@@ -257,7 +279,7 @@ def validate_cypher_read_only(query: str | None) -> list[GuardViolation]:
                 "message": "Cypher는 한 문장만 허용됩니다.",
             }
         ]
-    tokens = _tokens(query)
+    tokens = _tokens(masked_query)
     if "RETURN" not in tokens or not (
         {"MATCH", "OPTIONAL", "WITH", "UNWIND"} & set(tokens)
     ):

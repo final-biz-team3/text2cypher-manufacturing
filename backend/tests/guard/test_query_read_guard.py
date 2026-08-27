@@ -78,3 +78,19 @@ def test_allows_read_only_cypher(query: str) -> None:
 )
 def test_blocks_cypher_that_can_write_or_call(query: str) -> None:
     assert validate_cypher_read_only(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "MATCH (n:`safe\\`) SET n.flag = true RETURN n AS `tail`",
+        "MATCH (n) WHERE n.name = $tag$ SET n.flag = true RETURN $tag$",
+    ],
+)
+def test_cypher_write_tokens_cannot_be_hidden_by_foreign_escape_rules(
+    query: str,
+) -> None:
+    violations = validate_cypher_read_only(query)
+
+    assert violations
+    assert violations[0]["code"] == "WRITE_CLAUSE"
