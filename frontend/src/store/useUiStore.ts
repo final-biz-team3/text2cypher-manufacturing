@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
+import type { DisplayResult } from '@/types/query'
 
 // 여러 컴포넌트가 공유하는 전역 UI 상태(테마, 화면 단계, 패널 열림/접힘 등)
 export type Theme = 'light' | 'dark'
@@ -11,22 +13,75 @@ interface UiStore {
   evidencePanelOpen: boolean
   queryPanelCollapsed: boolean
   historyTab: SidebarTab
+  result: DisplayResult | null
+  errorMessage: string
   setTheme: (theme: Theme) => void
   setActiveScreen: (screen: ActiveScreen) => void
   toggleEvidencePanel: () => void
   toggleQueryPanelCollapsed: () => void
   setHistoryTab: (tab: SidebarTab) => void
+  setResult: (result: DisplayResult | null) => void
+  setErrorMessage: (message: string) => void
 }
 
-export const useUiStore = create<UiStore>((set) => ({
-  theme: 'light',
-  activeScreen: 'idle',
-  evidencePanelOpen: false,
-  queryPanelCollapsed: false,
-  historyTab: 'schema',
-  setTheme: (theme) => set({ theme }),
-  setActiveScreen: (activeScreen) => set({ activeScreen }),
-  toggleEvidencePanel: () => set((s) => ({ evidencePanelOpen: !s.evidencePanelOpen })),
-  toggleQueryPanelCollapsed: () => set((s) => ({ queryPanelCollapsed: !s.queryPanelCollapsed })),
-  setHistoryTab: (historyTab) => set({ historyTab }),
-}))
+// sessionStorage.setItem은 용량 초과(QuotaExceededError) 시 그대로 던지는데,
+// persist 미들웨어는 이 예외를 삼키지 않고 호출자의 set()까지 그대로 전파한다.
+// 그 상태에서 catch 블록이 또 다른 set()을 호출하면(예: 에러 화면 전환) 거기서도
+// 다시 던져 연쇄적으로 실패한다 - 저장 실패는 로그만 남기고 앱 로직은 계속되게 한다.
+const resilientSessionStorage: StateStorage = {
+  getItem: (name) => sessionStorage.getItem(name),
+  setItem: (name, value) => {
+    try {
+      sessionStorage.setItem(name, value)
+    } catch (err) {
+      console.error(
+        'UI 상태 저장 실패(용량 초과 등) - 새로고침 시 이번 변경은 복원되지 않습니다:',
+        err,
+      )
+    }
+  },
+  removeItem: (name) => sessionStorage.removeItem(name),
+}
+
+// 새로고침해도 사용자가 보던 화면 그대로 유지되도록 activeScreen/결과를
+// sessionStorage에 저장한다(탭을 닫으면 사라짐 - 브라우저를 껐다 켜도 지난
+// 대화가 그대로 남아있는 건 오히려 어색해서 localStorage 대신 세션 스토리지를 쓴다).
+// 입력창 텍스트(queryText)는 여기 안 둔다 - Dashboard.tsx 참고.
+export const useUiStore = create<UiStore>()(
+  persist(
+    (set) => ({
+      theme: 'light',
+      activeScreen: 'idle',
+      evidencePanelOpen: false,
+      queryPanelCollapsed: false,
+      historyTab: 'schema',
+      result: null,
+      errorMessage: '',
+      setTheme: (theme) => set({ theme }),
+      setActiveScreen: (activeScreen) => set({ activeScreen }),
+      toggleEvidencePanel: () => set((s) => ({ evidencePanelOpen: !s.evidencePanelOpen })),
+      toggleQueryPanelCollapsed: () =>
+        set((s) => ({ queryPanelCollapsed: !s.queryPanelCollapsed })),
+      setHistoryTab: (historyTab) => set({ historyTab }),
+      setResult: (result) => set({ result }),
+      setErrorMessage: (errorMessage) => set({ errorMessage }),
+    }),
+    {
+      name: 'kg-ui-state',
+      storage: createJSONStorage(() => resilientSessionStorage),
+      partialize: (state) => ({
+        theme: state.theme,
+        activeScreen: state.activeScreen,
+        result: state.result,
+        errorMessage: state.errorMessage,
+      }),
+      // 요청이 날아가던 도중 새로고침했다면 그 요청은 이미 사라진 것이라
+      // "답변을 생성하는 중입니다…" 화면이 영원히 멈춰있게 된다 - idle로 되돌린다.
+      onRehydrateStorage: () => (state) => {
+        if (state?.activeScreen === 'loading') {
+          state.activeScreen = 'idle'
+        }
+      },
+    },
+  ),
+)

@@ -14,6 +14,23 @@ export interface ResultColumn {
   label: string
 }
 
+export interface RetryAttempt {
+  query: string
+  error: string | null
+}
+
+// /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있게 정리한 형태
+export interface DisplayResult {
+  query: string
+  answer: string
+  sql: string | null
+  cypher: string | null
+  columns: ResultColumn[]
+  rows: Record<string, string>[]
+  sqlAttempts: RetryAttempt[]
+  cypherAttempts: RetryAttempt[]
+}
+
 export type NodeLabel =
   'Product' | 'Supplier' | 'WorkOrder' | 'RoutingOperation' | 'Location' | 'ScrapReason'
 

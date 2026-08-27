@@ -45,3 +45,9 @@ export async function fetchHealth(): Promise<Health> {
   const res = await api.get('/health')
   return HealthSchema.parse(res.data)
 }
+
+// 현재 로그인된 사용자 정보를 조회한다(비로그인 시 401)
+export async function fetchMe(): Promise<CurrentUser> {
+  const res = await api.get('/auth/me')
+  return CurrentUserSchema.parse(res.data)
+}

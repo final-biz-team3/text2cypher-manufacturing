@@ -15,7 +15,7 @@ import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
 import type { ChatResponse, HistoryEntry } from '@/lib/schemas'
-import type { ResultColumn, SelfCorrectionStep } from '@/types/query'
+import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
 const EXAMPLE_QUESTIONS: string[] = [
   '재고가 부족한 제품을 알려줘',
@@ -25,21 +25,6 @@ const EXAMPLE_QUESTIONS: string[] = [
 ]
 
 const READ_ONLY = true
-
-interface RetryAttempt {
-  query: string
-  error: string | null
-}
-
-interface DisplayResult {
-  answer: string
-  sql: string | null
-  cypher: string | null
-  columns: ResultColumn[]
-  rows: Record<string, string>[]
-  sqlAttempts: RetryAttempt[]
-  cypherAttempts: RetryAttempt[]
-}
 
 // /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있는 형태로 정리한다
 function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
@@ -52,6 +37,7 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
     ),
   )
   return {
+    query: response.query,
     answer: response.final_answer ?? '답변을 생성하지 못했습니다.',
     sql: response.sql_query ?? null,
     cypher: response.cypher_query ?? null,
@@ -83,13 +69,20 @@ export function Dashboard() {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
-  const [queryText, setQueryText] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [result, setResult] = useState<DisplayResult | null>(null)
-  const [errorMessage, setErrorMessage] = useState('')
-  // 화면 단계(activeScreen)와 패널 열림/접힘 상태는 여러 컴포넌트가 공유해야 해서 전역 store에 둔다.
+  // 입력창 텍스트는 로컬 상태로만 둔다 - store(sessionStorage 영속)에 두면 한
+  // 글자 칠 때마다 result(수백 행)까지 통째로 다시 직렬화해서 저장하게 된다.
+  // 새로고침 시 보여줄 초기값은 이미 복원된 result.query에서 가져온다(App.tsx가
+  // uiHydrated를 보장한 뒤에만 Dashboard가 마운트되므로 안전하다).
+  const [queryText, setQueryText] = useState(() => useUiStore.getState().result?.query ?? '')
+  // 새로고침해도 보던 화면 그대로 남아있어야 해서(결과/화면 단계 포함)
+  // 전역 store(sessionStorage 영속)에 둔다.
   const activeScreen = useUiStore((s) => s.activeScreen)
   const setActiveScreen = useUiStore((s) => s.setActiveScreen)
+  const result = useUiStore((s) => s.result)
+  const setResult = useUiStore((s) => s.setResult)
+  const errorMessage = useUiStore((s) => s.errorMessage)
+  const setErrorMessage = useUiStore((s) => s.setErrorMessage)
   const queryPanelCollapsed = useUiStore((s) => s.queryPanelCollapsed)
   const toggleQueryPanelCollapsed = useUiStore((s) => s.toggleQueryPanelCollapsed)
   const evidencePanelOpen = useUiStore((s) => s.evidencePanelOpen)
@@ -238,8 +231,12 @@ export function Dashboard() {
         {activeScreen === 'success' && result && (result.sql || result.cypher) ? (
           <GeneratedQueryPanel
             queries={[
-              ...(result.sql ? [{ label: '생성된 SQL', query: result.sql }] : []),
-              ...(result.cypher ? [{ label: '생성된 Cypher', query: result.cypher }] : []),
+              ...(result.sql
+                ? [{ label: '생성된 SQL', language: 'sql' as const, query: result.sql }]
+                : []),
+              ...(result.cypher
+                ? [{ label: '생성된 Cypher', language: 'cypher' as const, query: result.cypher }]
+                : []),
             ]}
             collapsed={queryPanelCollapsed}
             onToggleCollapsed={toggleQueryPanelCollapsed}

@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
+import cypher from 'react-syntax-highlighter/dist/esm/languages/prism/cypher'
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Button } from '@/components/ui/button'
+
+SyntaxHighlighter.registerLanguage('sql', sql)
+SyntaxHighlighter.registerLanguage('cypher', cypher)
 
 interface GeneratedQuery {
   label: string
+  language: 'sql' | 'cypher'
   query: string
 }
 
@@ -43,7 +51,12 @@ export function GeneratedQueryPanel({
       ) : (
         <div className="flex flex-1 flex-col overflow-y-auto">
           {queries.map((item) => (
-            <QueryBlock key={item.label} label={item.label} query={item.query} />
+            <QueryBlock
+              key={item.label}
+              label={item.label}
+              language={item.language}
+              query={item.query}
+            />
           ))}
         </div>
       )}
@@ -51,7 +64,7 @@ export function GeneratedQueryPanel({
   )
 }
 
-function QueryBlock({ label, query }: GeneratedQuery) {
+function QueryBlock({ label, language, query }: GeneratedQuery) {
   const [copied, setCopied] = useState(false)
 
   // "복사됨" 표시는 일정 시간 뒤 자동으로 사라진다. 컴포넌트가 언마운트된 뒤
@@ -77,21 +90,45 @@ function QueryBlock({ label, query }: GeneratedQuery) {
 
   return (
     <div className="flex flex-col border-b border-border">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-[11px] font-semibold uppercase text-text-faint">{label}</span>
+      {/* 코드 에디터 창처럼 보이도록 상단바에 macOS 스타일 점 3개 + 언어 라벨을 둔다 */}
+      <div className="flex items-center justify-between border-b border-code-text/10 bg-code px-3 py-2">
+        <div className="flex items-center gap-3">
+          <div className="flex gap-1.5">
+            <span className="size-2.5 rounded-full bg-fail" />
+            <span className="size-2.5 rounded-full bg-warn" />
+            <span className="size-2.5 rounded-full bg-success" />
+          </div>
+          <span className="text-[11px] font-semibold tracking-wide text-code-text/70 uppercase">
+            {label}
+          </span>
+        </div>
         <Button
           type="button"
           variant="outline"
           size="sm"
           onClick={handleCopy}
-          className="h-6 px-2 text-[11px]"
+          className="h-6 border-code-text/20 bg-code px-2 text-[11px] text-code-text hover:bg-code-text hover:text-code"
         >
           {copied ? '복사됨' : '복사'}
         </Button>
       </div>
-      <pre className="overflow-auto bg-code p-3 font-mono text-[12px] leading-relaxed text-code-text">
-        {query}
-      </pre>
+      <div className="overflow-x-auto bg-code">
+        <SyntaxHighlighter
+          language={language}
+          style={vscDarkPlus}
+          showLineNumbers
+          customStyle={{
+            margin: 0,
+            padding: '0.75rem',
+            background: 'transparent',
+            fontSize: '12px',
+            lineHeight: 1.6,
+          }}
+          lineNumberStyle={{ opacity: 0.4, minWidth: '2em' }}
+        >
+          {query}
+        </SyntaxHighlighter>
+      </div>
     </div>
   )
 }

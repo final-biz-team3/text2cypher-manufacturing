@@ -5,7 +5,8 @@ interface Props {
   children: React.ReactNode
 }
 
-// 인증되지 않은 사용자를 로그인 화면으로 보낸다
+// 인증되지 않은 사용자를 로그인 화면으로 보낸다.
+// idle/loading 상태는 App.tsx가 이 컴포넌트를 마운트하기 전에 이미 걸러낸다.
 export function ProtectedRoute({ children }: Props) {
   const status = useAuthStore((s) => s.status)
 
