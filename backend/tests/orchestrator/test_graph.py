@@ -6,10 +6,10 @@ from tests.mocks.openai import (
     make_content_response,
     make_tool_call_response,
 )
-from tests.mocks.postgres import MockPostgresConnection
+from tests.mocks.postgres import MockAsyncPostgresPool
 
 
-def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
+async def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
     """제품명이 있는 SQL형 질의는 entity 확정 후 sql_agent가 한 번 생성·실행을
     시도한다(execute_sql이 자리표시라 항상 실패하고 error에 담긴다)."""
     openai_client = MockOpenAIClient(
@@ -23,12 +23,12 @@ def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
             "WHERE productid = 956"
         ),
     )
-    postgres_connection = MockPostgresConnection(
+    pool = MockAsyncPostgresPool(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
     )
-    graph = build_orchestrator_graph(openai_client, postgres_connection)
+    graph = build_orchestrator_graph(openai_client, pool)
 
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {"query": "Touring-1000 Yellow, 54의 정가와 표준원가를 알려줘."}
     )
 
@@ -48,7 +48,7 @@ def test_graph_resolves_entity_then_runs_sql_agent_once() -> None:
     assert len(openai_client.calls) == 3
 
 
-def test_graph_routes_to_graph_and_runs_cypher_agent_once() -> None:
+async def test_graph_routes_to_graph_and_runs_cypher_agent_once() -> None:
     """부품 사용처를 묻는 질의는 entity 확정 후 graph로 라우팅되고 cypher_agent가
     한 번 생성·실행을 시도한다."""
     openai_client = MockOpenAIClient(
@@ -61,12 +61,10 @@ def test_graph_routes_to_graph_and_runs_cypher_agent_once() -> None:
             "WHERE part.productId = 492 RETURN parent"
         ),
     )
-    postgres_connection = MockPostgresConnection(
-        rows_by_name={"Paint - Black": (492, "Paint - Black")}
-    )
-    graph = build_orchestrator_graph(openai_client, postgres_connection)
+    pool = MockAsyncPostgresPool(rows_by_name={"Paint - Black": (492, "Paint - Black")})
+    graph = build_orchestrator_graph(openai_client, pool)
 
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {"query": "부품 Paint - Black을 사용하는 완제품을 최대 4단계까지 알려줘."}
     )
 
@@ -83,7 +81,7 @@ def test_graph_routes_to_graph_and_runs_cypher_agent_once() -> None:
     assert len(openai_client.calls) == 3
 
 
-def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
+async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
     """tool_plan이 ["sql", "graph"] Hybrid일 때 sql_agent와 cypher_agent가 각각
     독립적으로 실행되고, 한쪽의 attempts/error가 다른 쪽으로 섞이지 않는다."""
     openai_client = MockOpenAIClient(
@@ -100,12 +98,12 @@ def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
             "MATCH (p:Product {productId: 956})<-[:SUPPLIES]-(s:Supplier) " "RETURN s"
         ),
     )
-    postgres_connection = MockPostgresConnection(
+    pool = MockAsyncPostgresPool(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")}
     )
-    graph = build_orchestrator_graph(openai_client, postgres_connection)
+    graph = build_orchestrator_graph(openai_client, pool)
 
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {
             "query": (
                 "Touring-1000 Yellow, 54의 정가와 표준원가, "
@@ -134,17 +132,17 @@ def test_graph_runs_both_agents_independently_for_hybrid_tool_plan() -> None:
     assert len(openai_client.calls) == 4
 
 
-def test_graph_builds_final_answer_from_sql_result() -> None:
+async def test_graph_builds_final_answer_from_sql_result() -> None:
     """특정 제품을 지칭하지 않는 집계 질의도 sql_agent를 거쳐 final_answer가 채워진다."""
     openai_client = MockOpenAIClient(
         make_content_response("[]"),
         make_content_response('["sql"]'),
         make_content_response("SELECT COUNT(*) FROM production.product"),
     )
-    postgres_connection = MockPostgresConnection(rows_by_name={})
-    graph = build_orchestrator_graph(openai_client, postgres_connection)
+    pool = MockAsyncPostgresPool(rows_by_name={})
+    graph = build_orchestrator_graph(openai_client, pool)
 
-    result = graph.invoke({"query": "전체 제품 수를 알려줘."})
+    result = await graph.ainvoke({"query": "전체 제품 수를 알려줘."})
 
     assert result["entity"] is None
     assert result["tool_plan"] == ["sql"]

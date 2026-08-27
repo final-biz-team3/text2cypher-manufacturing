@@ -11,7 +11,7 @@ from tests.mocks.openai import (
 )
 
 
-def test_generate_query_returns_trimmed_response_content(
+async def test_generate_query_returns_trimmed_response_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """설정된 모델과 메시지를 전달하고 응답의 바깥 공백을 제거한다."""
@@ -24,7 +24,7 @@ def test_generate_query_returns_trimmed_response_content(
         {"role": "user", "content": '{"query": "제품을 알려줘."}'},
     ]
 
-    query = generate_query(openai_client, messages)
+    query = await generate_query(openai_client, messages)
 
     assert query == "SELECT productid FROM production.product"
     assert openai_client.calls == [
@@ -35,15 +35,15 @@ def test_generate_query_returns_trimmed_response_content(
     ]
 
 
-def test_generate_query_rejects_response_without_choices() -> None:
+async def test_generate_query_rejects_response_without_choices() -> None:
     """LLM 응답에 선택지가 없으면 원인을 알 수 있는 오류로 거부한다."""
     openai_client = MockOpenAIClient(MockChatCompletion(choices=[]))
 
     with pytest.raises(ValueError, match="LLM returned no query choices"):
-        generate_query(openai_client, [])
+        await generate_query(openai_client, [])
 
 
-def test_generate_query_requires_configured_model(
+async def test_generate_query_requires_configured_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """모델 설정이 누락되면 다른 모델로 대체하지 않고 즉시 실패한다."""
@@ -51,32 +51,32 @@ def test_generate_query_requires_configured_model(
     openai_client = MockOpenAIClient(make_content_response("SELECT 1"))
 
     with pytest.raises(KeyError, match="OPENAI_MODEL"):
-        generate_query(openai_client, [])
+        await generate_query(openai_client, [])
 
     assert openai_client.calls == []
 
 
-def test_generate_query_rejects_truncated_response() -> None:
+async def test_generate_query_rejects_truncated_response() -> None:
     """LLM 출력이 토큰 한도로 잘리면 불완전한 쿼리로 거부한다."""
     openai_client = MockOpenAIClient(
         make_content_response("SELECT * FROM", finish_reason="length")
     )
 
     with pytest.raises(ValueError, match="did not finish normally: length"):
-        generate_query(openai_client, [])
+        await generate_query(openai_client, [])
 
 
-def test_generate_query_rejects_none_content() -> None:
+async def test_generate_query_rejects_none_content() -> None:
     """LLM 응답 content가 없으면 빈 쿼리로 거부한다."""
     openai_client = MockOpenAIClient(make_no_tool_call_response())
 
     with pytest.raises(ValueError, match="LLM returned an empty query"):
-        generate_query(openai_client, [])
+        await generate_query(openai_client, [])
 
 
-def test_generate_query_rejects_blank_content() -> None:
+async def test_generate_query_rejects_blank_content() -> None:
     """LLM 응답이 공백뿐이면 빈 쿼리로 거부한다."""
     openai_client = MockOpenAIClient(make_content_response(" \n\t "))
 
     with pytest.raises(ValueError, match="LLM returned an empty query"):
-        generate_query(openai_client, [])
+        await generate_query(openai_client, [])

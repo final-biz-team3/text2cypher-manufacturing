@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.openai_client import get_openai_client  # noqa: E402
-from core.postgres import get_connection  # noqa: E402
+from core.postgres import bootstrap_postgres, get_pool, open_pool  # noqa: E402
 from orchestrator.graph import build_orchestrator_graph  # noqa: E402
 from tests.orchestrator.cypher_assertions import (  # noqa: E402
     has_product_id_path_uniqueness_guard,
@@ -163,15 +163,16 @@ def _assert_cypher_product_filter(query: str | None, product_id: int) -> None:
 
 
 @pytest.fixture
-def graph():
+async def graph():
     openai_client = get_openai_client()
-    postgres_connection = get_connection()
-    return build_orchestrator_graph(openai_client, postgres_connection)
+    await bootstrap_postgres()
+    await open_pool()
+    return build_orchestrator_graph(openai_client, get_pool())
 
 
-def test_rq01_priced_product_routes_to_sql(graph) -> None:
+async def test_rq01_priced_product_routes_to_sql(graph) -> None:
     """RQ01: 정가·표준원가 조회는 productId 956로 확정되고 sql로 라우팅된다."""
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {"query": "Touring-1000 Yellow, 54의 정가와 표준원가를 알려줘."}
     )
 
@@ -195,9 +196,9 @@ def test_rq01_priced_product_routes_to_sql(graph) -> None:
     assert result["cypher_query"] is None
 
 
-def test_rq02_multi_location_product_routes_to_sql(graph) -> None:
+async def test_rq02_multi_location_product_routes_to_sql(graph) -> None:
     """RQ02: 재고 위치 조회는 productId 747로 확정되고 sql로 라우팅된다."""
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {"query": "HL Mountain Frame - Black, 38의 재고 위치와 위치별 수량을 알려줘."}
     )
 
@@ -233,9 +234,9 @@ def test_rq02_multi_location_product_routes_to_sql(graph) -> None:
     assert result["cypher_query"] is None
 
 
-def test_rq08_stock_shortage_routes_to_sql(graph) -> None:
+async def test_rq08_stock_shortage_routes_to_sql(graph) -> None:
     """RQ08: 안전·실제·부족 재고 질의를 계산 SQL로 생성한다."""
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {"query": "제품 Paint - Black의 안전재고, 실제 재고와 부족 수량을 알려줘."}
     )
 
@@ -274,10 +275,10 @@ def test_rq08_stock_shortage_routes_to_sql(graph) -> None:
     assert result["cypher_query"] is None
 
 
-def test_rq12_component_usage_routes_to_graph(graph) -> None:
+async def test_rq12_component_usage_routes_to_graph(graph) -> None:
     """RQ12: 부품 사용처를 4단계까지 묻는 질의는 productId 492로 확정되고
     graph로 라우팅된다."""
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {"query": "부품 Paint - Black을 사용하는 완제품을 최대 4단계까지 알려줘."}
     )
 
@@ -299,9 +300,9 @@ def test_rq12_component_usage_routes_to_graph(graph) -> None:
     _assert_contains(result["cypher_query"], "sellablefinishedgood", "true")
 
 
-def test_rq13_finished_product_components_route_to_graph(graph) -> None:
+async def test_rq13_finished_product_components_route_to_graph(graph) -> None:
     """RQ13: 완제품의 하위 부품을 최대 4단계 Cypher로 생성한다."""
-    result = graph.invoke(
+    result = await graph.ainvoke(
         {
             "query": (
                 "완제품 HL Road Frame - Black, 58의 하위 부품을 "

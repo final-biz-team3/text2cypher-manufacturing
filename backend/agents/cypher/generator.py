@@ -8,7 +8,7 @@ from agents.cypher.schema.models import GraphQueryPolicy
 from agents.generator import generate_query
 
 
-def generate_cypher(
+async def generate_cypher(
     openai_client: Any,
     *,
     query: str,
@@ -33,4 +33,4 @@ def generate_cypher(
         previous_query=previous_query,
         previous_error=previous_error,
     )
-    return generate_query(openai_client, messages)
+    return await generate_query(openai_client, messages)

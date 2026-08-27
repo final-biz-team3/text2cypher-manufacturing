@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends
 
 from core.auth import CurrentUser, get_current_user
 from core.history import list_history
-from core.postgres import get_connection
+from core.postgres import get_pool
 
 router = APIRouter()
 
 
 @router.get("/history")
-def get_history(
+async def get_history(
     user: CurrentUser = Depends(get_current_user),  # noqa: B008
 ) -> list[dict]:
-    return list_history(get_connection(), user)
+    return await list_history(get_pool(), user)
