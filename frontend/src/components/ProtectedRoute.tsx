@@ -9,9 +9,6 @@ interface Props {
 export function ProtectedRoute({ children }: Props) {
   const status = useAuthStore((s) => s.status)
 
-  if (status === 'idle' || status === 'loading') {
-    return <div className="flex h-screen items-center justify-center text-text-muted">로딩 중…</div>
-  }
   if (status === 'unauthenticated') {
     return <Navigate to="/login" replace />
   }

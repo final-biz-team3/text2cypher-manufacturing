@@ -2,44 +2,25 @@ import { useEffect, useState } from 'react'
 import { TopBar } from '@/components/layout/TopBar'
 import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
-import { ExampleQuestionCard } from '@/components/query/ExampleQuestionCard'
 import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnswerBox'
 import { ResultsTable } from '@/components/result/ResultsTable'
 import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
 import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useHealthStore } from '@/store/useHealthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
 import type { ChatResponse, HistoryEntry } from '@/lib/schemas'
-import type { NodeLabel, ResultColumn } from '@/types/query'
+import type { ResultColumn } from '@/types/query'
 
-const EXAMPLE_QUESTIONS: {
-  kind: '경로추적' | '집계'
-  question: string
-  path: { glyph: string; label: string; nodeLabel: NodeLabel }[]
-}[] = [
-  {
-    kind: '경로추적',
-    question: 'LOT-2041에서 발생한 불량의 원인 경로를 찾아줘',
-    path: [
-      { glyph: 'L', label: 'LOT-2041', nodeLabel: 'Lot' },
-      { glyph: 'P', label: '식각', nodeLabel: 'Process' },
-      { glyph: 'D', label: 'D-114', nodeLabel: 'Defect' },
-    ],
-  },
-  {
-    kind: '집계',
-    question: '지난 분기 작업장별 폐기 수량과 주요 폐기 사유를 알려줘',
-    path: [
-      { glyph: 'EQ', label: '작업장', nodeLabel: 'Equipment' },
-      { glyph: 'D', label: '폐기 사유', nodeLabel: 'Defect' },
-    ],
-  },
+const EXAMPLE_QUESTIONS: string[] = [
+  '재고가 부족한 제품을 알려줘',
+  '이 제품에 필요한 부품은 뭐야?',
+  '부품 A의 공급업체를 알려줘',
+  '폐기 수량이 많은 작업지시와 그 사유를 알려줘',
 ]
 
-const CONNECTED = false
-const CONNECTION_ENDPOINT = 'bolt://prod-kg-01'
 const READ_ONLY = true
 
 interface DisplayResult {
@@ -72,6 +53,7 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
 export function Dashboard() {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
   const [queryText, setQueryText] = useState('')
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [result, setResult] = useState<DisplayResult | null>(null)
@@ -130,8 +112,7 @@ export function Dashboard() {
   return (
     <div className="flex h-screen flex-col bg-bg">
       <TopBar
-        connected={CONNECTED}
-        connectionEndpoint={CONNECTION_ENDPOINT}
+        connected={neo4jConnected}
         readOnly={READ_ONLY}
         onNavigateHome={handleNavigateHome}
         username={user?.username}
@@ -149,24 +130,32 @@ export function Dashboard() {
             <div className="flex flex-1 flex-col items-center justify-center gap-6">
               <div className="flex flex-col items-center gap-1 text-center">
                 <h1 className="text-lg font-semibold text-text">
-                  공정 데이터에 대해 무엇이든 물어보세요
+                  제조 데이터, 궁금한 것을 질문하세요.
                 </h1>
                 <p className="text-[13px] text-text-muted">
-                  Neo4j 지식그래프 기반으로 공정·품질 데이터를 자연어로 질의할 수 있습니다
+                  제품, 재고, 부품, 공급업체 등 필요한 정보를 질문하면 관련 데이터를 찾아 답변해
+                  드립니다.
                 </p>
               </div>
               <div className="w-full max-w-2xl">{queryInputBar}</div>
               {history.length === 0 ? (
-                <div className="grid w-full max-w-2xl grid-cols-2 gap-3">
-                  {EXAMPLE_QUESTIONS.map((example) => (
-                    <ExampleQuestionCard
-                      key={example.question}
-                      kind={example.kind}
-                      question={example.question}
-                      path={example.path}
-                      onClick={() => setQueryText(example.question)}
-                    />
-                  ))}
+                <div className="w-full max-w-2xl">
+                  <p className="mb-2 text-[12px] font-semibold text-text-faint">
+                    이렇게 질문해 보세요
+                  </p>
+                  <ul className="flex flex-col gap-1.5">
+                    {EXAMPLE_QUESTIONS.map((question) => (
+                      <li key={question}>
+                        <button
+                          type="button"
+                          onClick={() => setQueryText(question)}
+                          className="w-full rounded-md border border-border bg-panel px-3 py-2 text-left text-[12.5px] text-text transition-colors hover:border-border-strong"
+                        >
+                          {question}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
             </div>

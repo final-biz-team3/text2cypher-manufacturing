@@ -14,7 +14,8 @@ export interface ResultColumn {
   label: string
 }
 
-export type NodeLabel = 'Lot' | 'Process' | 'Equipment' | 'Material' | 'Defect'
+export type NodeLabel =
+  'Product' | 'Supplier' | 'WorkOrder' | 'RoutingOperation' | 'Location' | 'ScrapReason'
 
 // 지식그래프 스키마 사이드바에 표시되는 노드 타입 정보
 export interface SchemaNode {

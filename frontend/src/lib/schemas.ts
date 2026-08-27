@@ -45,6 +45,14 @@ export const ApiErrorSchema = z.object({
   message: z.string(),
 })
 
+export const HealthSchema = z.object({
+  status: z.string(),
+  env: z.string(),
+  neo4j: z.object({ status: z.string(), detail: z.string().optional() }),
+  postgres: z.object({ status: z.string(), detail: z.string().optional() }),
+})
+export type Health = z.infer<typeof HealthSchema>
+
 export const HistoryEntrySchema = z.object({
   id: z.number(),
   username: z.string(),

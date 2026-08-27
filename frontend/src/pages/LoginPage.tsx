@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { TopBar } from '@/components/layout/TopBar'
 import { LoginAsidePanel } from '@/components/layout/LoginAsidePanel'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useHealthStore } from '@/store/useHealthStore'
 import { useLoginPrefsStore } from '@/store/useLoginPrefsStore'
 import { AuthError } from '@/lib/api'
 
@@ -10,6 +11,7 @@ import { AuthError } from '@/lib/api'
 export function LoginPage() {
   const navigate = useNavigate()
   const login = useAuthStore((s) => s.login)
+  const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
   const { rememberId, savedUsername, setRememberId, setSavedUsername } = useLoginPrefsStore()
 
   const [username, setUsername] = useState(savedUsername)
@@ -38,20 +40,12 @@ export function LoginPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-bg">
-      <TopBar
-        connected={false}
-        connectionEndpoint="bolt://prod-kg-01"
-        readOnly
-        onNavigateHome={() => {}}
-      />
+      <TopBar connected={neo4jConnected} readOnly onNavigateHome={() => {}} />
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 items-center justify-center p-6">
           <form onSubmit={handleSubmit} className="flex w-[400px] max-w-full flex-col gap-4">
             <div>
               <h1 className="text-xl font-bold text-text">로그인</h1>
-              <p className="mt-1 text-[13px] leading-normal text-text-muted">
-                사내 계정으로 접속하세요. 조회 권한만 부여되며 그래프 데이터는 변경되지 않습니다.
-              </p>
             </div>
 
             {errorMessage ? (
