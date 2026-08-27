@@ -1,6 +1,6 @@
 """Cypher Agent SubGraph의 생성-실행과 self-correction 재시도를 테스트한다."""
 
-from neo4j.exceptions import CypherSyntaxError, ServiceUnavailable
+from neo4j.exceptions import ClientError, CypherSyntaxError, ServiceUnavailable
 
 from agents.cypher.schema.models import GraphQueryPolicy
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
@@ -185,3 +185,35 @@ async def test_cypher_agent_marks_empty_result_inconclusive_after_budget_exhaust
     assert result["empty_reason"] == "INCONCLUSIVE"
     assert result["attempt_count"] == 3
     assert len(result["attempts"]) == 3
+
+
+async def test_cypher_agent_retries_after_query_timeout_then_succeeds() -> None:
+    """Neo4j 쿼리 타임아웃(ClientError, 특정 neo4j_code)은 재시도 대상이다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:Product) RETURN n LIMIT 999999999"),
+        make_content_response("MATCH (n:Product) RETURN n LIMIT 10"),
+    )
+    calls = []
+
+    async def execute_cypher(cypher: str) -> list[dict]:
+        calls.append(cypher)
+        if len(calls) == 1:
+            # ClientError.code는 읽기 전용 프로퍼티라(생성자 인자도 없음)
+            # 직접 대입이 안 된다 - 서버 응답을 파싱할 때 채워지는
+            # 내부 속성(_neo4j_code)에 직접 값을 넣어 재현한다.
+            error = ClientError("The transaction has been terminated...")
+            error._neo4j_code = (
+                "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
+            )
+            raise error
+        return [{"n": "x"}]
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert result["result"] == [{"n": "x"}]
+    assert result["error"] is None
+    assert len(openai_client.calls) == 2
