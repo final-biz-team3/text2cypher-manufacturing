@@ -130,6 +130,11 @@ services:
       ONTOLOGY_PATH: /ontology-data/manufacturing_terms.yaml
       APP_ENV: ${APP_ENV:-development}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-5000}
+      POSTGRES_POOL_MIN_SIZE: ${POSTGRES_POOL_MIN_SIZE:-1}
+      POSTGRES_POOL_MAX_SIZE: ${POSTGRES_POOL_MAX_SIZE:-5}
+      POSTGRES_WRITE_POOL_MIN_SIZE: ${POSTGRES_WRITE_POOL_MIN_SIZE:-1}
+      POSTGRES_WRITE_POOL_MAX_SIZE: ${POSTGRES_WRITE_POOL_MAX_SIZE:-2}
     depends_on:
       neo4j:
         condition: service_healthy
@@ -145,6 +150,9 @@ services:
       - ./backend:/app
       - ./schema:/schema-data:ro
       - ./ontology:/ontology-data:ro
+    # 이 컨테이너는 항상 Linux라 --loop none이 필요 없다(그 플래그는
+    # Windows 호스트에서 ProactorEventLoop를 우회하기 위한 것 - main.py 참고).
+    # 여기서 강제로 걸면 uvicorn의 자동 uvloop 적용만 이유 없이 막힌다.
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:

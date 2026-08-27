@@ -10,16 +10,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.openai_client import get_openai_client  # noqa: E402
-from core.postgres import get_connection  # noqa: E402
+from core.postgres import bootstrap_postgres, get_pool, open_pool  # noqa: E402
 from orchestrator.graph import build_orchestrator_graph  # noqa: E402
 
 pytestmark = pytest.mark.integration
 
 
-def _execute_read_only(
-    postgres_connection: Any, query: str
+async def _execute_read_only(
+    pool: Any, query: str
 ) -> tuple[list[str], list[tuple[Any, ...]]]:
-    """단일 조회문을 제한된 읽기 전용 트랜잭션에서 실행한다."""
+    """단일 조회문을 실행한다. get_pool()의 커넥션은 이미 항상 read_only이므로
+    (core/postgres.py::configure_connection) 별도 BEGIN TRANSACTION READ ONLY가
+    필요 없다 - 이 테스트 쿼리만 더 타이트한 타임아웃을 걸기 위해 SET LOCAL만 쓴다."""
     statement = query.strip()
     if statement.endswith(";"):
         statement = statement[:-1].rstrip()
@@ -27,15 +29,11 @@ def _execute_read_only(
     assert re.match(r"(?is)^(select|with)\b", statement)
     assert ";" not in statement
 
-    postgres_connection.rollback()
-    try:
-        postgres_connection.execute("BEGIN TRANSACTION READ ONLY")
-        postgres_connection.execute("SET LOCAL statement_timeout = '3000ms'")
-        cursor = postgres_connection.execute(statement)
+    async with pool.connection() as conn:
+        await conn.execute("SET LOCAL statement_timeout = '3000ms'")
+        cursor = await conn.execute(statement)
         columns = [column.name for column in cursor.description or ()]
-        rows = cursor.fetchall()
-    finally:
-        postgres_connection.rollback()
+        rows = await cursor.fetchall()
 
     return columns, rows
 
@@ -56,56 +54,60 @@ def _column_index(columns: Sequence[str], *accepted_names: str) -> int:
 
 
 @pytest.fixture(scope="module")
-def graph_and_postgres() -> tuple[Any, Any]:
-    postgres_connection = get_connection()
-    graph = build_orchestrator_graph(get_openai_client(), postgres_connection)
-    return graph, postgres_connection
+async def graph_and_postgres() -> tuple[Any, Any]:
+    await bootstrap_postgres()
+    await open_pool()
+    pool = get_pool()
+    graph = build_orchestrator_graph(get_openai_client(), pool)
+    return graph, pool
 
 
-def test_rq03_active_supplier_count_matches_reference_sql(graph_and_postgres) -> None:
+async def test_rq03_active_supplier_count_matches_reference_sql(
+    graph_and_postgres,
+) -> None:
     """활성 공급업체 수가 기준 SQL의 단일 집계값과 일치한다."""
-    graph, postgres_connection = graph_and_postgres
-    result = graph.invoke({"query": "현재 활성 상태인 공급업체 수를 알려줘."})
+    graph, pool = graph_and_postgres
+    result = await graph.ainvoke({"query": "현재 활성 상태인 공급업체 수를 알려줘."})
 
     assert result["tool_plan"] == ["sql"]
     assert result["cypher_query"] is None
     assert result["sql_query"] is not None
 
-    _, generated_rows = _execute_read_only(postgres_connection, result["sql_query"])
-    _, reference_rows = _execute_read_only(
-        postgres_connection,
+    _, generated_rows = await _execute_read_only(pool, result["sql_query"])
+    _, reference_rows = await _execute_read_only(
+        pool,
         "SELECT COUNT(*) FROM purchasing.vendor WHERE activeflag = true",
     )
 
     assert generated_rows == reference_rows
 
 
-def test_rq04_purchased_product_count_matches_reference_sql(
+async def test_rq04_purchased_product_count_matches_reference_sql(
     graph_and_postgres,
 ) -> None:
     """외부 구매 부품 수가 makeflag 기준 집계값과 일치한다."""
-    graph, postgres_connection = graph_and_postgres
-    result = graph.invoke({"query": "외부에서 구매하는 부품 수를 알려줘."})
+    graph, pool = graph_and_postgres
+    result = await graph.ainvoke({"query": "외부에서 구매하는 부품 수를 알려줘."})
 
     assert result["tool_plan"] == ["sql"]
     assert result["cypher_query"] is None
     assert result["sql_query"] is not None
 
-    _, generated_rows = _execute_read_only(postgres_connection, result["sql_query"])
-    _, reference_rows = _execute_read_only(
-        postgres_connection,
+    _, generated_rows = await _execute_read_only(pool, result["sql_query"])
+    _, reference_rows = await _execute_read_only(
+        pool,
         "SELECT COUNT(*) FROM production.product WHERE makeflag = false",
     )
 
     assert generated_rows == reference_rows
 
 
-def test_rq05_products_without_sell_end_date_match_reference_sql(
+async def test_rq05_products_without_sell_end_date_match_reference_sql(
     graph_and_postgres,
 ) -> None:
     """판매 종료일이 없는 첫 10개 제품이 기준 SQL 결과와 일치한다."""
-    graph, postgres_connection = graph_and_postgres
-    result = graph.invoke(
+    graph, pool = graph_and_postgres
+    result = await graph.ainvoke(
         {"query": "판매 종료일이 등록되지 않은 제품을 10개만 보여줘."}
     )
 
@@ -113,11 +115,11 @@ def test_rq05_products_without_sell_end_date_match_reference_sql(
     assert result["cypher_query"] is None
     assert result["sql_query"] is not None
 
-    generated_columns, generated_rows = _execute_read_only(
-        postgres_connection, result["sql_query"]
+    generated_columns, generated_rows = await _execute_read_only(
+        pool, result["sql_query"]
     )
-    _, reference_rows = _execute_read_only(
-        postgres_connection,
+    _, reference_rows = await _execute_read_only(
+        pool,
         "SELECT productid, name, sellenddate "
         "FROM production.product "
         "WHERE sellenddate IS NULL "
@@ -142,12 +144,12 @@ def test_rq05_products_without_sell_end_date_match_reference_sql(
     assert normalized_generated_rows == reference_rows
 
 
-def test_rq07_product_category_count_matches_reference_sql(
+async def test_rq07_product_category_count_matches_reference_sql(
     graph_and_postgres,
 ) -> None:
     """제품 분류명을 확정하고 해당 분류의 제품 수를 정확히 반환한다."""
-    graph, postgres_connection = graph_and_postgres
-    result = graph.invoke({"query": "Components에 포함된 제품 수를 알려줘."})
+    graph, pool = graph_and_postgres
+    result = await graph.ainvoke({"query": "Components에 포함된 제품 수를 알려줘."})
 
     assert result["entity"] == {
         "productCategoryId": 2,
@@ -157,11 +159,11 @@ def test_rq07_product_category_count_matches_reference_sql(
     assert result["cypher_query"] is None
     assert result["sql_query"] is not None
 
-    generated_columns, generated_rows = _execute_read_only(
-        postgres_connection, result["sql_query"]
+    generated_columns, generated_rows = await _execute_read_only(
+        pool, result["sql_query"]
     )
-    _, reference_rows = _execute_read_only(
-        postgres_connection,
+    _, reference_rows = await _execute_read_only(
+        pool,
         "SELECT c.productcategoryid, c.name, COUNT(p.productid) AS productcount "
         "FROM production.productcategory c "
         "JOIN production.productsubcategory s "

@@ -1,49 +1,64 @@
 from typing import Any
 
+import psycopg
+
 import core.postgres as postgres
 
 
-class _Connection:
-    closed = False
-
-
-def test_connection_enforces_read_only_session(
-    monkeypatch,
-) -> None:
-    captured: dict[str, Any] = {}
-    connection = _Connection()
-
-    def connect(**kwargs: Any) -> _Connection:
-        captured.update(kwargs)
-        return connection
-
-    monkeypatch.setattr(postgres, "_connection", None)
-    monkeypatch.setattr(postgres.psycopg, "connect", connect)
+def test_application_conninfo_uses_limited_role(monkeypatch: Any) -> None:
     monkeypatch.setenv("POSTGRES_APP_USER", "app_reader")
     monkeypatch.setenv("POSTGRES_APP_PASSWORD", "reader_password")
 
-    assert postgres.get_connection() is connection
-    assert captured["user"] == "app_reader"
-    assert captured["password"] == "reader_password"
-    assert captured["options"] == "-c default_transaction_read_only=on"
+    values = psycopg.conninfo.conninfo_to_dict(postgres.postgres_app_conninfo())
+
+    assert values["user"] == "app_reader"
+    assert values["password"] == "reader_password"
+    assert postgres.postgres_conninfo() == postgres.postgres_app_conninfo()
 
 
-def test_history_connection_is_separate_and_does_not_force_read_only(
-    monkeypatch,
-) -> None:
-    captured: list[dict[str, Any]] = []
+def test_admin_conninfo_is_reserved_for_bootstrap(monkeypatch: Any) -> None:
+    monkeypatch.setenv("POSTGRES_USER", "database_admin")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "admin_password")
 
-    def connect(**kwargs: Any) -> _Connection:
-        captured.append(kwargs)
-        return _Connection()
+    values = psycopg.conninfo.conninfo_to_dict(postgres.postgres_admin_conninfo())
 
-    monkeypatch.setattr(postgres, "_history_write_connection", None)
-    monkeypatch.setattr(postgres.psycopg, "connect", connect)
-    monkeypatch.setenv("POSTGRES_APP_USER", "app_reader")
-    monkeypatch.setenv("POSTGRES_APP_PASSWORD", "reader_password")
+    assert values["user"] == "database_admin"
+    assert values["password"] == "admin_password"
 
-    postgres.get_history_write_connection()
 
-    assert captured[0]["user"] == "app_reader"
-    assert captured[0]["password"] == "reader_password"
-    assert captured[0]["options"] == ""
+class _ConfiguredConnection:
+    def __init__(self) -> None:
+        self.read_only: bool | None = None
+        self.executed: list[str] = []
+        self.committed = False
+
+    async def set_read_only(self, value: bool) -> None:
+        self.read_only = value
+
+    async def execute(self, query: str) -> None:
+        self.executed.append(query)
+
+    async def commit(self) -> None:
+        self.committed = True
+
+
+async def test_read_pool_connection_is_configured_read_only(monkeypatch: Any) -> None:
+    monkeypatch.setenv("SQL_STATEMENT_TIMEOUT_MS", "4321")
+    connection = _ConfiguredConnection()
+
+    await postgres.configure_connection(connection)  # type: ignore[arg-type]
+
+    assert connection.read_only is True
+    assert connection.executed == ["SET statement_timeout = '4321ms'"]
+    assert connection.committed is True
+
+
+async def test_history_pool_does_not_enable_read_only(monkeypatch: Any) -> None:
+    monkeypatch.setenv("SQL_STATEMENT_TIMEOUT_MS", "4321")
+    connection = _ConfiguredConnection()
+
+    await postgres.configure_write_connection(connection)  # type: ignore[arg-type]
+
+    assert connection.read_only is None
+    assert connection.executed == ["SET statement_timeout = '4321ms'"]
+    assert connection.committed is True

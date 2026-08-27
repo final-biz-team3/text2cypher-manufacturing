@@ -7,7 +7,7 @@ from agents.generator import generate_query
 from agents.sql.prompt import build_sql_prompt
 
 
-def generate_sql(
+async def generate_sql(
     openai_client: Any,
     *,
     query: str,
@@ -30,4 +30,4 @@ def generate_sql(
         previous_query=previous_query,
         previous_error=previous_error,
     )
-    return generate_query(openai_client, messages)
+    return await generate_query(openai_client, messages)

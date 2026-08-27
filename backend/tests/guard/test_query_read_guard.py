@@ -74,6 +74,7 @@ def test_allows_read_only_cypher(query: str) -> None:
         "MATCH (p:Product) SET p.name = 'changed' RETURN p",
         "MATCH (p:Product) RETURN p; MATCH (s:Supplier) RETURN s",
         "CALL db.labels() YIELD label RETURN label",
+        "MATCH (n) INSERT (:Probe) RETURN n",
     ],
 )
 def test_blocks_cypher_that_can_write_or_call(query: str) -> None:
@@ -94,3 +95,26 @@ def test_cypher_write_tokens_cannot_be_hidden_by_foreign_escape_rules(
 
     assert violations
     assert violations[0]["code"] == "WRITE_CLAUSE"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT username, password_hash FROM app.users",
+        "SELECT * FROM app.conversation_history",
+        "SELECT * FROM product",
+    ],
+)
+def test_blocks_relations_outside_public_sql_schema(query: str) -> None:
+    violations = validate_sql_read_only(query)
+
+    assert violations
+    assert violations[0]["code"] == "UNAUTHORIZED_RELATION"
+
+
+def test_allows_cte_over_a_public_sql_schema_table() -> None:
+    query = (
+        "WITH products AS (SELECT * FROM production.product) " "SELECT * FROM products"
+    )
+
+    assert validate_sql_read_only(query) == []

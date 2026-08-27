@@ -12,7 +12,13 @@ def _raise_if_unsafe(violations: list[GuardViolation]) -> None:
 
 def validate_read_only_sql(query: str) -> None:
     """Gold SQL의 관례상 안전한 내장 함수는 비한정 이름도 허용한다."""
-    _raise_if_unsafe(validate_sql_read_only(query, allow_unqualified_functions=True))
+    _raise_if_unsafe(
+        validate_sql_read_only(
+            query,
+            allow_unqualified_functions=True,
+            enforce_relation_allowlist=False,
+        )
+    )
 
 
 def validate_read_only_cypher(query: str) -> None:

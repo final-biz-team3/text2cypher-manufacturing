@@ -1,7 +1,7 @@
 """Cypher를 생성·실행하고, 실패 시 self-correction(재시도)을 수행하는 SubGraph를 만든다."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
@@ -51,16 +51,16 @@ _EMPTY_RESULT_FEEDBACK = (
 
 def make_cypher_agent_subgraph(
     openai_client: Any,
-    execute_cypher: Callable[[str], Any],
+    execute_cypher: Callable[[str], Awaitable[Any]],
     query_policy: GraphQueryPolicy,
 ) -> CompiledStateGraph:
     """Cypher 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_cypher 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
 
-    def generate(
+    async def generate(
         state: RetryAgentState, previous_query: str | None, previous_error: str | None
     ) -> str:
-        return generate_cypher(
+        return await generate_cypher(
             openai_client,
             query=state["query"],
             entity=state["entity"],

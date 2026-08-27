@@ -50,15 +50,9 @@ SELECT format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM %I', current_database()
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), :'app_user')
 \gexec
 
-SELECT format('ALTER DEFAULT PRIVILEGES GRANT USAGE ON SCHEMAS TO %I', :'app_user')
-\gexec
-
-SELECT format('ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO %I', :'app_user')
-\gexec
-
 SELECT format('GRANT USAGE ON SCHEMA %I TO %I', nspname, :'app_user')
 FROM pg_namespace
-WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema'
+WHERE nspname IN ('production', 'purchasing', 'sales', 'app')
 \gexec
 
 SELECT format('REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM %I', nspname, :'app_user')
@@ -66,9 +60,30 @@ FROM pg_namespace
 WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema'
 \gexec
 
-SELECT format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO %I', nspname, :'app_user')
-FROM pg_namespace
-WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema'
+-- LLM에 공개되는 schema/sql_schema.yaml의 업무 테이블과 앱 자체가 직접
+-- 사용하는 인증·이력 테이블만 허용한다. 생성 SQL은 AST 허용 목록으로
+-- app 스키마 접근을 한 번 더 차단한다.
+SELECT format('GRANT SELECT ON TABLE %s TO %I', relation_name, :'app_user')
+FROM (
+  VALUES
+    ('production.product'),
+    ('production.productinventory'),
+    ('production.location'),
+    ('production.productcategory'),
+    ('production.productsubcategory'),
+    ('production.billofmaterials'),
+    ('production.workorder'),
+    ('production.workorderrouting'),
+    ('production.scrapreason'),
+    ('purchasing.vendor'),
+    ('purchasing.productvendor'),
+    ('purchasing.purchaseorderdetail'),
+    ('purchasing.purchaseorderheader'),
+    ('sales.salesorderdetail'),
+    ('app.users'),
+    ('app.conversation_history')
+) AS allowed(relation_name)
+WHERE to_regclass(relation_name) IS NOT NULL
 \gexec
 
 -- 사용자 생성 SQL은 default_transaction_read_only 세션으로 실행하고,
@@ -82,15 +97,6 @@ SELECT format(
   :'app_user'
 )
 WHERE to_regclass('app.conversation_history_id_seq') IS NOT NULL
-\gexec
-
-SELECT format(
-  'ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT ON TABLES TO %I',
-  nspname,
-  :'app_user'
-)
-FROM pg_namespace
-WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema'
 \gexec
 
 SELECT format('REVOKE CREATE ON SCHEMA %I FROM %I', nspname, :'app_user')

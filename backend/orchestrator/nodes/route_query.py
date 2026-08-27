@@ -52,13 +52,15 @@ A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_impact","tool":"graph
 설명이나 Markdown 없이 JSON 객체만 반환한다."""
 
 
-def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], dict]:
-    def route_query(state: OrchestratorState) -> dict:
+# OpenAI 클라이언트를 주입받은 route_query 노드 함수를 생성
+def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], Any]:
+    async def route_query(state: OrchestratorState) -> dict:
+        # 질의 원문 + 확정된 entity를 few-shot 프롬프트의 입력 형식으로 구성
         query = get_effective_query(state)
         entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
         user_content = f"Q: {query}\nentity: {entity_json}\nA:"
 
-        response = openai_client.chat.completions.create(
+        response = await openai_client.chat.completions.create(
             model=os.environ["OPENAI_MODEL"],
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},

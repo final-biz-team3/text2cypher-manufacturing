@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal, cast
 
 from openai import APIError
@@ -66,10 +66,10 @@ def _contains_prompt_injection(query: str) -> bool:
     return any(pattern.search(query) for pattern in _PROMPT_INJECTION_PATTERNS)
 
 
-def _classify_with_llm(
+async def _classify_with_llm(
     query: str, normalized_query: str, openai_client: Any
 ) -> NaturalGuardResult:
-    response = openai_client.chat.completions.create(
+    response = await openai_client.chat.completions.create(
         model=os.environ["OPENAI_MODEL"],
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
@@ -132,8 +132,10 @@ def _classify_with_llm(
 
 def make_natural_language_guard_node(
     openai_client: Any,
-) -> Callable[[OrchestratorState], NaturalGuardNodeResult]:
-    def validate_natural_language(state: OrchestratorState) -> NaturalGuardNodeResult:
+) -> Callable[[OrchestratorState], Awaitable[NaturalGuardNodeResult]]:
+    async def validate_natural_language(
+        state: OrchestratorState,
+    ) -> NaturalGuardNodeResult:
         original = state["query"]
         normalized = state.get("normalized_query") or original
         actions = state.get("detected_actions", [])
@@ -156,7 +158,7 @@ def make_natural_language_guard_node(
             # 규칙에 없는 동사와 축약형을 조회로 오인하지 않도록 모든 나머지
             # 요청은 분류기가 명시적으로 READ라고 확인해야 실행한다.
             try:
-                result = _classify_with_llm(original, normalized, openai_client)
+                result = await _classify_with_llm(original, normalized, openai_client)
             except (
                 APIError,
                 AttributeError,

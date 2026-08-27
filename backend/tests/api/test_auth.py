@@ -11,35 +11,58 @@ from api.auth import LoginRequest, login, logout, me
 from core.auth import CurrentUser, hash_password
 
 
-class _FakeConnection:
-    def __init__(self, rows_by_username: dict[str, tuple[Any, ...]]) -> None:
-        self._rows_by_username = rows_by_username
-
-    def execute(self, query: str, params: tuple[Any, ...] = ()) -> "_FakeCursor":
-        username = params[0]
-        return _FakeCursor(self._rows_by_username.get(username))
-
-
 class _FakeCursor:
     def __init__(self, row: tuple[Any, ...] | None) -> None:
         self._row = row
 
-    def fetchone(self) -> tuple[Any, ...] | None:
+    async def fetchone(self) -> tuple[Any, ...] | None:
         return self._row
 
 
-def test_login_sets_cookie_and_returns_user(monkeypatch: pytest.MonkeyPatch) -> None:
+class _FakeConnection:
+    def __init__(self, pool: "_FakePool") -> None:
+        self._pool = pool
+
+    async def execute(self, query: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
+        username = params[0]
+        return _FakeCursor(self._pool.rows_by_username.get(username))
+
+
+class _FakeConnectionContext:
+    def __init__(self, pool: "_FakePool") -> None:
+        self._pool = pool
+
+    async def __aenter__(self) -> _FakeConnection:
+        return _FakeConnection(self._pool)
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
+class _FakePool:
+    def __init__(self, rows_by_username: dict[str, tuple[Any, ...]]) -> None:
+        self.rows_by_username = rows_by_username
+
+    def connection(self) -> _FakeConnectionContext:
+        return _FakeConnectionContext(self)
+
+
+async def test_login_sets_cookie_and_returns_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     monkeypatch.setattr(
         auth_module,
-        "get_connection",
-        lambda: _FakeConnection(
+        "get_pool",
+        lambda: _FakePool(
             {"kim.quality": ("kim.quality", hash_password("s3cret!"), "admin")}
         ),
     )
     response = Response()
 
-    result = login(LoginRequest(username="kim.quality", password="s3cret!"), response)
+    result = await login(
+        LoginRequest(username="kim.quality", password="s3cret!"), response
+    )
 
     assert result == {"username": "kim.quality", "role": "admin"}
     set_cookie = response.headers["set-cookie"]
@@ -47,30 +70,30 @@ def test_login_sets_cookie_and_returns_user(monkeypatch: pytest.MonkeyPatch) -> 
     assert "HttpOnly" in set_cookie
 
 
-def test_login_rejects_wrong_password_with_generic_message(
+async def test_login_rejects_wrong_password_with_generic_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         auth_module,
-        "get_connection",
-        lambda: _FakeConnection(
+        "get_pool",
+        lambda: _FakePool(
             {"kim.quality": ("kim.quality", hash_password("s3cret!"), "admin")}
         ),
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        login(LoginRequest(username="kim.quality", password="wrong"), Response())
+        await login(LoginRequest(username="kim.quality", password="wrong"), Response())
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "아이디 또는 비밀번호가 올바르지 않습니다"
 
 
-def test_login_rejects_unknown_username_with_same_message(
+async def test_login_rejects_unknown_username_with_same_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_module, "get_connection", lambda: _FakeConnection({}))
+    monkeypatch.setattr(auth_module, "get_pool", lambda: _FakePool({}))
 
     with pytest.raises(HTTPException) as exc_info:
-        login(LoginRequest(username="ghost", password="whatever"), Response())
+        await login(LoginRequest(username="ghost", password="whatever"), Response())
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "아이디 또는 비밀번호가 올바르지 않습니다"
 
@@ -94,8 +117,8 @@ def test_auth_router_http_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setattr(
         auth_module,
-        "get_connection",
-        lambda: _FakeConnection(
+        "get_pool",
+        lambda: _FakePool(
             {"kim.quality": ("kim.quality", hash_password("s3cret!"), "admin")}
         ),
     )
@@ -120,11 +143,11 @@ def test_auth_router_http_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     assert me_after_logout_response.status_code == 401
 
 
-def test_login_calls_verify_password_for_unknown_username(
+async def test_login_calls_verify_password_for_unknown_username(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """존재하지 않는 아이디여도 verify_password가 호출되는지 확인한다(Task 4 타이밍 수정 회귀 방지)."""
-    monkeypatch.setattr(auth_module, "get_connection", lambda: _FakeConnection({}))
+    monkeypatch.setattr(auth_module, "get_pool", lambda: _FakePool({}))
     call_count = 0
     original_verify_password = auth_module.verify_password
 
@@ -136,6 +159,6 @@ def test_login_calls_verify_password_for_unknown_username(
     monkeypatch.setattr(auth_module, "verify_password", _spy_verify_password)
 
     with pytest.raises(HTTPException):
-        login(LoginRequest(username="ghost", password="whatever"), Response())
+        await login(LoginRequest(username="ghost", password="whatever"), Response())
 
     assert call_count == 1

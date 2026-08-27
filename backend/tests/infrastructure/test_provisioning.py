@@ -34,6 +34,10 @@ def test_postgres_provisioning_runs_for_new_and_existing_volumes() -> None:
     assert (
         "GRANT USAGE, SELECT ON SEQUENCE app.conversation_history_id_seq" in provisioner
     )
+    assert "GRANT SELECT ON ALL TABLES" not in provisioner
+    assert "ALTER DEFAULT PRIVILEGES GRANT SELECT" not in provisioner
+    assert "('production.product')" in provisioner
+    assert "('app.users')" in provisioner
 
 
 def test_neo4j_readiness_and_password_provisioning_avoid_shell_injection() -> None:

@@ -1,14 +1,14 @@
 import os
 
-from neo4j import Driver, GraphDatabase
+from neo4j import AsyncDriver, AsyncGraphDatabase
 
-_driver: Driver | None = None
+_driver: AsyncDriver | None = None
 
 
-def get_driver() -> Driver:
+def get_driver() -> AsyncDriver:
     global _driver
     if _driver is None:
-        _driver = GraphDatabase.driver(
+        _driver = AsyncGraphDatabase.driver(
             os.getenv("NEO4J_URI", "bolt://localhost:7687"),
             auth=(
                 os.getenv("NEO4J_APP_USER", "text2cypher_reader"),
@@ -18,8 +18,8 @@ def get_driver() -> Driver:
     return _driver
 
 
-def close_driver() -> None:
+async def close_driver() -> None:
     global _driver
     if _driver is not None:
-        _driver.close()
+        await _driver.close()
         _driver = None

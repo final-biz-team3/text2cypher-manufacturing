@@ -134,7 +134,7 @@ nodes:
     group: ontology
     source: {type: seed-file, path: ontology/manufacturing_terms.yaml, status: implemented}
     uniqueKey: conceptId
-    constraintName: business_concept_id
+    constraintName: ontology_business_concept_id
     properties:
       conceptId: {type: STRING, required: true}
       nameKo: {type: STRING, required: true}
@@ -145,7 +145,7 @@ nodes:
     group: ontology
     source: {type: seed-file, path: ontology/manufacturing_terms.yaml, status: implemented}
     uniqueKey: conceptId
-    constraintName: action_concept_id
+    constraintName: ontology_action_concept_id
     properties:
       conceptId: {type: STRING, required: true}
       nameKo: {type: STRING, required: true}

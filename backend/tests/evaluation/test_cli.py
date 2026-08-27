@@ -59,11 +59,17 @@ def _patch_runtime(
         def run(self, cases: list[EvaluationCase], runs: int) -> EvaluationRun:
             return result
 
+    async def _noop() -> None:
+        return None
+
     monkeypatch.setattr(cli, "load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "load_manifest", lambda *args, **kwargs: manifest)
     monkeypatch.setattr(cli, "ReadOnlyDatabaseExecutor", FakeDatabase)
     monkeypatch.setattr(cli, "EvaluationRunner", FakeRunner)
-    monkeypatch.setattr(cli, "OpenAI", lambda **kwargs: object())
+    monkeypatch.setattr(cli, "AsyncOpenAI", lambda **kwargs: object())
+    monkeypatch.setattr(cli, "bootstrap_postgres", _noop)
+    monkeypatch.setattr(cli, "open_pool", _noop)
+    monkeypatch.setattr(cli, "close_pool", _noop)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
 

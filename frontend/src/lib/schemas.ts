@@ -33,6 +33,8 @@ export const QueryOutcomeSchema = z
 
 export const ChatResponseSchema = z.object({
   query: z.string(),
+  error: z.string().nullable().optional(),
+  execution_allowed: z.boolean().optional(),
   sql_query: z.string().nullable().optional(),
   cypher_query: z.string().nullable().optional(),
   sql_result: QueryOutcomeSchema.optional(),

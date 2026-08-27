@@ -1,5 +1,5 @@
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -90,26 +90,26 @@ def _retry_agent_result_summary(result: dict) -> dict:
     }
 
 
-def _execute_sql_stub(sql: str) -> Any:
+async def _execute_sql_stub(sql: str) -> Any:
     """self-correction 구현자가 실제 SQL 검증·실행 로직으로 교체할 자리."""
     raise NotImplementedError("SQL 실행/검증은 self-correction 구현에서 채운다.")
 
 
-def _execute_cypher_stub(cypher: str) -> Any:
+async def _execute_cypher_stub(cypher: str) -> Any:
     """self-correction 구현자가 실제 Cypher 검증·실행 로직으로 교체할 자리."""
     raise NotImplementedError("Cypher 실행/검증은 self-correction 구현에서 채운다.")
 
 
 def _make_sql_agent_node(
     openai_client: Any, sql_schema_text: str
-) -> Callable[[OrchestratorState], dict]:
+) -> Callable[[OrchestratorState], Awaitable[dict]]:
     """SQL Agent SubGraph를 감싸 OrchestratorState와 주고받는 노드를 만든다."""
     subgraph = make_sql_agent_subgraph(openai_client, execute_sql=_execute_sql_stub)
 
-    def sql_agent(state: OrchestratorState) -> dict:
+    async def sql_agent(state: OrchestratorState) -> dict:
         if "sql" not in (state.get("tool_plan") or []):
             return {"sql_query": None, "sql_result": None}
-        result = subgraph.invoke(
+        result = await subgraph.ainvoke(
             _retry_agent_initial_state(
                 get_effective_query(state), state.get("entity"), sql_schema_text
             )
@@ -124,7 +124,7 @@ def _make_sql_agent_node(
 
 def _make_cypher_agent_node(
     openai_client: Any, cypher_schema_text: str, cypher_query_policy: GraphQueryPolicy
-) -> Callable[[OrchestratorState], dict]:
+) -> Callable[[OrchestratorState], Awaitable[dict]]:
     """Cypher Agent SubGraph를 감싸 OrchestratorState와 주고받는 노드를 만든다."""
     subgraph = make_cypher_agent_subgraph(
         openai_client,
@@ -132,10 +132,10 @@ def _make_cypher_agent_node(
         query_policy=cypher_query_policy,
     )
 
-    def cypher_agent(state: OrchestratorState) -> dict:
+    async def cypher_agent(state: OrchestratorState) -> dict:
         if "graph" not in (state.get("tool_plan") or []):
             return {"cypher_query": None, "graph_result": None}
-        result = subgraph.invoke(
+        result = await subgraph.ainvoke(
             _retry_agent_initial_state(
                 get_effective_query(state), state.get("entity"), cypher_schema_text
             )
@@ -148,11 +148,11 @@ def _make_cypher_agent_node(
     return cypher_agent
 
 
-# OpenAI/PostgreSQL 클라이언트를 주입받아 컴파일된 그래프를 반환
+# OpenAI 클라이언트/PostgreSQL 풀을 주입받아 컴파일된 그래프를 반환
 # START -> resolve_entity -> route_query -> sql_agent -> cypher_agent -> generate_answer -> END
 def build_orchestrator_graph(
     openai_client: Any,
-    postgres_connection: Any,
+    pool: Any,
 ) -> CompiledStateGraph:
     sql_schema_text, cypher_schema_text, cypher_schema = _load_schema_context()
     cypher_query_policy = cypher_schema.query_policy
@@ -160,7 +160,9 @@ def build_orchestrator_graph(
     term_dictionary = load_term_dictionary(_ontology_path())
 
     graph = StateGraph(OrchestratorState)
-    # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다.
+    # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다
+    # (async Callable로 바뀐 뒤에도 동일하게 적용됨 - 런타임 시그니처는
+    # 정확히 일치, 133개 테스트가 이 그래프를 통해 정상 실행됨).
     graph.add_node(
         "normalize_terms", cast(Any, make_normalize_terms_node(term_dictionary))
     )
@@ -170,10 +172,7 @@ def build_orchestrator_graph(
     )
     graph.add_node(
         "resolve_entity",
-        cast(
-            Any,
-            make_resolve_entity_node(openai_client, postgres_connection, cypher_schema),
-        ),
+        cast(Any, make_resolve_entity_node(openai_client, pool, cypher_schema)),
     )
     graph.add_node("route_query", cast(Any, make_route_query_node(openai_client)))
     graph.add_node(

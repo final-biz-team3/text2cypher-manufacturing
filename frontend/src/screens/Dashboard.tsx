@@ -60,7 +60,10 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
     ),
   )
   return {
-    answer: response.final_answer ?? '답변을 생성하지 못했습니다.',
+    answer:
+      ('error' in response ? response.error : null) ??
+      response.final_answer ??
+      '답변을 생성하지 못했습니다.',
     cypher: response.cypher_query ?? null,
     columns,
     rows,
@@ -96,6 +99,11 @@ export function Dashboard() {
     setActiveScreen('loading')
     try {
       const response = await sendChatQuery(question)
+      if (response.error) {
+        setErrorMessage(response.error)
+        setActiveScreen('error')
+        return
+      }
       setResult(toDisplayResult(response))
       setActiveScreen('success')
       fetchHistory()

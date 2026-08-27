@@ -35,7 +35,7 @@ def _plan(route: str) -> list[str]:
     }[route]
 
 
-def test_twenty_questions_have_two_variants_with_same_route_and_guards(
+async def test_twenty_questions_have_two_variants_with_same_route_and_guards(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_MODEL", "test-model")
@@ -68,9 +68,9 @@ def test_twenty_questions_have_two_variants_with_same_route_and_guards(
         assert all(term in normalized["normalized_query"] for term in evidence), item[
             "id"
         ]
-        natural = natural_guard({"query": query, **normalized})
+        natural = await natural_guard({"query": query, **normalized})
         assert natural["natural_guard"]["decision"] == "ALLOW_READ", item["id"]
-        routed = route_node(
+        routed = await route_node(
             {"query": query, "normalized_query": normalized["normalized_query"]}
         )
         assert routed["tool_plan"] == _plan(item["route"]), item["id"]
@@ -93,14 +93,14 @@ def test_twenty_questions_have_two_variants_with_same_route_and_guards(
             "cypher_query": None,
         }
         if "sql" in plan:
-            generated["sql_query"] = generate_sql(
+            generated["sql_query"] = await generate_sql(
                 generator_client,
                 query=normalized["normalized_query"],
                 entity=None,
                 schema_text="production manufacturing schema",
             )
         if "graph" in plan:
-            generated["cypher_query"] = generate_cypher(
+            generated["cypher_query"] = await generate_cypher(
                 generator_client,
                 query=normalized["normalized_query"],
                 entity=None,

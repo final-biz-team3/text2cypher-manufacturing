@@ -34,6 +34,7 @@ explicit_package_bases = true
 
 [tool.pytest.ini_options]
 addopts = "--verbose -m \"not integration\" --import-mode=importlib"
+asyncio_mode = "auto"
 pythonpath = ["backend"]
 testpaths = ["backend/tests"]
 markers = [

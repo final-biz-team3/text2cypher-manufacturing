@@ -1,11 +1,15 @@
 """생성된 PostgreSQL SQL과 Neo4j Cypher의 읽기 전용 여부를 검사한다."""
 
 import json
+import os
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from pglast.parser import ParseError, parse_sql_json
 
+from agents.sql.schema.loader import load_sql_schema
 from orchestrator.state import GuardViolation
 
 _SQL_ALLOWED_FUNCTIONS = {
@@ -42,11 +46,22 @@ _CYPHER_WRITE_TOKENS = {
     "DETACH",
     "DROP",
     "FOREACH",
+    "INSERT",
     "LOAD",
     "MERGE",
     "REMOVE",
     "SET",
 }
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@lru_cache(maxsize=1)
+def _allowed_sql_relations() -> frozenset[str]:
+    """기계 판독 SQL 스키마에 공개된 업무 테이블만 반환한다."""
+    schema_dir = Path(os.environ.get("SCHEMA_DIR", _PROJECT_ROOT / "schema"))
+    schema = load_sql_schema(schema_dir / "sql_schema.yaml")
+    return frozenset(name.lower() for name in schema.tables)
 
 
 def _mask_cypher_literals_and_comments(query: str) -> str:
@@ -155,6 +170,26 @@ def _function_name(func_call: dict[str, Any]) -> str:
     return ".".join(parts).upper()
 
 
+def _referenced_relations(statement: dict[str, Any]) -> set[str]:
+    """CTE 이름을 제외한 실제 FROM 대상 테이블을 추출한다."""
+    cte_names = {
+        str(node["CommonTableExpr"].get("ctename", "")).lower()
+        for node in _walk_ast(statement)
+        if "CommonTableExpr" in node
+    }
+    relations: set[str] = set()
+    for node in _walk_ast(statement):
+        range_var = node.get("RangeVar")
+        if not isinstance(range_var, dict):
+            continue
+        relation = str(range_var.get("relname", "")).lower()
+        schema = str(range_var.get("schemaname", "")).lower()
+        if not schema and relation in cte_names:
+            continue
+        relations.add(f"{schema}.{relation}" if schema else relation)
+    return relations
+
+
 def _is_allowed_function(
     function_name: str, *, allow_unqualified_functions: bool
 ) -> bool:
@@ -165,7 +200,10 @@ def _is_allowed_function(
 
 
 def validate_sql_read_only(
-    query: str | None, *, allow_unqualified_functions: bool = False
+    query: str | None,
+    *,
+    allow_unqualified_functions: bool = False,
+    enforce_relation_allowlist: bool = True,
 ) -> list[GuardViolation]:
     if not query or not query.strip():
         return [
@@ -234,6 +272,22 @@ def validate_sql_read_only(
                 "database": "postgresql",
                 "code": "LOCKING_READ",
                 "message": "행 잠금 조회는 허용되지 않습니다.",
+            }
+        ]
+    unauthorized_relations = (
+        sorted(_referenced_relations(statement) - _allowed_sql_relations())
+        if enforce_relation_allowlist
+        else []
+    )
+    if unauthorized_relations:
+        return [
+            {
+                "database": "postgresql",
+                "code": "UNAUTHORIZED_RELATION",
+                "message": (
+                    "공개된 업무 스키마 외의 테이블은 조회할 수 없습니다: "
+                    f"{', '.join(unauthorized_relations)}"
+                ),
             }
         ]
     called_functions = {

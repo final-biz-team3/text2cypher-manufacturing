@@ -12,7 +12,7 @@ def test_driver_uses_application_reader_credentials(monkeypatch) -> None:
         return driver
 
     monkeypatch.setattr(neo4j, "_driver", None)
-    monkeypatch.setattr(neo4j.GraphDatabase, "driver", make_driver)
+    monkeypatch.setattr(neo4j.AsyncGraphDatabase, "driver", make_driver)
     monkeypatch.setenv("NEO4J_APP_USER", "graph_reader")
     monkeypatch.setenv("NEO4J_APP_PASSWORD", "reader_password")
 
