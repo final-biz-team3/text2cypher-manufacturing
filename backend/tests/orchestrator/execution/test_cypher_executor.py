@@ -1,9 +1,12 @@
 """execute_cypher가 result.data() 형태 반환·timeout 전달·행 상한·예외 전파를 지키는지 검증한다."""
 
 import pytest
-from neo4j.exceptions import AuthError
+from neo4j.exceptions import AuthError, Forbidden
 
-from orchestrator.execution.cypher_executor import execute_cypher_with_driver
+from orchestrator.execution.cypher_executor import (
+    execute_cypher_with_driver,
+    verify_reader_is_read_only,
+)
 from tests.mocks.neo4j import MockAsyncNeo4jDriver
 
 
@@ -52,3 +55,20 @@ async def test_execute_cypher_propagates_original_exception_without_wrapping() -
         await execute_cypher_with_driver(
             driver, "RETURN 1", timeout_sec=5.0, row_limit=10
         )
+
+
+async def test_verify_reader_is_read_only_passes_when_write_is_forbidden() -> None:
+    """reader role이 실제로 쓰기를 거부하면(Forbidden) 조용히 통과한다."""
+    driver = MockAsyncNeo4jDriver(write_error=Forbidden("not allowed"))
+
+    await verify_reader_is_read_only(driver)
+
+
+async def test_verify_reader_is_read_only_raises_when_write_unexpectedly_succeeds() -> (
+    None
+):
+    """쓰기가 거부되지 않으면(계정이 실제로는 관리자 등) 명확하게 실패시킨다."""
+    driver = MockAsyncNeo4jDriver()
+
+    with pytest.raises(RuntimeError, match="쓰기를 거부하지 않습니다"):
+        await verify_reader_is_read_only(driver)

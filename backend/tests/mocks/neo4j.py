@@ -63,6 +63,13 @@ class _MockAsyncSession:
         self._driver.last_transaction = tx
         return result
 
+    async def execute_write(self, tx_function: Callable[[Any], Any]) -> Any:
+        """verify_reader_is_read_only() 검증용 - write_error가 지정되면
+        tx.run()에서 그 예외를 raise하고, 아니면 성공(=계정이 실제로 쓰기가
+        가능했다는 오탐 시나리오)한다."""
+        tx = _MockAsyncTransaction([], self._driver.write_error)
+        return await tx_function(tx)
+
 
 class MockAsyncNeo4jDriver:
     """driver.session()... await session.execute_read(...)를 흉내내는 mock 드라이버.
@@ -72,9 +79,11 @@ class MockAsyncNeo4jDriver:
         self,
         records: list[dict[str, Any]] | None = None,
         error: Exception | None = None,
+        write_error: Exception | None = None,
     ) -> None:
         self.records = records or []
         self.error = error
+        self.write_error = write_error
         self.last_transaction: _MockAsyncTransaction | None = None
         self.last_timeout: float | None = None
 

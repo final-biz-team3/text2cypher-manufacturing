@@ -4,22 +4,27 @@ import os
 from typing import Any
 
 import neo4j
-from neo4j import AsyncDriver, AsyncGraphDatabase
+from neo4j import AsyncDriver
+from neo4j.exceptions import Forbidden
+
+from core.neo4j import build_driver
 
 _reader_driver: AsyncDriver | None = None
+
+_WRITE_PROBE_LABEL = "__reader_write_probe__"
 
 
 def get_reader_driver() -> AsyncDriver:
     """execute_cypher 전용 reader 계정 드라이버 싱글턴.
-    core/neo4j.py의 관리자 계정 드라이버(헬스체크·스키마용)와는 별개다."""
+    core/neo4j.py의 관리자 계정 드라이버(헬스체크·스키마용)와는 별개다.
+    드라이버 생성 로직(및 NEO4J_URI 필수 요구)은 core.neo4j.build_driver를
+    공유한다 - 예전엔 이 함수가 따로 AsyncGraphDatabase.driver(...)를
+    호출하고 있어서 관리자 드라이버와 요구 조건이 미묘하게 달랐다."""
     global _reader_driver
     if _reader_driver is None:
-        _reader_driver = AsyncGraphDatabase.driver(
-            os.environ["NEO4J_URI"],
-            auth=(
-                os.environ["NEO4J_READER_USER"],
-                os.environ["NEO4J_READER_PASSWORD"],
-            ),
+        _reader_driver = build_driver(
+            os.environ["NEO4J_READER_USER"],
+            os.environ["NEO4J_READER_PASSWORD"],
         )
     return _reader_driver
 
@@ -29,6 +34,37 @@ async def close_reader_driver() -> None:
     if _reader_driver is not None:
         await _reader_driver.close()
         _reader_driver = None
+
+
+async def verify_reader_is_read_only(driver: Any) -> None:
+    """reader 계정이 실제로 쓰기를 거부하는지 시작 시 한 번 확인한다.
+
+    execute_cypher()는 항상 session.execute_read()만 쓰므로 access_mode
+    자체가 서버에서 쓰기를 막아주지만(계정 권한과 무관하게), 이건 "이
+    코드가 항상 execute_read만 호출한다"는 전제에 기대는 것이다. .env에
+    NEO4J_READER_USER/PASSWORD를 실수로 관리자 계정 값으로 넣으면
+    이 전제가 깨졌을 때(예: 나중에 다른 코드가 execute_write를 호출) 진짜
+    쓰기가 나갈 수 있으므로, 계정 자체의 role 권한도 시작 시점에 직접
+    검증한다. reader role은 새 라벨 생성 권한이 없어 Forbidden이 난다."""
+
+    async def _write(tx: Any) -> None:
+        await tx.run(f"CREATE (:{_WRITE_PROBE_LABEL})")
+
+    async def _cleanup(tx: Any) -> None:
+        await tx.run(f"MATCH (n:{_WRITE_PROBE_LABEL}) DELETE n")
+
+    async with driver.session() as session:
+        try:
+            await session.execute_write(_write)
+        except Forbidden:
+            return
+        # 여기 도달했다는 건 계정이 실제로 쓰기 권한을 갖고 있다는 뜻이라
+        # 방금 만든 노드부터 지운 뒤 명확하게 실패시킨다.
+        await session.execute_write(_cleanup)
+        raise RuntimeError(
+            "NEO4J_READER_USER 계정이 쓰기를 거부하지 않습니다 - "
+            "reader role이 아닌(예: 관리자) 계정이 설정됐을 수 있습니다."
+        )
 
 
 async def execute_cypher_with_driver(
