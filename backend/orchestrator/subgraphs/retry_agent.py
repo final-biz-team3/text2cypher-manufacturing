@@ -11,12 +11,27 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from starlette.concurrency import run_in_threadpool
 
 from orchestrator.guards.audit import log_guard_decision
 from orchestrator.guards.result import GuardResult
 
 # 원본 1회 + 재시도 2회 = 총 3회
 MAX_ATTEMPTS = 3
+
+# 스키마 화이트리스트에 아예 없는 이름을 참조한 차단은 LLM이 재생성으로
+# 고칠 수 없다(같은 schema 텍스트를 다시 줘도 같은 결론에 도달함) - 재시도
+# 예산을 낭비하지 않도록 접속 오류와 같은 성격(retryable=False)으로 취급한다.
+# 반대로 WRITE_KEYWORD_DETECTED 등 쿼리 형태 문제나, 스키마 한정자 누락처럼
+# 가드가 해석에 실패한 fail-closed 케이스(UNRESOLVED_TABLE_REFERENCE/
+# UNRECOGNIZED_LABEL_SYNTAX)는 LLM이 쿼리를 다르게 써서 고칠 여지가 있으므로
+# 재시도 대상으로 둔다.
+_NON_RETRYABLE_GUARD_REASONS = frozenset(
+    {
+        "UNKNOWN_TABLE",
+        "UNKNOWN_LABEL_OR_RELATIONSHIP",
+    }
+)
 
 EMPTY_RESULT_ERROR = "EMPTY_RESULT"
 
@@ -112,14 +127,34 @@ def make_retry_agent_subgraph(
             }
 
         if guard is not None:
-            guard_result = guard(query_text)
-            log_guard_decision(
-                query_type=label,
-                intent=state["query"],
-                decision="ALLOW" if guard_result.allowed else "BLOCK",
-                stage="pre_execution_guard",
-                reason=guard_result.reason_code,
-            )
+            try:
+                guard_result = guard(query_text)
+            except Exception as exc:
+                # 가드 자체의 파싱 버그(예: 깊게 중첩된 쿼리에서 RecursionError)가
+                # 그래프 밖으로 raise되는 걸 막는 안전망 - execute() 주변의
+                # 미분류 예외 처리와 동일한 성격으로 다룬다.
+                logger.error(
+                    "%s: 쿼리 가드 실행 중 예외(재시도 대상 아님, 안전망): %s",
+                    label,
+                    exc,
+                    exc_info=True,
+                )
+                return failure("쿼리 검증 중 오류가 발생했습니다.", retryable=False)
+
+            # 감사 로그 파일 쓰기(동기 I/O)가 이벤트 루프를 막지 않도록 스레드풀로 뺀다.
+            # 감사 로그는 부가 기능이라 여기서 예외가 나도(디스크 풀/권한 문제 등)
+            # 실제 가드 판정·쿼리 실행 흐름을 막아서는 안 된다(안전망).
+            try:
+                await run_in_threadpool(
+                    log_guard_decision,
+                    query_type=label,
+                    intent=state["query"],
+                    decision="ALLOW" if guard_result.allowed else "BLOCK",
+                    stage="pre_execution_guard",
+                    reason=guard_result.reason_code,
+                )
+            except Exception as exc:
+                logger.error("%s: 감사 로그 기록 실패(무시하고 계속): %s", label, exc)
             if not guard_result.allowed:
                 logger.warning(
                     "%s: 쿼리 가드 차단(%s): %s",
@@ -127,10 +162,13 @@ def make_retry_agent_subgraph(
                     guard_result.reason_code,
                     guard_result.reason_detail,
                 )
+                # 상세 사유(reason_detail)는 로그에만 남긴다 - attempts/error를
+                # 거쳐 API 응답(final_answer)까지 그대로 노출되면, 사용자가 재시도
+                # 3번 동안 실제 테이블/라벨명을 하나씩 유추해낼 수 있기 때문이다.
                 return failure(
-                    f"쿼리 검증 실패({guard_result.reason_code}): "
-                    f"{guard_result.reason_detail}",
-                    retryable=True,
+                    f"쿼리가 안전 정책에 의해 차단되었습니다({guard_result.reason_code}).",
+                    retryable=guard_result.reason_code
+                    not in _NON_RETRYABLE_GUARD_REASONS,
                 )
 
         try:

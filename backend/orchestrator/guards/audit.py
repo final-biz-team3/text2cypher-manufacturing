@@ -6,12 +6,18 @@
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
 _LOGGER_NAME = "orchestrator.guard_audit"
 
 _configured_handler: logging.Handler | None = None
+# log_guard_decision이 run_in_threadpool을 통해 실제 워커 스레드에서 호출되므로,
+# 핸들러를 처음 만드는 체크-후-생성 구간이 동시 요청 간 레이스에 노출된다
+# (두 스레드가 동시에 None을 보고 각자 FileHandler를 만들어 둘 다 붙는 문제 -
+# 실제로 재현됨). 락으로 막는다.
+_handler_lock = threading.Lock()
 
 
 def _log_path() -> Path:
@@ -32,16 +38,21 @@ def _get_logger() -> logging.Logger:
     global _configured_handler
     logger = logging.getLogger(_LOGGER_NAME)
     if _configured_handler is None:
-        logger.setLevel(logging.INFO)
-        logger.propagate = (
-            os.getenv("GUARD_AUDIT_ALSO_CONSOLE", "false").lower() == "true"
-        )
-        log_path = _log_path()
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(log_path, encoding="utf-8")
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        logger.addHandler(handler)
-        _configured_handler = handler
+        with _handler_lock:
+            # 락을 얻으려고 대기하는 동안 다른 스레드가 이미 만들었을 수 있어
+            # 다시 확인한다(더블 체크 락킹) - 그렇지 않으면 락 대기열에 걸린
+            # 만큼 핸들러가 중복 생성된다.
+            if _configured_handler is None:
+                logger.setLevel(logging.INFO)
+                logger.propagate = (
+                    os.getenv("GUARD_AUDIT_ALSO_CONSOLE", "false").lower() == "true"
+                )
+                log_path = _log_path()
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                handler = logging.FileHandler(log_path, encoding="utf-8")
+                handler.setFormatter(logging.Formatter("%(message)s"))
+                logger.addHandler(handler)
+                _configured_handler = handler
     return logger
 
 

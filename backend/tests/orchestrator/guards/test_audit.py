@@ -2,6 +2,7 @@
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import orchestrator.guards.audit as audit_module
 from orchestrator.guards.audit import log_guard_decision
@@ -81,3 +82,32 @@ def test_log_guard_decision_propagates_when_console_enabled(
     )
 
     assert logging.getLogger("orchestrator.guard_audit").propagate is True
+
+
+def test_log_guard_decision_creates_handler_only_once_under_concurrent_calls(
+    tmp_path, monkeypatch
+) -> None:
+    """log_guard_decision은 run_in_threadpool을 통해 실제 워커 스레드에서
+    동시 호출될 수 있다. 핸들러 초기화의 체크-후-생성 구간이 락으로 보호되지
+    않으면 동시 요청 두 개가 각자 FileHandler를 만들어 둘 다 로거에 붙는다
+    (판정마다 로그가 중복 기록되고 핸들러 하나는 참조를 잃은 채 새는 버그였다).
+    첫 호출을 여러 스레드에서 동시에 일으켜 핸들러가 정확히 1개만 붙는지 확인한다."""
+    log_path = tmp_path / "query_guard_audit.jsonl"
+    monkeypatch.setenv("GUARD_AUDIT_LOG_PATH", str(log_path))
+    monkeypatch.setenv("GUARD_AUDIT_ALSO_CONSOLE", "false")
+    audit_module.reset_for_tests()
+
+    def decide() -> None:
+        log_guard_decision(
+            query_type="sql_agent",
+            intent="질의",
+            decision="ALLOW",
+            stage="pre_execution_guard",
+            reason=None,
+        )
+
+    with ThreadPoolExecutor(max_workers=32) as executor:
+        list(executor.map(lambda _: decide(), range(32)))
+
+    logger = logging.getLogger("orchestrator.guard_audit")
+    assert len(logger.handlers) == 1

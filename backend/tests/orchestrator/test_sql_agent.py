@@ -245,3 +245,28 @@ async def test_sql_agent_blocks_write_query_before_execution() -> None:
     assert result["result"] == [{"count": 10}]
     assert len(result["attempts"]) == 2
     assert "WRITE_KEYWORD_DETECTED" in result["attempts"][0]["error"]
+
+
+async def test_sql_agent_does_not_retry_unknown_table_guard_block() -> None:
+    """화이트리스트에 없는 테이블 참조는 재생성해도 같은 결론에 도달하므로
+    재시도 예산을 낭비하지 않고 1회만에 종료한다(스키마명은 응답에 노출 안 됨)."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT * FROM production.unknown_table")
+    )
+    execute_calls = []
+
+    async def execute_sql(sql: str) -> list[dict]:
+        execute_calls.append(sql)
+        return [{"count": 10}]
+
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert execute_calls == []
+    assert result["result"] is None
+    assert len(openai_client.calls) == 1
+    assert "UNKNOWN_TABLE" in result["error"]
+    assert "unknown_table" not in result["error"]
