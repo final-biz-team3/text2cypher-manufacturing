@@ -3,7 +3,8 @@
 > **2026-08-20 갱신 (PR #16 리뷰 josephuk77 3차 대응)**: 이 문서 제목과 "검증 대상"이
 > 가리키는 파일(`schema/structured_mvp_graph_schema.yaml`,
 > `schema/structured_mvp_constraints.cypher`)은 지금 이 저장소의 현재 활성 파일이다.
-> 그래서 본문 수치도 **현재 구현 기준(업무 6노드·6관계, 제약조건 6개, 조회 인덱스
+> 그래서 본문 수치도 **현재 구현 기준(업무 6노드·6관계와 이슈 #22 온톨로지
+> 3노드·1관계, 제약조건 9개, 조회 인덱스
 > 2개)으로 갱신**했다 - 이전엔 원 설계자가 검증한 11노드(업무 6 + 온톨로지 5) 기준
 > 수치가 그대로 남아 있어서, 이 문서를 "지금 제출하는 검증 보고서"로 읽으면 실제
 > 구현과 안 맞아 혼동을 준다는 지적을 받았다. 원 설계자의 11노드 검증 기록은
@@ -15,7 +16,7 @@
 
 조건은 다음과 같다.
 
-1. 온톨로지(Term/BusinessConcept/QuestionIntent/EntityType/QueryTemplate) 5노드·6관계는 이번 구현에 아예 포함되지 않았다 - RQ01~RQ20 쿼리 계약 어디에도 온톨로지 참조가 없어 Q12~Q20 커버리지에는 영향이 없지만, 향후 온톨로지가 필요해지면 스키마부터 다시 추가해야 한다(`schema/structured_mvp_graph_schema.yaml`의 원본 참고 사본에 구조만 보존돼 있음).
+1. 이슈 #22 범위의 Term/BusinessConcept/ActionConcept와 MEANS는 YAML seed로 구현됐다. QuestionIntent/EntityType/QueryTemplate 및 나머지 온톨로지 관계는 아직 적재 범위가 아니다.
 
 ## 검증 대상
 
@@ -32,7 +33,7 @@
 |---|---|
 | 업무 노드 | 6종 일치 |
 | 업무 관계 | 6종 일치 |
-| 온톨로지 | 이번 구현에 미포함(해당 없음) |
+| 온톨로지 | Term/BusinessConcept/ActionConcept 3종과 MEANS 구현 |
 | 끊어진 관계 참조 | 0건(쓰기 전 검증에서 매 실행 확인) |
 | 고유키 없는 노드 | 0건 |
 | SQL 전용 질문의 그래프 혼입 | 0건 |
@@ -46,15 +47,15 @@
 
 | 구분 | 수량 | 결과 |
 |---|---:|---|
-| UNIQUE 제약조건 | 6 | 전체 생성 성공 |
-| 제약조건 backing RANGE 인덱스 | 6 | 전체 ONLINE |
+| UNIQUE 제약조건 | 9 | 업무 6개와 온톨로지 3개를 IF NOT EXISTS로 선언 |
+| 제약조건 backing RANGE 인덱스 | 9 | 제약 생성 시 준비 |
 | 조회용 RANGE 인덱스 | 2 | 전체 ONLINE |
 | 기본 LOOKUP 인덱스 | 2 | 전체 ONLINE |
 | DDL 반복 실행 | 성공 | `IF NOT EXISTS`로 재실행해도 오류 없음(실제로는 매 실행마다 새 데이터베이스에 적용, 라이브 검증 다수 완료) |
 
-UNIQUE 제약조건 6개: `product_id`, `supplier_id`, `work_order_id`, `routing_operation_key`, `location_id`, `scrap_reason_id`.
+UNIQUE 제약조건은 업무 6개에 `ontology_term_normalized`, `ontology_business_concept_id`, `ontology_action_concept_id`를 더한 9개다.
 
-조회용 인덱스는 다음 두 개로 제한했다(온톨로지 `Term.normalizedText`는 이번 구현에 없음).
+조회용 명시 인덱스는 다음 두 개로 제한한다. `Term.normalizedText`는 유니크 제약의 backing index를 사용한다.
 
 - `Product.name`
 - `Supplier.name`
@@ -92,7 +93,7 @@ Ruff: All checks passed
 
 ### 온톨로지
 
-이번 구현에는 온톨로지 노드·관계 자체가 없다(원본 구조는 `schema/structured_mvp_graph_schema.yaml` 참고 사본에 보존). Gold 쿼리 확정 시점에 필요하면 스키마·제약조건·적재 스펙에 별도 작업으로 추가한다.
+이슈 #22의 Term/BusinessConcept/ActionConcept와 MEANS는 `ontology/manufacturing_terms.yaml`에서 idempotent하게 적재한다. QuestionIntent/EntityType/QueryTemplate 연결은 별도 범위로 남는다.
 
 ### 실제 적재 성능
 

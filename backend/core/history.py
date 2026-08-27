@@ -19,6 +19,7 @@ class Connection(Protocol):
 
     async def execute(self, query: str, params: tuple[Any, ...] = ()) -> Cursor: ...
     async def commit(self) -> None: ...
+    async def rollback(self) -> None: ...
 
 
 class ConnectionContext(Protocol):
@@ -46,21 +47,26 @@ async def save_conversation(
     graph_result: dict | None,
 ) -> None:
     async with pool.connection() as conn:
-        await conn.execute(
-            "INSERT INTO app.conversation_history "
-            "(username, query, final_answer, sql_query, cypher_query, sql_result, graph_result) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (
-                username,
-                query,
-                final_answer,
-                sql_query,
-                cypher_query,
-                json.dumps(sql_result) if sql_result is not None else None,
-                json.dumps(graph_result) if graph_result is not None else None,
-            ),
-        )
-        await conn.commit()
+        try:
+            await conn.execute(
+                "INSERT INTO app.conversation_history "
+                "(username, query, final_answer, sql_query, cypher_query, "
+                "sql_result, graph_result) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    username,
+                    query,
+                    final_answer,
+                    sql_query,
+                    cypher_query,
+                    json.dumps(sql_result) if sql_result is not None else None,
+                    json.dumps(graph_result) if graph_result is not None else None,
+                ),
+            )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            raise
 
 
 async def list_history(pool: Pool, user: CurrentUser) -> list[dict]:

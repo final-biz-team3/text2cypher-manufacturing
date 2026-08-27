@@ -10,9 +10,8 @@ _pool: AsyncConnectionPool | None = None
 _write_pool: AsyncConnectionPool | None = None
 
 
-def postgres_conninfo() -> str:
-    """풀을 거치지 않는 일회성 커넥션(헬스체크 등)에도 재사용할 수 있도록
-    공개 함수로 둔다."""
+def postgres_admin_conninfo() -> str:
+    """확장 설치처럼 관리자 권한이 필요한 시작 작업용 접속 정보."""
     return psycopg.conninfo.make_conninfo(
         host=os.getenv("POSTGRES_HOST", "localhost"),
         port=os.getenv("POSTGRES_PORT", "5432"),
@@ -22,10 +21,26 @@ def postgres_conninfo() -> str:
     )
 
 
+def postgres_app_conninfo() -> str:
+    """애플리케이션 조회 및 제한된 대화기록 저장 역할의 접속 정보."""
+    return psycopg.conninfo.make_conninfo(
+        host=os.getenv("POSTGRES_HOST", "localhost"),
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        dbname=os.getenv("POSTGRES_DB", "postgres"),
+        user=os.getenv("POSTGRES_APP_USER", "text2cypher_reader"),
+        password=os.getenv("POSTGRES_APP_PASSWORD", "changeme_local"),
+    )
+
+
+def postgres_conninfo() -> str:
+    """헬스체크 등 일반 애플리케이션 경로에는 제한된 역할을 사용한다."""
+    return postgres_app_conninfo()
+
+
 async def bootstrap_postgres() -> None:
     """앱 시작 시 1회: pg_trgm 확장을 풀과 무관한 임시 커넥션으로 준비한다.
     read_only가 아닌 일반 커넥션이라 CREATE EXTENSION(쓰기)이 가능하다."""
-    async with await psycopg.AsyncConnection.connect(postgres_conninfo()) as conn:
+    async with await psycopg.AsyncConnection.connect(postgres_admin_conninfo()) as conn:
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
             await conn.commit()
@@ -56,7 +71,7 @@ def get_pool() -> AsyncConnectionPool:
     global _pool
     if _pool is None:
         _pool = AsyncConnectionPool(
-            postgres_conninfo(),
+            postgres_app_conninfo(),
             configure=configure_connection,
             open=False,
             min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1")),
@@ -81,7 +96,7 @@ def get_write_pool() -> AsyncConnectionPool:
     global _write_pool
     if _write_pool is None:
         _write_pool = AsyncConnectionPool(
-            postgres_conninfo(),
+            postgres_app_conninfo(),
             configure=configure_write_connection,
             open=False,
             min_size=int(os.getenv("POSTGRES_WRITE_POOL_MIN_SIZE", "1")),

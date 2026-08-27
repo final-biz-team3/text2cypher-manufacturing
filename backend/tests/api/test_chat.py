@@ -21,6 +21,10 @@ from tests.mocks.openai import (
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
 
+_READ = make_content_response(
+    '{"intent":"READ","confidence":0.99,"reason":"조회 요청"}'
+)
+
 
 def _fake_request() -> Request:
     """chat()이 캐시된 그래프를 찾아보는 request.app.state.graph 접근을 만족시키는
@@ -35,6 +39,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
 ) -> None:
     """confirmed_entity를 검증·유지하고 SQL 생성·실행을 한 번 시도한다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response(
@@ -83,12 +88,14 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert result["sql_result"]["result"] == [{"listprice": 2384.07}]
     assert result["final_answer"] is not None
     assert "subqueries" not in result
-    assert len(openai_client.calls) == 3
+    assert len(openai_client.calls) == 4
+    assert result["normalization_elapsed_ms"] >= 0
 
 
 async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> None:
     """/chat 호출 후 로그인한 사용자 이름으로 대화기록이 저장된다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),
@@ -151,12 +158,16 @@ class _FailingWriteConnection:
     async def execute(self, query: str, params: tuple = ()):
         raise RuntimeError("db down")
 
+    async def rollback(self) -> None:
+        return None
+
 
 async def test_chat_returns_response_even_if_save_conversation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """대화기록 저장이 실패해도 /chat 응답 자체는 정상 반환된다."""
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),
@@ -219,6 +230,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     """유효한 access_token 쿠키가 있으면 /chat이 정상 응답한다."""
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response("SELECT listprice FROM production.product"),
@@ -251,6 +263,7 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     (jsonable_encoder는 Decimal은 알아서 처리하지만 neo4j.time.DateTime은
     __dict__를 그대로 덤프해버려 명시적 변환이 필요했다 - 실측으로 확인함.)"""
     openai_client = MockOpenAIClient(
+        _READ,
         make_no_tool_call_response(),
         make_content_response('["sql", "graph"]'),
         make_content_response("SELECT listprice FROM production.product"),

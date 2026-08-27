@@ -120,9 +120,9 @@ nodes:
 
   Term:
     group: ontology
-    source: {type: seed-file, status: pending-seed-content}
-    uniqueKey: termId
-    constraintName: term_id
+    source: {type: seed-file, path: ontology/manufacturing_terms.yaml, status: implemented}
+    uniqueKey: normalizedText
+    constraintName: ontology_term_normalized
     properties:
       termId: {type: STRING, required: true}
       text: {type: STRING, required: true}
@@ -132,13 +132,25 @@ nodes:
 
   BusinessConcept:
     group: ontology
-    source: {type: seed-file, status: pending-seed-content}
+    source: {type: seed-file, path: ontology/manufacturing_terms.yaml, status: implemented}
     uniqueKey: conceptId
-    constraintName: business_concept_id
+    constraintName: ontology_business_concept_id
     properties:
       conceptId: {type: STRING, required: true}
       nameKo: {type: STRING, required: true}
       description: {type: STRING, required: true}
+      ontologyVersion: {type: STRING, required: true}
+
+  ActionConcept:
+    group: ontology
+    source: {type: seed-file, path: ontology/manufacturing_terms.yaml, status: implemented}
+    uniqueKey: conceptId
+    constraintName: ontology_action_concept_id
+    properties:
+      conceptId: {type: STRING, required: true}
+      nameKo: {type: STRING, required: true}
+      actionType: {type: STRING, required: true}
+      defaultPolicy: {type: STRING, required: true}
       ontologyVersion: {type: STRING, required: true}
 
   QuestionIntent:
@@ -251,7 +263,8 @@ relationships:
   MEANS:
     group: ontology
     from: Term
-    to: BusinessConcept
+    to: [BusinessConcept, ActionConcept]
+    source: {type: seed-file, path: ontology/manufacturing_terms.yaml, status: implemented}
     mergeKey: endpoints
     properties: {}
 

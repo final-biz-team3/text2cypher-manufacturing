@@ -6,11 +6,8 @@
 // and runtime edition are independent: this file stays Community-compatible
 // syntax on purpose, it is not evidence that Community edition is targeted.
 //
-// 원본 neo4j_structured_mvp_design/structured_mvp_constraints.cypher는 제약조건
-// 11개(업무 6 + 온톨로지 5)와 인덱스 3개(product_name/supplier_name/term_normalized_text)를
-// 갖고 있었다. schema/graph_schema.yaml에서 온톨로지 5노드를 뺀 것과 맞춰
-// 이 파일도 업무 6개 제약 + 인덱스 2개만 남긴다 — 온톨로지 추가 시점에
-// 원본 파일 기준으로 나머지를 같이 넣는다.
+// 업무 그래프 6개 제약과 이슈 #22 온톨로지 seed의 3개 제약을 함께 선언한다.
+// seed와 같은 이름·키를 사용하므로 어느 경로를 먼저 실행해도 재실행 가능하다.
 
 CREATE CONSTRAINT product_id IF NOT EXISTS
 FOR (n:Product) REQUIRE n.productId IS UNIQUE;
@@ -29,6 +26,15 @@ FOR (n:Location) REQUIRE n.locationId IS UNIQUE;
 
 CREATE CONSTRAINT scrap_reason_id IF NOT EXISTS
 FOR (n:ScrapReason) REQUIRE n.scrapReasonId IS UNIQUE;
+
+CREATE CONSTRAINT ontology_term_normalized IF NOT EXISTS
+FOR (n:Term) REQUIRE n.normalizedText IS UNIQUE;
+
+CREATE CONSTRAINT ontology_business_concept_id IF NOT EXISTS
+FOR (n:BusinessConcept) REQUIRE n.conceptId IS UNIQUE;
+
+CREATE CONSTRAINT ontology_action_concept_id IF NOT EXISTS
+FOR (n:ActionConcept) REQUIRE n.conceptId IS UNIQUE;
 
 CREATE RANGE INDEX product_name IF NOT EXISTS
 FOR (n:Product) ON (n.name);

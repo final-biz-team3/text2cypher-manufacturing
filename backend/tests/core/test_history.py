@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Any
 
+import pytest
+
 from core.auth import CurrentUser
 from core.history import list_history, save_conversation
 
@@ -26,6 +28,9 @@ class _FakeConnection:
     async def commit(self) -> None:
         self._pool.committed = True
 
+    async def rollback(self) -> None:
+        self._pool.rollback_called = True
+
 
 class _FakeConnectionContext:
     def __init__(self, pool: "_FakePool") -> None:
@@ -42,6 +47,7 @@ class _FakePool:
     def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
         self.statements: list[tuple[str, tuple[Any, ...]]] = []
         self.committed = False
+        self.rollback_called = False
         self.rows = rows or []
 
     def connection(self, timeout: float | None = None) -> _FakeConnectionContext:
@@ -74,6 +80,35 @@ async def test_save_conversation_inserts_and_commits() -> None:
     assert params[2] == "1200원입니다"
     assert '"listprice": 1200' in params[5]
     assert params[6] is None
+    assert pool.committed is True
+
+
+class _FailOnceConnection(_FakeConnection):
+    async def execute(self, query: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
+        if not self._pool.rollback_called:
+            raise RuntimeError("temporary write failure")
+        return await super().execute(query, params)
+
+
+class _FailOnceContext(_FakeConnectionContext):
+    async def __aenter__(self) -> _FailOnceConnection:
+        return _FailOnceConnection(self._pool)
+
+
+class _FailOncePool(_FakePool):
+    def connection(self, timeout: float | None = None) -> _FailOnceContext:
+        return _FailOnceContext(self)
+
+
+async def test_save_failure_rolls_back_before_connection_is_reused() -> None:
+    pool = _FailOncePool()
+    arguments = (pool, "user", "q", None, None, None, None, None)
+
+    with pytest.raises(RuntimeError, match="temporary write failure"):
+        await save_conversation(*arguments)
+    await save_conversation(*arguments)
+
+    assert pool.rollback_called is True
     assert pool.committed is True
 
 

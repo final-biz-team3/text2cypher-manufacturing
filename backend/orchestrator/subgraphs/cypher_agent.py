@@ -17,6 +17,8 @@ from neo4j.exceptions import (
 
 from agents.cypher.generator import generate_cypher
 from agents.cypher.schema.models import GraphQueryPolicy
+from guard.errors import GeneratedQueryRejectedError
+from guard.query_read_guard import validate_cypher_read_only
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
     make_retry_agent_subgraph,
@@ -75,6 +77,7 @@ def _wrap_execute_cypher(
 
 # 실행/쿼리 결함 오류: LLM에 오류를 피드백해 쿼리를 재생성하면 해결될 수 있다.
 _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    GeneratedQueryRejectedError,
     CypherSyntaxError,
     CypherTypeError,
     ConstraintError,
@@ -109,11 +112,19 @@ def make_cypher_agent_subgraph(
             previous_error=previous_error,
         )
 
+    wrapped_execute = _wrap_execute_cypher(execute_cypher)
+
+    async def execute_read_only(cypher: str) -> Any:
+        violations = validate_cypher_read_only(cypher)
+        if violations:
+            raise GeneratedQueryRejectedError(violations[0]["message"])
+        return await wrapped_execute(cypher)
+
     return make_retry_agent_subgraph(
         logger=logger,
         label="cypher_agent",
         generate=generate,
-        execute=_wrap_execute_cypher(execute_cypher),
+        execute=execute_read_only,
         connection_exceptions=_CONNECTION_EXCEPTIONS,
         retryable_exceptions=_RETRYABLE_EXCEPTIONS,
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,

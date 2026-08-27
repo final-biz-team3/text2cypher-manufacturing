@@ -8,6 +8,8 @@ import psycopg
 from langgraph.graph.state import CompiledStateGraph
 
 from agents.sql.generator import generate_sql
+from guard.errors import GeneratedQueryRejectedError
+from guard.query_read_guard import validate_sql_read_only
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
     make_retry_agent_subgraph,
@@ -23,6 +25,7 @@ _CONNECTION_EXCEPTIONS: tuple[type[Exception], ...] = (psycopg.OperationalError,
 # make_retry_agent_subgraph가 이 튜플을 _CONNECTION_EXCEPTIONS보다 먼저
 # 검사하므로 접속 오류로 오분류되지 않는다.
 _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    GeneratedQueryRejectedError,
     psycopg.errors.SyntaxError,
     psycopg.errors.UndefinedColumn,
     psycopg.errors.UndefinedTable,
@@ -55,11 +58,17 @@ def make_sql_agent_subgraph(
             previous_error=previous_error,
         )
 
+    def execute_read_only(sql: str) -> Any:
+        violations = validate_sql_read_only(sql)
+        if violations:
+            raise GeneratedQueryRejectedError(violations[0]["message"])
+        return execute_sql(sql)
+
     return make_retry_agent_subgraph(
         logger=logger,
         label="sql_agent",
         generate=generate,
-        execute=execute_sql,
+        execute=execute_read_only,
         connection_exceptions=_CONNECTION_EXCEPTIONS,
         retryable_exceptions=_RETRYABLE_EXCEPTIONS,
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
