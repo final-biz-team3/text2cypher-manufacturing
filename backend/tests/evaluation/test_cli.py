@@ -10,6 +10,10 @@ from evaluation.models import EvaluationCase
 from evaluation.runner import EvaluationRun
 
 
+def _read_evaluation(output_dir: Path) -> dict[str, Any]:
+    return json.loads((output_dir / "evaluation.json").read_text(encoding="utf-8"))
+
+
 def _failed_record() -> dict[str, Any]:
     return {
         "caseId": "RQ01",
@@ -70,6 +74,7 @@ def _patch_runtime(
     monkeypatch.setattr(cli, "bootstrap_postgres", _noop)
     monkeypatch.setattr(cli, "open_pool", _noop)
     monkeypatch.setattr(cli, "close_pool", _noop)
+    monkeypatch.setattr(cli, "_working_tree_dirty", lambda: False)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
 
@@ -83,9 +88,13 @@ def test_report_returns_zero_for_query_accuracy_failures(
     exit_code = cli.main(["--model", "test-model", "--output-dir", str(tmp_path)])
 
     assert exit_code == 0
-    assert (tmp_path / "junit.xml").is_file()
-    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert {path.name for path in tmp_path.iterdir()} == {
+        "evaluation.json",
+        "report.md",
+    }
+    summary = _read_evaluation(tmp_path)["summary"]
     assert "gate" not in summary
+    assert summary["workingTreeDirty"] is False
 
 
 def test_infrastructure_error_returns_two(
@@ -96,7 +105,7 @@ def test_infrastructure_error_returns_two(
     exit_code = cli.main(["--model", "test-model", "--output-dir", str(tmp_path)])
 
     assert exit_code == 2
-    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    summary = _read_evaluation(tmp_path)["summary"]
     assert summary["infrastructureError"] is True
 
 
@@ -117,8 +126,8 @@ def test_mixed_known_and_unknown_ids_are_rejected(
     )
 
     assert exit_code == 2
-    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    summary = _read_evaluation(tmp_path)["summary"]
     assert summary["error"] == "manifest에 없는 query ID: RQ99"
     report = (tmp_path / "report.md").read_text(encoding="utf-8")
-    assert "Model: `test-model`" in report
-    assert "Infrastructure error: `manifest에 없는 query ID: RQ99`" in report
+    assert "| 모델 | test-model |" in report
+    assert "| 인프라 오류 | manifest에 없는 query ID: RQ99 |" in report

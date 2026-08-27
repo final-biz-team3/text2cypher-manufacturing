@@ -1,11 +1,11 @@
-"""평가 지표와 JSON/Markdown/JUnit artifact 출력."""
+"""평가 지표와 통합 JSON/Markdown artifact 출력."""
 
 import json
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from xml.etree import ElementTree
+from zoneinfo import ZoneInfo
 
 from evaluation.runner import EvaluationRun
 
@@ -237,11 +237,13 @@ def build_summary(
     model: str | None,
     commit: str,
     validate_gold: bool,
+    working_tree_dirty: bool | None = None,
 ) -> dict[str, Any]:
     return {
         "generatedAt": datetime.now(UTC).isoformat(),
         "model": model,
         "commit": commit,
+        "workingTreeDirty": working_tree_dirty,
         "goldValidationOnly": validate_gold,
         "snapshot": result.snapshot,
         "evaluationSet": {
@@ -260,151 +262,258 @@ def build_summary(
 
 
 def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> str:
+    failure_labels = {
+        "ENTITY_MISMATCH": "엔티티 불일치",
+        "ROUTE_MISMATCH": "라우팅 불일치",
+        "SUBQUERY_INTEGRATION_CONTRACT_MISMATCH": "서브쿼리 분할·연결 계약 불일치",
+        "READ_ONLY_VIOLATION": "읽기 전용 정책 위반",
+        "QUERY_GENERATION_ERROR": "쿼리 생성 오류",
+        "QUERY_TIMEOUT": "쿼리 시간 초과",
+        "RESULT_CONTRACT_MISMATCH": "결과 필드 계약 불일치",
+        "QUERY_EXECUTION_ERROR": "쿼리 실행 오류",
+        "RESULT_VALUE_MISMATCH": "결과값 불일치",
+        "DEPENDENCY_BLOCKED": "선행 단계 실패로 미실행",
+    }
+
+    def cell(value: Any) -> str:
+        return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+
     def check_label(value: Any) -> str:
         if value is True:
             return "PASS"
         if value is False:
             return "FAIL"
-        return "NOT_EVALUATED"
+        return "-"
 
-    metrics = summary.get("metrics", {})
+    def percentage(passed: int, total: int) -> str:
+        if total == 0:
+            return "-"
+        value = passed / total * 100
+        precision = 0 if value.is_integer() else 1
+        return f"{value:.{precision}f}%"
+
+    def score_row(label: str, passed: int, total: int) -> str:
+        return f"| {label} | {passed}/{total} | {percentage(passed, total)} |"
+
+    def failure_reason(record: dict[str, Any]) -> str:
+        reasons = [
+            failure_labels.get(str(reason), str(reason))
+            for reason in record.get("failureReasons", [])
+        ]
+        for key in ("planningError", "error"):
+            if record.get(key):
+                reasons.append(str(record[key]))
+        if not reasons:
+            reasons.extend(
+                failure_labels.get(
+                    str(subquery["failureCategory"]),
+                    str(subquery["failureCategory"]),
+                )
+                for subquery in record.get("subqueries", [])
+                if subquery.get("failureCategory")
+            )
+        return cell(", ".join(dict.fromkeys(reasons)) or "-")
+
+    try:
+        generated_at = datetime.fromisoformat(str(summary.get("generatedAt")))
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=UTC)
+        generated_at_label = generated_at.astimezone(ZoneInfo("Asia/Seoul")).strftime(
+            "%Y-%m-%d %H:%M:%S KST"
+        )
+    except (TypeError, ValueError):
+        generated_at_label = "unavailable"
+
+    commit = str(summary.get("commit") or "unknown")
+    commit_label = commit[:7] if commit != "unknown" else commit
+    dirty = summary.get("workingTreeDirty")
+    if dirty is True:
+        working_tree_label = "dirty"
+    elif dirty is False:
+        working_tree_label = "clean"
+    else:
+        working_tree_label = "unknown"
+    snapshot = str(summary.get("snapshot", {}).get("sha256", "unavailable"))
+    snapshot_label = f"{snapshot[:8]}…" if len(snapshot) > 8 else snapshot
+    evaluation_set = summary.get("evaluationSet", {})
+    case_ids = [str(case_id) for case_id in evaluation_set.get("caseIds", [])]
+    rq_numbers = [
+        int(case_id[2:])
+        for case_id in case_ids
+        if case_id.startswith("RQ") and case_id[2:].isdigit()
+    ]
+    if (
+        len(rq_numbers) == len(case_ids)
+        and len(case_ids) > 1
+        and rq_numbers == list(range(rq_numbers[0], rq_numbers[-1] + 1))
+    ):
+        case_ids_label = f"{case_ids[0]}~{case_ids[-1]} ({len(case_ids)}개)"
+    elif case_ids:
+        case_ids_label = f"{', '.join(case_ids)} ({len(case_ids)}개)"
+    else:
+        case_ids_label = "unavailable"
+    suites = ", ".join(evaluation_set.get("suites", [])) or "unavailable"
+    runs = int(evaluation_set.get("runs", 0))
+    route_order = ("SQL", "GRAPH", "HYBRID")
+    selected_routes = [
+        route
+        for route in route_order
+        if any(record.get("route") == route for record in records)
+    ]
+    routes_label = ", ".join(selected_routes) or "unavailable"
+
     gold_validation_only = summary.get("goldValidationOnly") is True
     model_label = (
         "gold-only" if gold_validation_only else summary.get("model") or "unavailable"
     )
     lines = [
-        "# Text-to-query evaluation",
+        "# Text-to-query 평가 보고서",
         "",
-        f"- Model: `{model_label}`",
-        f"- Commit: `{summary.get('commit')}`",
-        f"- Snapshot: `{summary.get('snapshot', {}).get('sha256', 'unavailable')}`",
-        "- Mode: `report-only`",
+        "## 실행 정보",
+        "",
+        "| 항목 | 값 |",
+        "|---|---|",
+        f"| 실행 시각 | {generated_at_label} |",
+        f"| 모델 | {cell(model_label)} |",
+        f"| 커밋 | {cell(commit_label)} |",
+        f"| 작업 상태 | {working_tree_label} |",
+        f"| DB snapshot | {cell(snapshot_label)} |",
+        f"| 평가 suite | {cell(suites)} |",
+        f"| 평가 질의 | {cell(case_ids_label)} |",
+        f"| Route | {routes_label} |",
+        f"| 반복 실행 | {runs}회 |",
     ]
     if summary.get("error"):
-        lines.append(f"- Infrastructure error: `{summary['error']}`")
-    if metrics:
+        lines.append(f"| 인프라 오류 | {cell(summary['error'])} |")
+    if dirty is True:
         lines.extend(
             [
-                f"- Evaluation coverage: {metrics['evaluationCoverage']:.2%}",
-                f"- Query pipeline accuracy: {metrics['queryPipelineAccuracy']:.2%}",
-                f"- Semantic result coverage: {metrics['semanticResultCoverage']:.2%}",
-                f"- Semantic result accuracy: {metrics['semanticResultAccuracy']:.2%}",
-                f"- Verified semantic pass rate: {metrics['verifiedSemanticPassRate']:.2%}",
-                f"- Final result coverage: {metrics['finalResultCoverage']:.2%}",
-                f"- Final result evaluation coverage: {metrics['finalResultEvaluationCoverage']:.2%}",
-                f"- Final result accuracy: {metrics['finalResultAccuracy']:.2%}",
-                f"- Verified final-result pass rate: {metrics['verifiedFinalResultPassRate']:.2%}",
-                f"- Routing accuracy: {metrics['routingAccuracy']:.2%}",
-                f"- Hybrid split accuracy: {metrics['hybridSplitAccuracy']:.2%}",
-                f"- SQL partial coverage / accuracy: {metrics['sqlPartialCoverage']:.2%} / {metrics['sqlPartialAccuracy']:.2%}",
-                f"- Graph partial coverage / accuracy: {metrics['graphPartialCoverage']:.2%} / {metrics['graphPartialAccuracy']:.2%}",
+                "",
+                "> [!WARNING]",
+                "> 커밋되지 않은 변경이 포함된 실행이므로 공식 기준선으로 사용하지 마세요.",
             ]
         )
-    lines.extend(["", "## Cases", ""])
+    lines.extend(
+        [
+            "",
+            "## 핵심 점수",
+            "",
+            "| 지표 | 건수 | 비율 |",
+            "|---|---:|---:|",
+        ]
+    )
     if gold_validation_only:
+        validated = sum(record.get("status") == "GOLD_VALIDATED" for record in records)
+        partials = [
+            subquery for record in records for subquery in record.get("subqueries", [])
+        ]
+        passed_partials = sum(subquery.get("status") == "PASS" for subquery in partials)
         lines.extend(
             [
-                "| Case | Question | Route | Status | Validated partials |",
-                "|---|---|---|---|---|",
+                score_row("Gold 검증 완료", validated, len(records)),
+                score_row("Gold 부분 쿼리 PASS", passed_partials, len(partials)),
             ]
         )
-        for record in records:
-            question = str(record.get("question", "")).replace("|", "\\|")
-            subqueries = record.get("subqueries", [])
-            passed = sum(item.get("status") == "PASS" for item in subqueries)
-            lines.append(
-                f"| {record.get('caseId')} | {question} | {record.get('route')} | "
-                f"{record.get('status')} | {passed} / {len(subqueries)} |"
-            )
     else:
+        completed = [record for record in records if record.get("status") != "ERROR"]
+        pipeline_passed = sum(
+            record.get("queryPipelinePass") is True for record in completed
+        )
+        semantic_applicable = [
+            record
+            for record in completed
+            if isinstance(record.get("semanticResultPass"), bool)
+        ]
+        semantic_passed = sum(
+            record.get("semanticResultPass") is True for record in semantic_applicable
+        )
+        final_evaluated = [
+            record for record in completed if record.get("finalResultEvaluated") is True
+        ]
+        final_applicable = [
+            record
+            for record in final_evaluated
+            if isinstance(record.get("finalResultPass"), bool)
+        ]
+        final_passed = sum(
+            record.get("finalResultPass") is True for record in final_applicable
+        )
+        hybrid = [record for record in completed if record.get("route") == "HYBRID"]
+        hybrid_split_passed = sum(
+            record.get("checks", {}).get("split") is True for record in hybrid
+        )
         lines.extend(
             [
-                "| Case | Question | Route | Entity | Routing | Integration split | Execution | Output contract | Result | Pipeline | Reasons / warnings |",
-                "|---|---|---|---|---|---|---|---|---|---|---|",
+                score_row("채점 실행 완료 (인프라 정상)", len(completed), len(records)),
+                score_row("엄격 파이프라인 PASS", pipeline_passed, len(completed)),
+                score_row(
+                    "의미 결과 비교 가능", len(semantic_applicable), len(completed)
+                ),
+                score_row(
+                    "의미 결과 정확도", semantic_passed, len(semantic_applicable)
+                ),
+                score_row("최종 결과 평가 대상", len(final_evaluated), len(completed)),
+                score_row(
+                    "최종 결과 비교 가능", len(final_applicable), len(final_evaluated)
+                ),
+                score_row("최종 결과 정확도", final_passed, len(final_applicable)),
+                score_row("HYBRID 분할", hybrid_split_passed, len(hybrid)),
             ]
         )
-        for record in records:
-            checks = record.get("checks", {})
-            reasons = ", ".join(record.get("failureReasons", [])) or "-"
-            warnings = ", ".join(record.get("contractWarnings", []))
-            if warnings:
-                reasons = f"{reasons} / {warnings}"
-            question = str(record.get("question", "")).replace("|", "\\|")
-            lines.append(
-                f"| {record.get('caseId')} | {question} | {record.get('route')} | "
-                f"{check_label(checks.get('entity'))} | "
-                f"{check_label(checks.get('routing'))} | "
-                f"{check_label(checks.get('split'))} | "
-                f"{check_label(checks.get('execution'))} | "
-                f"{check_label(checks.get('resultContract'))} | "
-                f"{check_label(checks.get('result'))} | "
-                f"{check_label(record.get('queryPipelinePass'))} | "
-                f"{reasons} |"
-            )
-    failed_records = [
-        record for record in records if record.get("status") in {"FAIL", "ERROR"}
-    ]
-    if failed_records:
-        lines.extend(["", "## Failed case details", ""])
-    for record in failed_records:
         lines.extend(
             [
-                f"### {record.get('caseId')} / run {record.get('run')}",
                 "",
-                f"- Received question: {record.get('question', '-')}",
-                f"- Status: `{record.get('status')}`",
+                "> 채점 실행 완료는 정답률이 아니라 인프라 오류 없이 채점된 비율입니다.",
                 "",
+                "## Route별 엄격 PASS",
+                "",
+                "| Route | 통과/대상 | 비율 |",
+                "|---|---:|---:|",
             ]
         )
-        if record.get("error"):
-            lines.extend([f"- Error: `{record['error']}`", ""])
-        if record.get("planningError"):
-            lines.extend(
-                [
-                    f"- Planning failure: `{record['planningError']}`",
-                    "",
-                    "```json",
-                    str(record.get("planningResponse", "unavailable")),
-                    "```",
-                    "",
-                ]
-            )
-        for subquery in record.get("subqueries", []):
-            rules = subquery.get("businessRules", [])
-            lines.extend(
-                [
-                    f"#### {subquery.get('id')} ({subquery.get('tool')})",
-                    "",
-                    f"- Expected responsibility: {subquery.get('expectedQuestion', '-')}",
-                    f"- Required outputs: `{', '.join(subquery.get('requiredOutputs', []))}`",
-                    f"- Gold: `{subquery.get('goldFile', '-')}`",
-                    f"- Business rules: {' / '.join(rules) if rules else '-'}",
-                    f"- Upstream inputs: `{json.dumps(subquery.get('upstreamInputs', {}), ensure_ascii=False, default=str)}`",
-                ]
-            )
-            if subquery.get("failureCategory"):
-                lines.append(
-                    f"- Failure: `{subquery['failureCategory']}` — "
-                    f"{subquery.get('error', '')}"
+        for route in route_order:
+            route_records = [
+                record for record in completed if record.get("route") == route
+            ]
+            if route_records:
+                route_passed = sum(
+                    record.get("queryPipelinePass") is True for record in route_records
                 )
-            generated_query = subquery.get("generatedQuery")
-            if generated_query:
-                language = "sql" if subquery.get("tool") == "sql" else "cypher"
-                lines.extend(["", f"```{language}", generated_query, "```"])
-            if "candidateSample" in subquery or "goldSample" in subquery:
-                sample = {
-                    "candidate": subquery.get("candidateSample", []),
-                    "gold": subquery.get("goldSample", []),
-                }
-                lines.extend(
-                    [
-                        "",
-                        "```json",
-                        json.dumps(sample, ensure_ascii=False, indent=2, default=str),
-                        "```",
-                    ]
-                )
-            lines.append("")
+                lines.append(score_row(route, route_passed, len(route_records)))
+
+    lines.extend(
+        [
+            "",
+            "## 질의별 결과",
+            "",
+            "| RQ ID | Run | Route | Entity | Routing | Split | Execution | Result | 엄격 PASS | 실패 사유 |",
+            "|---|---:|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    for record in records:
+        checks = record.get("checks", {})
+        if gold_validation_only:
+            gold_pass = record.get("status") == "GOLD_VALIDATED" and all(
+                subquery.get("status") == "PASS"
+                for subquery in record.get("subqueries", [])
+            )
+            entity = routing = split = "-"
+            execution = result = check_label(gold_pass)
+            pipeline = "-"
+        else:
+            entity = check_label(checks.get("entity"))
+            routing = check_label(checks.get("routing"))
+            split = check_label(checks.get("split"))
+            execution = check_label(checks.get("execution"))
+            result = check_label(checks.get("result"))
+            pipeline = check_label(record.get("queryPipelinePass"))
+        lines.append(
+            f"| {cell(record.get('caseId', '-'))} | "
+            f"{cell(record.get('run', '-'))} | {cell(record.get('route', '-'))} | "
+            f"{entity} | {routing} | "
+            f"{split} | {execution} | {result} | {pipeline} | "
+            f"{failure_reason(record)} |"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -414,41 +523,18 @@ def write_artifacts(
     records: list[dict[str, Any]],
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2, default=str) + "\n",
+    (output_dir / "evaluation.json").write_text(
+        json.dumps(
+            {"summary": summary, "cases": records},
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+        + "\n",
         encoding="utf-8",
     )
-    with (output_dir / "cases.jsonl").open("w", encoding="utf-8") as stream:
-        for record in records:
-            stream.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
     (output_dir / "report.md").write_text(
         _report_markdown(summary, records), encoding="utf-8"
     )
-
-    testsuite = ElementTree.Element(
-        "testsuite",
-        name="text-to-query-evaluation",
-        tests=str(len(records)),
-        failures=str(sum(record.get("status") == "FAIL" for record in records)),
-        errors=str(sum(record.get("status") == "ERROR" for record in records)),
-    )
-    for record in records:
-        testcase = ElementTree.SubElement(
-            testsuite,
-            "testcase",
-            classname=f"{record.get('suite')}.{record.get('contractId')}",
-            name=f"{record.get('caseId')}[run={record.get('run')}]",
-        )
-        if record.get("status") == "FAIL":
-            failure = ElementTree.SubElement(
-                testcase, "failure", message="query pipeline failed"
-            )
-            failure.text = json.dumps(record, ensure_ascii=False, default=str)
-        elif record.get("status") == "ERROR":
-            error = ElementTree.SubElement(
-                testcase, "error", message=record.get("error", "infrastructure error")
-            )
-            error.text = record.get("error", "")
-    tree = ElementTree.ElementTree(testsuite)
-    ElementTree.indent(tree, space="  ")
-    tree.write(output_dir / "junit.xml", encoding="utf-8", xml_declaration=True)
+    for legacy_name in ("summary.json", "cases.jsonl", "junit.xml"):
+        (output_dir / legacy_name).unlink(missing_ok=True)

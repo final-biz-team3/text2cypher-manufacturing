@@ -119,7 +119,57 @@ def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() ->
     assert record["queryPipelinePass"] is True
     assert record["status"] == "PASS"
     assert record["failureReasons"] == []
-    assert record["contractWarnings"] == []
+
+
+def test_entity_mismatch_keeps_result_evaluation_but_fails_pipeline() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    case = next(case for case in manifest.cases if case.case_id == "RQ16")
+    contract = manifest.contracts[case.contract_id]
+    plan = contract.subqueries[0].planning_shape()
+
+    runner = object.__new__(EvaluationRunner)
+    runner.manifest = manifest
+    runner.resolve_entity = lambda state: {"entity": contract.expected_entities[0]}
+    runner.route_query = lambda state: {
+        "tool_plan": ["graph"],
+        "subqueries": [plan],
+    }
+
+    def evaluate_subqueries(
+        self: EvaluationRunner,
+        contract: Any,
+        case: Any,
+        actual_subqueries: Any,
+        entity: Any,
+        id_mapping: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "graph_all_bom_paths",
+                "tool": "graph",
+                "status": "PASS",
+                "checks": {
+                    "generation": True,
+                    "readOnly": True,
+                    "execution": True,
+                    "resultContract": True,
+                    "result": True,
+                },
+            }
+        ]
+
+    runner._evaluate_subqueries = MethodType(  # type: ignore[method-assign]
+        evaluate_subqueries, runner
+    )
+
+    record = runner._evaluate_case(case, 1)
+
+    assert record["checks"]["entity"] is False
+    assert record["semanticResultPass"] is True
+    assert record["finalResultPass"] is True
+    assert record["queryPipelinePass"] is False
+    assert record["status"] == "FAIL"
+    assert record["failureReasons"] == ["ENTITY_MISMATCH"]
 
 
 def test_query_safety_failure_is_classified_without_execution() -> None:
