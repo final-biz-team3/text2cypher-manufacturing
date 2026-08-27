@@ -64,16 +64,22 @@ async def chat(
             "confirmed_entity": chat_request.confirmed_entity,
         }
     )
-    response = {
-        "query": result["query"],
-        "entity": result.get("entity"),
-        "tool_plan": result.get("tool_plan"),
-        "sql_query": result.get("sql_query"),
-        "cypher_query": result.get("cypher_query"),
-        "sql_result": _to_json_safe(result.get("sql_result")),
-        "graph_result": _to_json_safe(result.get("graph_result")),
-        "final_answer": result.get("final_answer"),
-    }
+    # entity도 이론상 조회 결과에서 온 값이라(현재는 항상 int id/str name
+    # 조합이라 실제로 걸린 적은 없지만) sql_result/graph_result만 따로
+    # 변환하면 나중에 다른 필드에서 같은 버그가 재현될 수 있다 - response
+    # 전체를 한 번에 감싼다.
+    response = _to_json_safe(
+        {
+            "query": result["query"],
+            "entity": result.get("entity"),
+            "tool_plan": result.get("tool_plan"),
+            "sql_query": result.get("sql_query"),
+            "cypher_query": result.get("cypher_query"),
+            "sql_result": result.get("sql_result"),
+            "graph_result": result.get("graph_result"),
+            "final_answer": result.get("final_answer"),
+        }
+    )
     try:
         # 대화기록 저장은 쓰기(INSERT)라 조회 전용 get_pool()이 아니라
         # read_only가 안 걸린 별도의 write pool을 쓴다.

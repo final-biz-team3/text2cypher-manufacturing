@@ -5,12 +5,26 @@ from collections.abc import Callable
 from typing import Any
 
 
+class _MockRecord:
+    """neo4j.Record 흉내 - result.fetch(n)이 돌려주는 개별 레코드는 .data()로
+    dict를 뽑는다(result.data()처럼 이미 dict인 상태가 아니다)."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def data(self) -> dict[str, Any]:
+        return self._data
+
+
 class _MockAsyncResult:
     def __init__(self, records: list[dict[str, Any]]) -> None:
         self._records = records
 
     async def data(self) -> list[dict[str, Any]]:
         return self._records
+
+    async def fetch(self, n: int) -> list[_MockRecord]:
+        return [_MockRecord(record) for record in self._records[:n]]
 
 
 class _MockAsyncTransaction:

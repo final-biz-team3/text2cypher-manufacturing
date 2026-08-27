@@ -1,4 +1,4 @@
-"""execute_cypher가 result.data() 형태 반환·timeout 전달·예외 전파를 지키는지 검증한다."""
+"""execute_cypher가 result.data() 형태 반환·timeout 전달·행 상한·예외 전파를 지키는지 검증한다."""
 
 import pytest
 from neo4j.exceptions import AuthError
@@ -12,10 +12,22 @@ async def test_execute_cypher_returns_data_records() -> None:
     driver = MockAsyncNeo4jDriver(records=[{"n": {"productId": 492}}])
 
     rows = await execute_cypher_with_driver(
-        driver, "MATCH (n:Product) RETURN n", timeout_sec=5.0
+        driver, "MATCH (n:Product) RETURN n", timeout_sec=5.0, row_limit=10
     )
 
     assert rows == [{"n": {"productId": 492}}]
+
+
+async def test_execute_cypher_truncates_to_row_limit() -> None:
+    """result.fetch(row_limit+1)이 row_limit보다 많이 돌려줘도 row_limit개로
+    자른다(SQL 쪽 execute_sql_with_pool의 fetchmany(N+1) 패턴과 동일)."""
+    driver = MockAsyncNeo4jDriver(records=[{"id": i} for i in range(10)])
+
+    rows = await execute_cypher_with_driver(
+        driver, "MATCH (n) RETURN n", timeout_sec=5.0, row_limit=3
+    )
+
+    assert len(rows) == 3
 
 
 async def test_execute_cypher_passes_timeout_to_query() -> None:
@@ -25,7 +37,7 @@ async def test_execute_cypher_passes_timeout_to_query() -> None:
     확인했다 - unit_of_work 데코레이터가 올바른 방법이다.)"""
     driver = MockAsyncNeo4jDriver(records=[])
 
-    await execute_cypher_with_driver(driver, "RETURN 1", timeout_sec=2.5)
+    await execute_cypher_with_driver(driver, "RETURN 1", timeout_sec=2.5, row_limit=10)
 
     assert driver.last_timeout == 2.5
     assert driver.last_transaction is not None
@@ -37,4 +49,6 @@ async def test_execute_cypher_propagates_original_exception_without_wrapping() -
     driver = MockAsyncNeo4jDriver(error=AuthError("unauthorized"))
 
     with pytest.raises(AuthError):
-        await execute_cypher_with_driver(driver, "RETURN 1", timeout_sec=5.0)
+        await execute_cypher_with_driver(
+            driver, "RETURN 1", timeout_sec=5.0, row_limit=10
+        )
