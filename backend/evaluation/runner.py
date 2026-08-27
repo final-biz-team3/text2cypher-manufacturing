@@ -513,7 +513,7 @@ class EvaluationRunner:
         except OpenAIError as exc:
             raise InfrastructureError(f"OpenAI route 생성 실패: {exc}") from exc
         except RoutePlanError as exc:
-            plan = {"tool_plan": None, "subqueries": []}
+            plan = {"tool_plan": exc.tool_plan, "subqueries": []}
             record["planningError"] = str(exc)
             record["planningResponse"] = exc.raw_response
         except ValueError as exc:

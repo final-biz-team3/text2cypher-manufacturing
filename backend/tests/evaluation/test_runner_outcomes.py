@@ -287,4 +287,9 @@ def test_invalid_route_plan_keeps_the_model_response_for_review() -> None:
 
     assert record["planningError"] == "invalid join key"
     assert record["planningResponse"] == '{"tool_plan":["sql"]}'
+    assert record["toolPlan"] == ["sql"]
+    assert record["checks"]["routing"] is True
+    assert record["checks"]["split"] is False
+    assert "ROUTE_MISMATCH" not in record["failureReasons"]
+    assert "SUBQUERY_INTEGRATION_CONTRACT_MISMATCH" in record["failureReasons"]
     assert record["status"] == "FAIL"

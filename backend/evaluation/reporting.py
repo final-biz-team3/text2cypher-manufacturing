@@ -486,7 +486,7 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
             "",
             "## 질의별 결과",
             "",
-            "| RQ ID | Run | Route | Entity | Routing | Split | Execution | Result | 엄격 PASS | 실패 사유 |",
+            "| Case ID | Run | Route | Entity | Routing | Split | Execution | Result | 엄격 PASS | 실패 사유 |",
             "|---|---:|---|---|---|---|---|---|---|---|",
         ]
     )

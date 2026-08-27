@@ -29,8 +29,8 @@ use_windows_selector_event_loop_policy()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
-_RQ_ID = re.compile(r"^RQ(\d{2})$")
-_RQ_RANGE = re.compile(r"^(RQ\d{2})-(RQ\d{2})$")
+_QUERY_ID = re.compile(r"^(RQ|HQ)(\d{2})$")
+_QUERY_RANGE = re.compile(r"^((?:RQ|HQ)\d{2})-((?:RQ|HQ)\d{2})$")
 
 
 def _parse_ids(value: str) -> set[str] | None:
@@ -39,27 +39,33 @@ def _parse_ids(value: str) -> set[str] | None:
     selected: set[str] = set()
     for part in value.split(","):
         part = part.strip().upper()
-        range_match = _RQ_RANGE.fullmatch(part)
+        range_match = _QUERY_RANGE.fullmatch(part)
         if range_match:
-            start_match = _RQ_ID.fullmatch(range_match.group(1))
-            end_match = _RQ_ID.fullmatch(range_match.group(2))
+            start_match = _QUERY_ID.fullmatch(range_match.group(1))
+            end_match = _QUERY_ID.fullmatch(range_match.group(2))
             assert start_match is not None and end_match is not None
-            start = int(start_match.group(1))
-            end = int(end_match.group(1))
-            if start > end:
+            start_prefix, start_value = start_match.groups()
+            end_prefix, end_value = end_match.groups()
+            start = int(start_value)
+            end = int(end_value)
+            if start_prefix != end_prefix or start > end:
                 raise argparse.ArgumentTypeError(f"잘못된 ID 범위: {part}")
-            selected.update(f"RQ{number:02d}" for number in range(start, end + 1))
+            selected.update(
+                f"{start_prefix}{number:02d}" for number in range(start, end + 1)
+            )
             continue
-        if not _RQ_ID.fullmatch(part):
+        if not _QUERY_ID.fullmatch(part):
             raise argparse.ArgumentTypeError(f"잘못된 query ID: {part}")
         selected.add(part)
     return selected
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="RQ01~RQ20 text-to-query 평가")
+    parser = argparse.ArgumentParser(description="RQ/HQ text-to-query 평가")
     parser.add_argument(
-        "--suite", choices=("canonical", "robustness", "all"), default="canonical"
+        "--suite",
+        choices=("canonical", "robustness", "holdout", "all"),
+        default="canonical",
     )
     parser.add_argument("--ids", default="all")
     parser.add_argument(

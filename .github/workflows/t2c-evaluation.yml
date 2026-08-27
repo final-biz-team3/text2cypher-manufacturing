@@ -7,10 +7,10 @@ on:
       suite:
         description: Evaluation suite
         type: choice
-        options: [canonical, robustness, all]
+        options: [canonical, robustness, holdout, all]
         default: canonical
       ids:
-        description: Query IDs (all, RQ01,RQ08, RQ01-RQ11)
+        description: Query IDs (all, RQ01,RQ08, RQ01-RQ11, HQ01-HQ10)
         type: string
         default: all
       routes:

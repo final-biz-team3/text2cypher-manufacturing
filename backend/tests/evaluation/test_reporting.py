@@ -304,6 +304,8 @@ def test_gold_report_shows_validation_status_route_and_partial_count(
     assert "| 작업 상태 | dirty |" in report
     assert "| Gold 검증 완료 | 1/1 | 100% |" in report
     assert "| Gold 부분 쿼리 PASS | 2/2 | 100% |" in report
+    assert "| Case ID | Run | Route |" in report
+    assert "| RQ ID |" not in report
     assert "| RQ18 | 1 | HYBRID | - | - | - | PASS | PASS | - | - |" in report
     assert "Gold 검증 질문" not in report
 

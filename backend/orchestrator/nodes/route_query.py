@@ -4,18 +4,48 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from orchestrator.planning import parse_execution_plan
+from orchestrator.planning import SUPPORTED_TOOLS, parse_execution_plan
 from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
 
+def _recover_tool_plan(raw_response: str) -> list[str] | None:
+    """전체 계획이 잘못돼도 독립적으로 유효한 route 선택은 보존한다."""
+    try:
+        raw = json.loads(raw_response)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    value = (
+        raw
+        if isinstance(raw, list)
+        else raw.get("tool_plan") if isinstance(raw, dict) else None
+    )
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(tool, str) for tool in value)
+        or len(value) != len(set(value))
+        or bool(set(value) - SUPPORTED_TOOLS)
+    ):
+        return None
+    return list(value)
+
+
 class RoutePlanError(ValueError):
     """검증 실패 정보와 모델 응답 원문을 함께 보존한다."""
 
-    def __init__(self, message: str, raw_response: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        raw_response: str,
+        tool_plan: list[str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.raw_response = raw_response
+        self.tool_plan = (
+            tool_plan if tool_plan is not None else _recover_tool_plan(raw_response)
+        )
 
 
 _SYSTEM_PROMPT = """당신은 제조 데이터 질의 라우터입니다.

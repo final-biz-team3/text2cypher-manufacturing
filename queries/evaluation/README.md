@@ -1,17 +1,29 @@
-# RQ01~RQ20 자동 평가
+# RQ/HQ text-to-query 평가
 
-`manifest.json`은 canonical/robustness 질문, entity·route·subquery 계약, DB
+`manifest.json`은 canonical/robustness/holdout 질문, entity·route·subquery 계약, DB
 snapshot 검증값과 source별 Gold 쿼리를 연결한다. Gold는 후보 쿼리 생성에
 사용하지 않고 동일한 읽기 전용 snapshot에서 결과 hash를 만들 때만 사용한다.
 각 subquery의 `question`, `businessRules`, `requiredOutputs`가 Gold가 검증하는
 결과 책임의 기준이다. router 계획에서는 전체 결과 스키마를 반복하게 하지 않고,
 HYBRID 단계 사이에 전달하거나 결합하는 필드만 필수로 검사한다. 각 Gold 파일의
-첫 줄에는 RQ ID와 담당 subquery 질문을 적고, manifest와 달라지면 테스트가
+첫 줄에는 query ID와 담당 subquery 질문을 적고, manifest와 달라지면 테스트가
 실패하도록 해 사람이 파일만 열어도 검증 목적을 알 수 있게 한다.
 
-RQ01~RQ17은 `FULLY_EVALUATED`, RQ18~RQ20은 부분 SQL/Cypher까지 채점하는
-`QUERY_EVALUATED_FINAL_JOIN_PENDING`이다. 후자의 애플리케이션 계산·최종 결합은
-점수에 포함하지 않는다.
+RQ01~RQ17과 HQ01~HQ08은 `FULLY_EVALUATED`다. RQ18~RQ20과 HQ09~HQ10은
+부분 SQL/Cypher까지 채점하는 `QUERY_EVALUATED_FINAL_JOIN_PENDING`이며, 후자의
+애플리케이션 계산·최종 결합은 점수에 포함하지 않는다.
+
+## 평가 suite
+
+- `canonical`: 동결된 RQ01~RQ20 질문·계약·Gold 20건
+- `robustness`: 각 RQ의 의미·파라미터·Gold는 유지하면서 표현만 바꾼 60건
+- `holdout`: 신규 방향 HQ01~HQ10 10건(SQL 6, GRAPH 2, HYBRID 2)
+- `all`: 세 suite의 전체 90건
+
+robustness case ID의 `S`는 짧은 표현·문장 파편, `C`는 일상 구어체, `R`은
+동의어·조건 재배치를 뜻한다. 예를 들어 `RB01-S`, `RB01-C`, `RB01-R`은 모두
+RQ01 계약과 같은 파라미터·Gold로 채점된다. 단일 턴 평가이므로 RQ17과 RQ19처럼
+복수 제품이나 생산 대상이 필요한 질문은 구어체에서도 제품 전체 이름을 유지한다.
 
 `subqueries`는 평가기가 검증·실행하는 계약이다. production `/chat`은
 `dependsOn`·`inputBindings`를 실행하지 않으며 `subqueries`를 응답에 노출하지
@@ -28,7 +40,13 @@ RQ01~RQ17은 `FULLY_EVALUATED`, RQ18~RQ20은 부분 SQL/Cypher까지 채점하�
 ./scripts/run-t2q-evaluation.sh --routes HYBRID
 ./scripts/run-t2q-evaluation.sh --ids RQ16,RQ18-RQ20
 ./scripts/run-t2q-evaluation.sh --validate-gold
+./scripts/run-t2q-evaluation.sh --suite robustness --ids RQ01-RQ20
+./scripts/run-t2q-evaluation.sh --suite holdout --ids HQ01-HQ10 --validate-gold
 ```
+
+wrapper가 앞에 넣는 기본 옵션은 뒤에 전달한 같은 옵션으로 덮어쓸 수 있다. 따라서
+인자 없이 실행하면 계속 canonical RQ01~RQ20만 1회 실행한다. 전체 90건은 비용과
+의도를 분명히 하기 위해 `--suite all --ids all`로 명시해서 실행한다.
 
 Python은 `EVAL_PYTHON`, `backend/venv/bin/python`,
 `backend/venv/Scripts/python.exe`, 시스템 `python3` 순서로 선택한다. 결과는
@@ -57,11 +75,32 @@ PYTHONPATH=backend python -m evaluation \
   --output-dir artifacts/t2c-eval-custom
 ```
 
+`--ids`는 쉼표 목록과 같은 prefix 범위를 지원한다. `RQ01-RQ20`,
+`HQ01-HQ10`은 유효하지만 `RQ01-HQ10`은 유효하지 않다. robustness에서
+`--ids RQ01`을 선택하면 RQ01 계약을 공유하는 S/C/R 세 case가 모두 선택된다.
+
+## 실행 주기와 비용
+
+기본은 항상 `--runs 1`이다. canonical은 평상시 확인에 사용하고 robustness와
+holdout은 PR 마감 또는 릴리스 전에 수동 실행한다. 자동 CD gate, 별도 대시보드,
+추세 DB에는 연결하지 않는다.
+
+현재 단계별 모델 호출 수를 기준으로 canonical 20건은 약 63회, robustness
+60건은 약 189회, holdout 10건은 약 32회로 전체 90건에 약 284회가 필요하다.
+전체를 `--runs 3`으로 실행하면 약 852회이므로, 실패 case만
+`--ids RQxx --runs 3` 또는 `--ids HQxx --runs 3`으로 재현한다.
+
+Holdout은 코드·프롬프트를 동결한 뒤 `--runs 1`로 한 번 평가한다. 그 결과를 보고
+성능을 수정했다면 기존 HQ 세트는 regression으로 전환하고, 다음 미공개 평가는 새
+Holdout으로 작성한다. HQ 계약·case·Gold 원문과 승인 snapshot의 Gold 결과 hash는
+테스트에 고정되어 있으므로 의도적인 기준선 갱신 없이 변경할 수 없다.
+
 ## GitHub Actions에서 수동 실행
 
 `Text-to-query Manual Evaluation`에서 `Run workflow`를 누르고 대상 PR 브랜치를
-선택하면 기본값으로 canonical 20개를 1회 평가한다. 결과 불일치는 리포트에 남기되
-workflow를 차단하지 않고, 환경·API·DB·snapshot 오류만 실패로 처리한다.
+선택하면 기본값으로 canonical 20개를 1회 평가한다. workflow 입력에서 holdout도
+선택할 수 있지만 실행은 계속 수동이다. 결과 불일치는 리포트에 남기되 workflow를
+차단하지 않고, 환경·API·DB·snapshot 오류만 실패로 처리한다.
 
 GitHub의 `workflow_dispatch`는 workflow 파일이 기본 브랜치에 존재해야 활성화된다.
 기본 브랜치에 workflow가 들어간 뒤부터 평가할 PR 브랜치를 선택해 병합 전에
