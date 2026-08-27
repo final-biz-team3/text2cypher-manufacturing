@@ -4,19 +4,6 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <script>
-      // React가 마운트되기 전에 저장된 테마를 미리 적용해, 다크모드에서
-      // 새로고침할 때 라이트 → 다크로 바뀌는 깜빡임(FOUC)을 막는다.
-      ;(function () {
-        try {
-          var raw = sessionStorage.getItem('kg-ui-state')
-          var theme = raw ? JSON.parse(raw).state.theme : null
-          if (theme === 'dark') {
-            document.documentElement.classList.add('dark')
-          }
-        } catch (e) {}
-      })()
-    </script>
     <link
       rel="stylesheet"
       as="style"

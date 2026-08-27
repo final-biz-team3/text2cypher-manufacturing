@@ -90,18 +90,10 @@ function QueryBlock({ label, language, query }: GeneratedQuery) {
 
   return (
     <div className="flex flex-col border-b border-border">
-      {/* 코드 에디터 창처럼 보이도록 상단바에 macOS 스타일 점 3개 + 언어 라벨을 둔다 */}
       <div className="flex items-center justify-between border-b border-code-text/10 bg-code px-3 py-2">
-        <div className="flex items-center gap-3">
-          <div className="flex gap-1.5">
-            <span className="size-2.5 rounded-full bg-fail" />
-            <span className="size-2.5 rounded-full bg-warn" />
-            <span className="size-2.5 rounded-full bg-success" />
-          </div>
-          <span className="text-[11px] font-semibold tracking-wide text-code-text/70 uppercase">
-            {label}
-          </span>
-        </div>
+        <span className="text-[11px] font-semibold tracking-wide text-code-text/70 uppercase">
+          {label}
+        </span>
         <Button
           type="button"
           variant="outline"

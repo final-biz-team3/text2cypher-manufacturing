@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { AxiosError } from 'axios'
 import { login as apiLogin, logout as apiLogout, fetchMe } from '@/lib/api'
 import type { CurrentUser } from '@/lib/schemas'
+import { useUiStore } from '@/store/useUiStore'
 
 export type AuthStatus = 'idle' | 'loading' | 'authenticated' | 'unauthenticated'
 
@@ -20,10 +21,13 @@ export const useAuthStore = create<AuthStore>((set) => ({
   login: async (username, password) => {
     const user = await apiLogin({ username, password })
     set({ user, status: 'authenticated' })
+    // 이전 계정(혹은 이전 세션)이 보던 질문 결과 화면이 남아있지 않도록 초기화한다
+    useUiStore.getState().resetSession()
   },
   logout: async () => {
     await apiLogout()
     set({ user: null, status: 'unauthenticated' })
+    useUiStore.getState().resetSession()
   },
   checkAuth: async () => {
     set({ status: 'loading' })

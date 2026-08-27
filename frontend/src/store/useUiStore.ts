@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type { DisplayResult } from '@/types/query'
 
 // 여러 컴포넌트가 공유하는 전역 UI 상태(테마, 화면 단계, 패널 열림/접힘 등)
@@ -22,25 +22,7 @@ interface UiStore {
   setHistoryTab: (tab: SidebarTab) => void
   setResult: (result: DisplayResult | null) => void
   setErrorMessage: (message: string) => void
-}
-
-// sessionStorage.setItem은 용량 초과(QuotaExceededError) 시 그대로 던지는데,
-// persist 미들웨어는 이 예외를 삼키지 않고 호출자의 set()까지 그대로 전파한다.
-// 그 상태에서 catch 블록이 또 다른 set()을 호출하면(예: 에러 화면 전환) 거기서도
-// 다시 던져 연쇄적으로 실패한다 - 저장 실패는 로그만 남기고 앱 로직은 계속되게 한다.
-const resilientSessionStorage: StateStorage = {
-  getItem: (name) => sessionStorage.getItem(name),
-  setItem: (name, value) => {
-    try {
-      sessionStorage.setItem(name, value)
-    } catch (err) {
-      console.error(
-        'UI 상태 저장 실패(용량 초과 등) - 새로고침 시 이번 변경은 복원되지 않습니다:',
-        err,
-      )
-    }
-  },
-  removeItem: (name) => sessionStorage.removeItem(name),
+  resetSession: () => void
 }
 
 // 새로고침해도 사용자가 보던 화면 그대로 유지되도록 activeScreen/결과를
@@ -65,10 +47,13 @@ export const useUiStore = create<UiStore>()(
       setHistoryTab: (historyTab) => set({ historyTab }),
       setResult: (result) => set({ result }),
       setErrorMessage: (errorMessage) => set({ errorMessage }),
+      // 로그인/로그아웃 시 이전 계정(혹은 이전 세션)의 질문 결과 화면이 그대로
+      // 남아있지 않도록 초기화한다. useAuthStore의 login/logout에서 호출한다.
+      resetSession: () => set({ activeScreen: 'idle', result: null, errorMessage: '' }),
     }),
     {
       name: 'kg-ui-state',
-      storage: createJSONStorage(() => resilientSessionStorage),
+      storage: createJSONStorage(() => sessionStorage),
       partialize: (state) => ({
         theme: state.theme,
         activeScreen: state.activeScreen,
