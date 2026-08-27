@@ -1,7 +1,7 @@
 """SQL을 생성·실행하고, 실패 시 self-correction(재시도)을 수행하는 SubGraph를 만든다."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import psycopg
@@ -38,15 +38,15 @@ _EMPTY_RESULT_FEEDBACK = (
 
 def make_sql_agent_subgraph(
     openai_client: Any,
-    execute_sql: Callable[[str], Any],
+    execute_sql: Callable[[str], Awaitable[Any]],
 ) -> CompiledStateGraph:
     """SQL 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_sql 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
 
-    def generate(
+    async def generate(
         state: RetryAgentState, previous_query: str | None, previous_error: str | None
     ) -> str:
-        return generate_sql(
+        return await generate_sql(
             openai_client,
             query=state["query"],
             entity=state["entity"],

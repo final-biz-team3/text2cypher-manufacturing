@@ -12,37 +12,56 @@ class _FakeCursor:
     def __init__(self, rows: list[tuple[Any, ...]]) -> None:
         self._rows = rows
 
-    def fetchall(self) -> list[tuple[Any, ...]]:
+    async def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
 
 
 class _FakeConnection:
+    def __init__(self, pool: "_FakePool") -> None:
+        self._pool = pool
+
+    async def execute(self, query: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
+        self._pool.last_query = (query, params)
+        return _FakeCursor(self._pool.rows)
+
+
+class _FakeConnectionContext:
+    def __init__(self, pool: "_FakePool") -> None:
+        self._pool = pool
+
+    async def __aenter__(self) -> _FakeConnection:
+        return _FakeConnection(self._pool)
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
+
+
+class _FakePool:
     def __init__(self, rows: list[tuple[Any, ...]]) -> None:
         self.last_query: tuple[str, tuple[Any, ...]] | None = None
-        self._rows = rows
+        self.rows = rows
 
-    def execute(self, query: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
-        self.last_query = (query, params)
-        return _FakeCursor(self._rows)
+    def connection(self) -> _FakeConnectionContext:
+        return _FakeConnectionContext(self)
 
 
-def test_get_history_returns_own_rows_for_user(monkeypatch: Any) -> None:
+async def test_get_history_returns_own_rows_for_user(monkeypatch: Any) -> None:
     rows = [(1, "kim.quality", "q", "a", None, None, None, None, datetime(2026, 1, 1))]
-    monkeypatch.setattr(history_module, "get_connection", lambda: _FakeConnection(rows))
+    monkeypatch.setattr(history_module, "get_pool", lambda: _FakePool(rows))
 
-    result = get_history(user=CurrentUser(username="kim.quality", role="user"))
+    result = await get_history(user=CurrentUser(username="kim.quality", role="user"))
 
     assert len(result) == 1
     assert result[0]["username"] == "kim.quality"
 
 
-def test_get_history_scopes_query_by_role(monkeypatch: Any) -> None:
-    connection = _FakeConnection([])
-    monkeypatch.setattr(history_module, "get_connection", lambda: connection)
+async def test_get_history_scopes_query_by_role(monkeypatch: Any) -> None:
+    pool = _FakePool([])
+    monkeypatch.setattr(history_module, "get_pool", lambda: pool)
 
-    get_history(user=CurrentUser(username="park.admin", role="admin"))
+    await get_history(user=CurrentUser(username="park.admin", role="admin"))
 
-    assert connection.last_query is not None
-    query, params = connection.last_query
+    assert pool.last_query is not None
+    query, params = pool.last_query
     assert "WHERE" not in query
     assert params == ()

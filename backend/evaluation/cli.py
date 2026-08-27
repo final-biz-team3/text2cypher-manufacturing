@@ -1,6 +1,7 @@
 """`python -m evaluation` 명령행 진입점."""
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -10,13 +11,21 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
+from core.event_loop import use_windows_selector_event_loop_policy
+from core.postgres import bootstrap_postgres, close_pool, open_pool
 from evaluation.database import ReadOnlyDatabaseExecutor
 from evaluation.errors import ConfigurationError, InfrastructureError
 from evaluation.models import EvaluationCase, load_manifest
 from evaluation.reporting import build_summary, write_artifacts
 from evaluation.runner import EvaluationRun, EvaluationRunner
+
+# resolve_entity/route_query/generate_sql/generate_cypher가 전부 async라
+# 이 CLI(전체 동기)에서도 이벤트 루프를 감싸 호출한다(runner.py 참고).
+# psycopg의 async 모드는 Windows 기본 ProactorEventLoop를 지원하지 않으므로
+# 여기서도 main.py/conftest.py와 동일하게 정책을 고정한다.
+use_windows_selector_event_loop_policy()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
@@ -151,23 +160,42 @@ def main(argv: list[str] | None = None) -> int:
             if not api_key:
                 raise ConfigurationError("OPENAI_API_KEY가 필요합니다.")
             os.environ["OPENAI_MODEL"] = args.model
-            client = OpenAI(api_key=api_key, base_url=args.base_url)
+            client = AsyncOpenAI(api_key=api_key, base_url=args.base_url)
 
         database = ReadOnlyDatabaseExecutor.from_environment()
+        # client가 있으면(=실제 모델 호출이 필요하면) 이 프로세스 전체가 쓸
+        # 이벤트 루프를 여기서 하나만 만들어 open_pool()을 그 루프에서 연다.
+        # runner.py가 resolve_entity/route_query/generate_sql/generate_cypher
+        # 호출을 이 loop로 감싸므로, 풀이 열릴 때 묶인 loop와 나중에 그
+        # 풀을 쓰는 loop가 항상 같다 - asyncio.run()을 호출마다 쓰면 매번
+        # 새 loop가 만들어지고 닫혀서 이 전제가 깨진다(풀은 여러 요청에
+        # 걸쳐 살아있는 객체이므로).
+        loop = asyncio.new_event_loop() if client is not None else None
         try:
-            runner = EvaluationRunner(
-                manifest,
-                database,
-                client,
-                project_root=PROJECT_ROOT,
-            )
-            result = (
-                runner.validate_gold(cases)
-                if args.validate_gold
-                else runner.run(cases, args.runs)
-            )
+            if loop is not None:
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(bootstrap_postgres())
+                loop.run_until_complete(open_pool())
+            try:
+                runner = EvaluationRunner(
+                    manifest,
+                    database,
+                    client,
+                    project_root=PROJECT_ROOT,
+                    loop=loop,
+                )
+                result = (
+                    runner.validate_gold(cases)
+                    if args.validate_gold
+                    else runner.run(cases, args.runs)
+                )
+            finally:
+                database.close()
+                if loop is not None:
+                    loop.run_until_complete(close_pool())
         finally:
-            database.close()
+            if loop is not None:
+                loop.close()
 
         summary = build_summary(
             result,
