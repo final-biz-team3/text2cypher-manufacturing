@@ -9,12 +9,12 @@ interface UiStore {
   theme: Theme
   activeScreen: ActiveScreen
   evidencePanelOpen: boolean
-  cypherCollapsed: boolean
+  queryPanelCollapsed: boolean
   historyTab: SidebarTab
   setTheme: (theme: Theme) => void
   setActiveScreen: (screen: ActiveScreen) => void
   toggleEvidencePanel: () => void
-  toggleCypherCollapsed: () => void
+  toggleQueryPanelCollapsed: () => void
   setHistoryTab: (tab: SidebarTab) => void
 }
 
@@ -22,11 +22,11 @@ export const useUiStore = create<UiStore>((set) => ({
   theme: 'light',
   activeScreen: 'idle',
   evidencePanelOpen: false,
-  cypherCollapsed: false,
+  queryPanelCollapsed: false,
   historyTab: 'schema',
   setTheme: (theme) => set({ theme }),
   setActiveScreen: (activeScreen) => set({ activeScreen }),
   toggleEvidencePanel: () => set((s) => ({ evidencePanelOpen: !s.evidencePanelOpen })),
-  toggleCypherCollapsed: () => set((s) => ({ cypherCollapsed: !s.cypherCollapsed })),
+  toggleQueryPanelCollapsed: () => set((s) => ({ queryPanelCollapsed: !s.queryPanelCollapsed })),
   setHistoryTab: (historyTab) => set({ historyTab }),
 }))

@@ -1,3 +1,4 @@
+import { Home, User } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/store/useUiStore'
@@ -20,11 +21,15 @@ export function TopBar({ connected, readOnly, onNavigateHome, username, onLogout
       <button
         type="button"
         onClick={onNavigateHome}
-        className="flex cursor-pointer items-baseline gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-panel-2 active:bg-border"
+        title="홈으로 이동"
+        className="flex cursor-pointer items-center gap-2 rounded-md border border-border-strong px-2 py-1 text-left transition-colors hover:bg-panel-2 active:bg-border"
       >
-        <span className="text-[15px] font-bold text-text">제조 데이터 어시스턴트</span>
-        <span className="text-xs text-text-muted">
-          제품·재고·공급망 조회 · SQL + Neo4j 지식그래프
+        <Home className="size-4 text-text-muted" />
+        <span className="flex items-baseline gap-2">
+          <span className="text-[15px] font-bold text-text">제조 데이터 어시스턴트</span>
+          <span className="text-xs text-text-muted">
+            제품·재고·공급망 조회 · SQL + Neo4j 지식그래프
+          </span>
         </span>
       </button>
       <div className="flex items-center gap-2">
@@ -51,7 +56,12 @@ export function TopBar({ connected, readOnly, onNavigateHome, username, onLogout
         >
           {theme === 'light' ? '다크모드' : '라이트모드'}
         </Button>
-        {username ? <span className="text-[11.5px] text-text-muted">{username}</span> : null}
+        {username ? (
+          <span className="flex items-center gap-1.5 rounded-full border border-border-strong px-3 py-1 text-[11.5px] font-medium text-text">
+            <User className="size-3.5" />
+            {username}
+          </span>
+        ) : null}
         {onLogout ? (
           <Button type="button" variant="ghost" size="sm" onClick={onLogout}>
             로그아웃

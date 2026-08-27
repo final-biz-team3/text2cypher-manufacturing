@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
 import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnswerBox'
 import { ResultsTable } from '@/components/result/ResultsTable'
-import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
+import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
+import { EvidencePanel } from '@/components/result/EvidencePanel'
+import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useHealthStore } from '@/store/useHealthStore'
@@ -12,7 +15,7 @@ import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
 import type { ChatResponse, HistoryEntry } from '@/lib/schemas'
-import type { ResultColumn } from '@/types/query'
+import type { ResultColumn, SelfCorrectionStep } from '@/types/query'
 
 const EXAMPLE_QUESTIONS: string[] = [
   '재고가 부족한 제품을 알려줘',
@@ -23,11 +26,19 @@ const EXAMPLE_QUESTIONS: string[] = [
 
 const READ_ONLY = true
 
+interface RetryAttempt {
+  query: string
+  error: string | null
+}
+
 interface DisplayResult {
   answer: string
+  sql: string | null
   cypher: string | null
   columns: ResultColumn[]
   rows: Record<string, string>[]
+  sqlAttempts: RetryAttempt[]
+  cypherAttempts: RetryAttempt[]
 }
 
 // /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있는 형태로 정리한다
@@ -42,10 +53,28 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
   )
   return {
     answer: response.final_answer ?? '답변을 생성하지 못했습니다.',
+    sql: response.sql_query ?? null,
     cypher: response.cypher_query ?? null,
     columns,
     rows,
+    sqlAttempts: response.sql_result?.attempts ?? [],
+    cypherAttempts: response.graph_result?.attempts ?? [],
   }
+}
+
+// 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다
+function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrectionStep[] {
+  return attempts.map((attempt, index) => ({
+    id: `${prefix}-${index}`,
+    status: attempt.error === null ? 'success' : 'fail',
+    title: `시도 ${index + 1}`,
+    detail:
+      attempt.error === null
+        ? '성공'
+        : attempt.error === 'EMPTY_RESULT'
+          ? '결과 없음'
+          : attempt.error,
+  }))
 }
 
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
@@ -61,8 +90,10 @@ export function Dashboard() {
   // 화면 단계(activeScreen)와 패널 열림/접힘 상태는 여러 컴포넌트가 공유해야 해서 전역 store에 둔다.
   const activeScreen = useUiStore((s) => s.activeScreen)
   const setActiveScreen = useUiStore((s) => s.setActiveScreen)
-  const cypherCollapsed = useUiStore((s) => s.cypherCollapsed)
-  const toggleCypherCollapsed = useUiStore((s) => s.toggleCypherCollapsed)
+  const queryPanelCollapsed = useUiStore((s) => s.queryPanelCollapsed)
+  const toggleQueryPanelCollapsed = useUiStore((s) => s.toggleQueryPanelCollapsed)
+  const evidencePanelOpen = useUiStore((s) => s.evidencePanelOpen)
+  const toggleEvidencePanel = useUiStore((s) => s.toggleEvidencePanel)
 
   // 화면이 열릴 때 대화기록을 불러온다
   useEffect(() => {
@@ -96,13 +127,13 @@ export function Dashboard() {
     setActiveScreen('success')
   }
 
-  // 홈으로 돌아갈 때는 이전 질문의 잔여 UI 상태(Cypher 패널)도 함께 초기화해서
+  // 홈으로 돌아갈 때는 이전 질문의 잔여 UI 상태(쿼리 패널)도 함께 초기화해서
   // 다음 질문 결과에 이전 상태가 그대로 남지 않도록 한다.
   const handleNavigateHome = () => {
     setActiveScreen('idle')
     setQueryText('')
     setResult(null)
-    if (cypherCollapsed) toggleCypherCollapsed()
+    if (queryPanelCollapsed) toggleQueryPanelCollapsed()
   }
 
   const queryInputBar = (
@@ -162,6 +193,7 @@ export function Dashboard() {
           )}
           {activeScreen === 'loading' && (
             <div className="flex flex-1 flex-col items-center justify-center gap-4">
+              <Loader2 className="size-6 animate-spin text-text-muted" />
               <p className="text-sm text-text-muted">답변을 생성하는 중입니다…</p>
             </div>
           )}
@@ -178,14 +210,39 @@ export function Dashboard() {
               {result.columns.length > 0 ? (
                 <ResultsTable columns={result.columns} rows={result.rows} />
               ) : null}
+              {result.sqlAttempts.length > 0 || result.cypherAttempts.length > 0 ? (
+                <EvidencePanel open={evidencePanelOpen} onToggle={toggleEvidencePanel}>
+                  {result.sqlAttempts.length > 0 ? (
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
+                        SQL 시도
+                      </p>
+                      <SelfCorrectionTimeline steps={attemptsToSteps('sql', result.sqlAttempts)} />
+                    </div>
+                  ) : null}
+                  {result.cypherAttempts.length > 0 ? (
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
+                        Cypher 시도
+                      </p>
+                      <SelfCorrectionTimeline
+                        steps={attemptsToSteps('cypher', result.cypherAttempts)}
+                      />
+                    </div>
+                  ) : null}
+                </EvidencePanel>
+              ) : null}
             </div>
           )}
         </main>
-        {activeScreen === 'success' && result?.cypher ? (
-          <CypherSlidePanel
-            cypher={result.cypher}
-            collapsed={cypherCollapsed}
-            onToggleCollapsed={toggleCypherCollapsed}
+        {activeScreen === 'success' && result && (result.sql || result.cypher) ? (
+          <GeneratedQueryPanel
+            queries={[
+              ...(result.sql ? [{ label: '생성된 SQL', query: result.sql }] : []),
+              ...(result.cypher ? [{ label: '생성된 Cypher', query: result.cypher }] : []),
+            ]}
+            collapsed={queryPanelCollapsed}
+            onToggleCollapsed={toggleQueryPanelCollapsed}
           />
         ) : null}
       </div>

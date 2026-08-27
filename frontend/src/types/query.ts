@@ -6,7 +6,7 @@ export interface SelfCorrectionStep {
   status: 'success' | 'fail' | 'warn'
   title: string
   detail: string
-  elapsedMs: number
+  elapsedMs?: number
 }
 
 export interface ResultColumn {

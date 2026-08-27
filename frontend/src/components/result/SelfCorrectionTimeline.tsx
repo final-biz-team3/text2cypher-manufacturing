@@ -20,7 +20,9 @@ export function SelfCorrectionTimeline({ steps }: SelfCorrectionTimelineProps) {
           <div className="flex flex-col gap-0.5">
             <div className="flex items-baseline gap-2">
               <span className="text-[12.5px] font-semibold text-text">{step.title}</span>
-              <span className="font-mono text-[11px] text-text-faint">{step.elapsedMs}ms</span>
+              {step.elapsedMs !== undefined ? (
+                <span className="font-mono text-[11px] text-text-faint">{step.elapsedMs}ms</span>
+              ) : null}
             </div>
             <p className="text-[11px] text-text-muted">{step.detail}</p>
           </div>
