@@ -207,6 +207,26 @@ def _confirmed_entity_config(
     return None
 
 
+def _normalize_confirmed_entities(confirmed_entity: Any) -> list[dict]:
+    """confirmed_entity(dict/list/None)를 항상 리스트 형태로 통일한다."""
+    if confirmed_entity is None:
+        return []
+    if isinstance(confirmed_entity, dict):
+        return [confirmed_entity]
+    if isinstance(confirmed_entity, list):
+        return [item for item in confirmed_entity if isinstance(item, dict)]
+    return []
+
+
+def _collapse_entities(entities: list[dict]) -> dict | list[dict] | None:
+    """엔티티 리스트를 개수에 따라 entity 필드 shape(dict/list/None)으로 접는다."""
+    if not entities:
+        return None
+    if len(entities) == 1:
+        return entities[0]
+    return entities
+
+
 def _confirmed_entity_exists(
     confirmed_entity: dict, config: NamedEntityType, postgres_connection: Any
 ) -> bool:
@@ -227,33 +247,34 @@ def make_resolve_entity_node(
     extract_tool = _build_extract_entity_tool(entity_types)
 
     def resolve_entity(state: OrchestratorState) -> dict:
-        confirmed_entity = state.get("confirmed_entity")
-        confirmed_config: NamedEntityType | None = None
-        if confirmed_entity is not None:
-            confirmed_config = _confirmed_entity_config(confirmed_entity, entity_types)
-            if confirmed_config is not None and _confirmed_entity_exists(
-                confirmed_entity, confirmed_config, postgres_connection
+        raw_confirmed_entities = _normalize_confirmed_entities(
+            state.get("confirmed_entity")
+        )
+        valid_confirmed: list[dict] = []
+        for candidate_entity in raw_confirmed_entities:
+            config = _confirmed_entity_config(candidate_entity, entity_types)
+            if config is not None and _confirmed_entity_exists(
+                candidate_entity, config, postgres_connection
             ):
                 logger.info(
                     "resolve_entity: query=%r -> confirmed_entity=%s 검증 완료 "
                     "(나머지 엔티티 재추출)",
                     state["query"],
-                    confirmed_entity,
+                    candidate_entity,
                 )
+                valid_confirmed.append(candidate_entity)
             else:
                 logger.warning(
                     "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
                     "(무시하고 재추출)",
                     state["query"],
-                    confirmed_entity,
+                    candidate_entity,
                 )
-                confirmed_entity = None
-                confirmed_config = None
 
         extractions = _extract_entities(state["query"], openai_client, extract_tool)
         if not extractions:
-            if confirmed_entity is not None:
-                return {"entity": confirmed_entity}
+            if valid_confirmed:
+                return {"entity": _collapse_entities(valid_confirmed)}
             logger.info(
                 "resolve_entity: query=%r -> entity=None (대상 미언급)", state["query"]
             )
@@ -288,8 +309,7 @@ def make_resolve_entity_node(
                     (
                         candidate["entity"]
                         for candidate in candidates
-                        if confirmed_config == config
-                        and candidate["entity"] == confirmed_entity
+                        if candidate["entity"] in valid_confirmed
                     ),
                     None,
                 )
@@ -320,7 +340,7 @@ def make_resolve_entity_node(
 
         result: dict | list[dict] | None
         if not resolved:
-            result = confirmed_entity
+            result = _collapse_entities(valid_confirmed)
         elif len(resolved) == 1:
             result = resolved[0]
         else:

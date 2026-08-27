@@ -18,7 +18,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str
-    confirmed_entity: dict | None = None
+    confirmed_entity: dict | list[dict] | None = None
 
 
 @router.post("/chat")
