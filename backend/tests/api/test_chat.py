@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import api.chat as chat_module
+import orchestrator.graph as graph_module
 from api.chat import ChatRequest, chat
 from core.auth import CurrentUser, create_access_token
 from tests.mocks.openai import (
@@ -46,6 +47,15 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     )
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: MockAsyncWritePool())
 
+    # execute_sql은 pool 인자로 주입되는 게 아니라 orchestrator.graph 모듈
+    # 전역에서 core.postgres.get_pool()을 직접 참조하는 실제 함수라
+    # (Task 5), chat_module의 get_pool monkeypatch로는 못 가로챈다 -
+    # graph_module.execute_sql 자체를 가짜로 바꿔야 실제 DB를 안 친다.
+    async def fake_execute_sql(sql: str) -> list[dict]:
+        return [{"listprice": 2384.07}]
+
+    monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
+
     result = await chat(
         ChatRequest(
             query="그 제품 정가 알려줘.",
@@ -65,8 +75,9 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert result["sql_query"] == (
         "SELECT listprice FROM production.product WHERE productid = 956"
     )
-    assert "self-correction 구현에서 채운다" in result["final_answer"]
-    assert "self-correction 구현에서 채운다" in result["sql_result"]["error"]
+    assert result["sql_result"]["error"] is None
+    assert result["sql_result"]["result"] == [{"listprice": 2384.07}]
+    assert result["final_answer"] is not None
     assert "subqueries" not in result
     assert len(openai_client.calls) == 3
 
