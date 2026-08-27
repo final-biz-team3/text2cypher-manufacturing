@@ -30,9 +30,10 @@ RQ01~RQ17은 `FULLY_EVALUATED`, RQ18~RQ20은 부분 SQL/Cypher까지 채점하�
 ./scripts/run-t2q-evaluation.sh --validate-gold
 ```
 
-Python은 `EVAL_PYTHON`, `backend/venv/bin/python`, 시스템 `python3` 순서로
-선택한다. 결과는 한국 시간과 실행 당시 커밋·작업 상태에 따라 다음 경로에
-`report.md`, `evaluation.json` 두 파일로 저장한다.
+Python은 `EVAL_PYTHON`, `backend/venv/bin/python`,
+`backend/venv/Scripts/python.exe`, 시스템 `python3` 순서로 선택한다. 결과는
+한국 시간과 실행 당시 커밋·작업 상태에 따라 다음 경로에 `report.md`,
+`evaluation.json` 두 파일로 저장한다.
 
 ```text
 artifacts/t2c-eval/YYYY-MM-DD/HHMMSS-커밋-clean|dirty/
@@ -95,6 +96,7 @@ entity가 일치하지 않아도 후속 쿼리와 Gold 비교는 계속해 복�
 다만 `stageAccuracy.entity`와 `ENTITY_MISMATCH` 실패 사유를 기록하고,
 `queryPipelinePass`는 실패로 판정한다. 비교할 때는 필수 identity와 복수 entity의
 질문 등장 순서를 확인하되, 이름의 대소문자·공백과 추가 메타데이터는 허용한다.
+숫자 `Id`는 정수 값으로 비교하며 문자열 변환·불리언·소수·NaN·무한대는 거부한다.
 
 인프라 `ERROR`는 정확도 분모에서 제외하고 `evaluationCoverage`에 반영하며,
 `BLOCKED_BY_DEPENDENCY`는 후속 단계 오답으로 중복 집계하지 않는다. 필수 출력

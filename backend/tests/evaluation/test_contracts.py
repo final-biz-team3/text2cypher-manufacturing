@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 
 from evaluation.contracts import compare_execution_contract, entity_matches
@@ -17,6 +18,24 @@ def test_entity_match_uses_required_identity_fields() -> None:
     ]
 
     assert entity_matches(expected, actual) is True
+
+
+def test_entity_match_accepts_equivalent_integral_id_number_types() -> None:
+    assert entity_matches({"productId": 680}, {"productId": 680.0}) is True
+    assert entity_matches({"productId": 680.0}, {"productId": 680}) is True
+    assert entity_matches({"productId": Decimal("680")}, {"productId": 680}) is True
+
+
+def test_entity_match_rejects_invalid_id_numeric_values() -> None:
+    assert entity_matches({"productId": 680}, {"productId": True}) is False
+    assert entity_matches({"productId": 680}, {"productId": "680"}) is False
+    assert entity_matches({"productId": 680}, {"productId": 680.5}) is False
+    assert entity_matches({"productId": 680}, {"productId": float("nan")}) is False
+    assert entity_matches({"productId": 680}, {"productId": float("inf")}) is False
+
+
+def test_entity_match_keeps_non_id_values_type_strict() -> None:
+    assert entity_matches({"rank": 1}, {"rank": 1.0}) is False
 
 
 def test_entity_match_normalizes_empty_values() -> None:

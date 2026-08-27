@@ -19,6 +19,8 @@ if [[ -n "${EVAL_PYTHON:-}" ]]; then
   eval_python="${EVAL_PYTHON}"
 elif [[ -x "${project_root}/backend/venv/bin/python" ]]; then
   eval_python="${project_root}/backend/venv/bin/python"
+elif [[ -x "${project_root}/backend/venv/Scripts/python.exe" ]]; then
+  eval_python="${project_root}/backend/venv/Scripts/python.exe"
 elif command -v python3 >/dev/null 2>&1; then
   eval_python="$(command -v python3)"
 else

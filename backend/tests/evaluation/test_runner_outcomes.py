@@ -73,7 +73,7 @@ def test_cypher_generation_receives_manifest_rules_and_outputs(
     assert captured["required_outputs"] == expected.required_outputs
 
 
-def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() -> None:
+def test_runner_accepts_integral_float_id_and_unused_single_query_output_plan() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
     case = next(case for case in manifest.cases if case.case_id == "RQ02")
     contract = manifest.contracts[case.contract_id]
@@ -82,7 +82,11 @@ def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() ->
 
     runner = object.__new__(EvaluationRunner)
     runner.manifest = manifest
-    runner.resolve_entity = lambda state: {"entity": contract.expected_entities}
+    actual_entity = {
+        **contract.expected_entities,
+        "productId": float(contract.expected_entities["productId"]),
+    }
+    runner.resolve_entity = lambda state: {"entity": actual_entity}
     runner.route_query = lambda state: {"tool_plan": ["sql"], "subqueries": [plan]}
 
     def evaluate_subqueries(
@@ -113,6 +117,7 @@ def test_runner_does_not_block_pipeline_for_unused_single_query_output_plan() ->
 
     record = runner._evaluate_case(case, 1)
 
+    assert record["checks"]["entity"] is True
     assert record["checks"]["result"] is True
     assert record["semanticResultPass"] is True
     assert record["finalResultPass"] is True
