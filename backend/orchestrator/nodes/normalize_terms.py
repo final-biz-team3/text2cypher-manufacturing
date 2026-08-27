@@ -6,7 +6,7 @@ from time import perf_counter
 from typing import cast
 
 from ontology.models import TermDictionary
-from ontology.normalizer import normalize_query
+from ontology.normalizer import compile_term_dictionary, normalize_query
 from orchestrator.state import NormalizationNodeResult, OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -15,11 +15,13 @@ logger = logging.getLogger(__name__)
 def make_normalize_terms_node(
     dictionary: TermDictionary,
 ) -> Callable[[OrchestratorState], NormalizationNodeResult]:
+    compiled_index = compile_term_dictionary(dictionary)
+
     def normalize_terms(state: OrchestratorState) -> NormalizationNodeResult:
         started_at = perf_counter()
         result = cast(
             NormalizationNodeResult,
-            normalize_query(state["query"], dictionary),
+            normalize_query(state["query"], dictionary, compiled_index=compiled_index),
         )
         result["normalization_elapsed_ms"] = (perf_counter() - started_at) * 1000
         if result["normalization_status"] == "NEEDS_CLARIFICATION":
@@ -32,6 +34,7 @@ def make_normalize_terms_node(
                 result["normalization_elapsed_ms"],
             )
         else:
+            result["execution_allowed"] = True
             logger.info(
                 "normalize_terms: matched_terms=%s detected_actions=%s elapsed_ms=%.3f",
                 result["matched_terms"],
@@ -44,6 +47,6 @@ def make_normalize_terms_node(
 
 
 def route_after_normalization(state: OrchestratorState) -> str:
-    if state.get("normalization_status") == "NEEDS_CLARIFICATION":
-        return "stop"
-    return "continue"
+    if state.get("execution_allowed") is True:
+        return "continue"
+    return "stop"

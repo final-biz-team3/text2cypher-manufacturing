@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from ontology.loader import build_term_index, build_term_map, load_term_dictionary
+from ontology.loader import (
+    OntologyLoadError,
+    build_term_index,
+    build_term_map,
+    load_term_dictionary,
+)
 from ontology.models import TermDictionary
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -47,3 +52,10 @@ def test_duplicate_term_across_concepts_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="Ambiguous term"):
         build_term_map(dictionary)
+
+
+def test_missing_ontology_fails_closed_with_clear_error(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.yaml"
+
+    with pytest.raises(OntologyLoadError, match="서버 시작을 중단"):
+        load_term_dictionary(missing)

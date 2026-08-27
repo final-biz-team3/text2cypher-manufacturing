@@ -86,7 +86,7 @@ concepts:
     canonical: 생성
     actionType: CREATE
     defaultPolicy: BLOCK
-    terms: [생성, 추가, 등록, 만들어줘, create, insert, add, register]
+    terms: [생성, 추가, 등록, 만들어줘, 만들어 주세요, create, insert, add, register]
 
   - conceptId: action_update
     conceptType: ACTION

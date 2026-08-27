@@ -7,14 +7,23 @@ import yaml
 from ontology.models import TermConcept, TermDictionary
 
 
+class OntologyLoadError(RuntimeError):
+    """필수 온톨로지 설정을 안전하게 읽을 수 없을 때 발생한다."""
+
+
 def normalize_lookup_key(term: str) -> str:
     """영문 대소문자와 연속 공백을 검색에 영향 없도록 정규화한다."""
     return " ".join(term.casefold().split())
 
 
 def load_term_dictionary(path: Path) -> TermDictionary:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    dictionary = TermDictionary.model_validate(data)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        dictionary = TermDictionary.model_validate(data)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise OntologyLoadError(
+            f"필수 온톨로지 파일을 읽을 수 없어 서버 시작을 중단합니다: {path}"
+        ) from exc
     build_term_index(dictionary)
     return dictionary
 

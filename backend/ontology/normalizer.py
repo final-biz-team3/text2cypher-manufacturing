@@ -1,6 +1,7 @@
 """등록된 제조 동의어를 결정적으로 정규화한다."""
 
 import re
+from dataclasses import dataclass
 
 from ontology.loader import build_term_index, normalize_lookup_key
 from ontology.models import TermConcept, TermDictionary
@@ -55,11 +56,41 @@ _KOREAN_PARTICLES = (
 _ENGLISH_READ_COMMANDS = {"show", "find", "list", "get", "search", "display"}
 
 
+@dataclass(frozen=True)
+class CompiledTerm:
+    lookup_term: str
+    candidates: tuple[TermConcept, ...]
+    pattern: re.Pattern[str]
+
+
+@dataclass(frozen=True)
+class CompiledTermIndex:
+    terms: tuple[CompiledTerm, ...]
+    lookup_terms: frozenset[str]
+
+
 def _term_pattern(term: str) -> re.Pattern[str]:
     escaped = re.escape(term)
     if term.isascii() and any(character.isalpha() for character in term):
         return re.compile(rf"(?<![A-Za-z0-9_]){escaped}(?![A-Za-z0-9_])", re.I)
     return re.compile(escaped, re.I)
+
+
+def compile_term_dictionary(dictionary: TermDictionary) -> CompiledTermIndex:
+    """정적 사전의 검색 순서와 정규식을 요청 처리 전에 한 번 계산한다."""
+    term_index = build_term_index(dictionary)
+    sorted_terms = sorted(term_index, key=lambda value: (-len(value), value))
+    return CompiledTermIndex(
+        terms=tuple(
+            CompiledTerm(
+                lookup_term=term,
+                candidates=tuple(term_index[term]),
+                pattern=_term_pattern(term),
+            )
+            for term in sorted_terms
+        ),
+        lookup_terms=frozenset(term_index),
+    )
 
 
 def _has_korean_business_boundary(
@@ -152,28 +183,35 @@ def _adjust_particle(query: str, end: int, canonical: str) -> tuple[int, str]:
     return end + 1, adjusted
 
 
-def normalize_query(query: str, dictionary: TermDictionary) -> NormalizationResult:
+def normalize_query(
+    query: str,
+    dictionary: TermDictionary,
+    *,
+    compiled_index: CompiledTermIndex | None = None,
+) -> NormalizationResult:
     """업무 용어를 치환하고 행동 용어는 별도 목록으로 반환한다."""
     normalized = query
     matched_terms: list[MatchedTerm] = []
     detected_actions: list[DetectedAction] = []
     ambiguous_terms: list[AmbiguousTerm] = []
-    term_index = build_term_index(dictionary)
-    lookup_terms = set(term_index)
-
-    # 복합 표현이 짧은 표현보다 먼저 매칭되도록 한다.
-    terms = sorted(term_index, key=lambda value: (-len(value), value))
+    compiled = compiled_index or compile_term_dictionary(dictionary)
+    lookup_terms = set(compiled.lookup_terms)
     occupied: list[tuple[int, int]] = []
     replacements: list[tuple[int, int, str]] = []
 
-    for lookup_term in terms:
-        for match in _term_pattern(lookup_term).finditer(query):
+    for compiled_term in compiled.terms:
+        lookup_term = compiled_term.lookup_term
+        for match in compiled_term.pattern.finditer(query):
             span = match.span()
             candidates = [
                 concept
-                for concept in term_index[lookup_term]
+                for concept in compiled_term.candidates
                 if _concept_matches_boundary(
-                    query, *span, lookup_term, concept, lookup_terms
+                    query,
+                    *span,
+                    lookup_term,
+                    concept,
+                    lookup_terms,
                 )
             ]
             if not candidates:
