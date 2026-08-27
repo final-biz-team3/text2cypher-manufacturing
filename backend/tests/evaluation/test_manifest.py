@@ -19,6 +19,15 @@ def _digest(value: object) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
+def _effective_aliases(prefix: str) -> dict[str, object]:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    return {
+        contract_id: {subquery.id: subquery.aliases for subquery in contract.subqueries}
+        for contract_id, contract in manifest.contracts.items()
+        if contract_id.startswith(prefix)
+    }
+
+
 def test_manifest_covers_rq_and_hq_contracts_and_three_suites() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
 
@@ -59,6 +68,9 @@ def test_canonical_rq_contracts_cases_and_gold_are_frozen() -> None:
     assert _digest(gold) == (
         "2df6294af3a6061966bf4a31ae932e2f25ff3540bd9c826a0d64aa67c13ce9bb"
     )
+    assert _digest(_effective_aliases("RQ")) == (
+        "58fb87d954acbff60bb10b7389924a1fbbdc6a4d8ba06fbebd4699daa369257b"
+    )
 
 
 def test_holdout_contracts_cases_and_gold_are_frozen() -> None:
@@ -83,6 +95,9 @@ def test_holdout_contracts_cases_and_gold_are_frozen() -> None:
     )
     assert _digest(gold) == (
         "6b319499112956e7628f07800a545cf83ef5ae10b5ba1f8f4b546ece9e81d046"
+    )
+    assert _digest(_effective_aliases("HQ")) == (
+        "2794f34c0a616b41683f75b60a353b9a383753f00b12c80fa74a8a9a92d1be9e"
     )
 
 

@@ -87,8 +87,10 @@ holdout은 PR 마감 또는 릴리스 전에 수동 실행한다. 자동 CD gate
 
 현재 단계별 모델 호출 수를 기준으로 canonical 20건은 약 63회, robustness
 60건은 약 189회, holdout 10건은 약 32회로 전체 90건에 약 284회가 필요하다.
-전체를 `--runs 3`으로 실행하면 약 852회이므로, 실패 case만
-`--ids RQxx --runs 3` 또는 `--ids HQxx --runs 3`으로 재현한다.
+전체를 `--runs 3`으로 실행하면 약 852회이므로 실패 범위만 재현한다. canonical은
+`--ids RQ12 --runs 3`, robustness는
+`--suite robustness --ids RQ12 --runs 3`(해당 RQ의 S/C/R 세 case), holdout은
+`--suite holdout --ids HQ07 --runs 3`처럼 suite와 ID를 함께 지정한다.
 
 Holdout은 코드·프롬프트를 동결한 뒤 `--runs 1`로 한 번 평가한다. 그 결과를 보고
 성능을 수정했다면 기존 HQ 세트는 regression으로 전환하고, 다음 미공개 평가는 새
@@ -125,7 +127,8 @@ CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경�
 - `semanticResultAccuracy`: 비교 가능한 결과 중 source별 실행 결과가 Gold와
   같은 비율
 - `verifiedSemanticPassRate`: 전체 평가 중 실제 Gold 일치가 확인된 비율
-- `finalResultAccuracy`: 최종 결과 평가가 가능한 RQ01~RQ17의 Gold 결과 정확도
+- `finalResultAccuracy`: 최종 결과 평가가 가능한 RQ01~RQ17과 HQ01~HQ08의 Gold
+  결과 정확도
 - `routingAccuracy`: SQL/GRAPH/HYBRID 선택 자체의 정확도
 - `sqlPartialCoverage`/`sqlPartialAccuracy`,
   `graphPartialCoverage`/`graphPartialAccuracy`, `hybridSplitAccuracy`: source별
