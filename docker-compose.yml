@@ -15,6 +15,11 @@ services:
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
     volumes:
       - neo4j_data:/data
+    # execute_cypher 전용 reader 계정은 최초 기동 후 수동으로 생성해야 한다
+    # (Postgres의 init-sql/ 같은 컨테이너 자동 초기화 디렉터리가 Neo4j엔 없음):
+    #   CREATE USER chatbot_reader SET PASSWORD '...' CHANGE NOT REQUIRED;
+    #   GRANT ROLE reader TO chatbot_reader;
+    # 생성한 값은 .env의 NEO4J_READER_USER/NEO4J_READER_PASSWORD와 일치시킨다.
 
   postgres:
     # 패치 버전 고정(PR #16 리뷰 재대응, 2026-08-20) - Neo4j와 같은 재현성 이유.
