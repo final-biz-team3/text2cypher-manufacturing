@@ -94,7 +94,10 @@ export function SchemaSidebar({
                 <p className="line-clamp-2 text-[12px] text-text">{item.query}</p>
                 <p className="text-[10px] text-text-faint">
                   {item.username} ·{' '}
-                  {new Date(item.created_at).toLocaleTimeString('ko-KR', {
+                  {new Date(item.created_at).toLocaleString('ko-KR', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
                     hour: '2-digit',
                     minute: '2-digit',
                   })}
