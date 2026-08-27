@@ -51,10 +51,7 @@ def _is_explicit_write_command(query: str, actions: list[DetectedAction]) -> boo
             continue
         term = re.escape(action["original"])
         if action["original"].isascii():
-            pattern = (
-                rf"(?:^|[.!?;,]\s*|\b(?:and|then)\s+)"
-                rf"(?:please\s+)?{term}\b"
-            )
+            pattern = rf"(?:^|[.!?;,]\s*|\b(?:and|then)\s+)" rf"(?:please\s+)?{term}\b"
         else:
             pattern = (
                 rf"{term}\s*(?:해\s*줘|해주세요|해라|하라|해|시켜줘|"
