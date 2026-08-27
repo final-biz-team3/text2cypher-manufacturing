@@ -1,13 +1,13 @@
 # RQ/HQ text-to-query 평가
 
 `manifest.json`은 canonical/robustness/holdout 질문, entity·route·subquery 계약, DB
-snapshot 검증값과 source별 Gold 쿼리를 연결한다. Gold는 후보 쿼리 생성에
-사용하지 않고 동일한 읽기 전용 snapshot에서 결과 hash를 만들 때만 사용한다.
-각 subquery의 `question`, `businessRules`, `requiredOutputs`가 Gold가 검증하는
-결과 책임의 기준이다. router 계획에서는 전체 결과 스키마를 반복하게 하지 않고,
-HYBRID 단계 사이에 전달하거나 결합하는 필드만 필수로 검사한다. 각 Gold 파일의
-첫 줄에는 query ID와 담당 subquery 질문을 적고, manifest와 달라지면 테스트가
-실패하도록 해 사람이 파일만 열어도 검증 목적을 알 수 있게 한다.
+snapshot 검증값과 source별 Gold 쿼리를 연결한다. Gold 쿼리와 expected
+`businessRules`·`requiredOutputs`는 채점에만 사용하고 후보 생성에는 넣지 않는다.
+후보와 Gold는 동일한 읽기 전용 snapshot에서 실행해 결과 hash로 비교한다. 각
+subquery의 `question`, `businessRules`, `requiredOutputs`는 Gold가 검증하는 결과
+책임의 기준이다. router 계획에서는 전체 결과 스키마를 반복하게 하지 않고, HYBRID
+단계 사이에 전달하거나 결합하는 필드만 필수로 검사한다. 각 Gold 파일의 첫 줄에는
+query ID와 담당 subquery 질문을 적고, manifest와 달라지면 테스트가 실패한다.
 
 RQ01~RQ17과 HQ01~HQ08은 `FULLY_EVALUATED`다. RQ18~RQ20과 HQ09~HQ10은
 부분 SQL/Cypher까지 채점하는 `QUERY_EVALUATED_FINAL_JOIN_PENDING`이며, 후자의
@@ -18,16 +18,18 @@ RQ01~RQ17과 HQ01~HQ08은 `FULLY_EVALUATED`다. RQ18~RQ20과 HQ09~HQ10은
 - `canonical`: 동결된 RQ01~RQ20 질문·계약·Gold 20건
 - `robustness`: 각 RQ의 의미·파라미터·Gold는 유지하면서 표현만 바꾼 60건
 - `holdout`: 신규 방향 HQ01~HQ10 10건(SQL 6, GRAPH 2, HYBRID 2)
-- `all`: 세 suite의 전체 90건
+- `all`: 독립 업무 계약 30개(canonical 20 + holdout 10)와 같은 계약의
+  표현 변형 60개를 합한 전체 90 case
 
 robustness case ID의 `S`는 짧은 표현·문장 파편, `C`는 일상 구어체, `R`은
 동의어·조건 재배치를 뜻한다. 예를 들어 `RB01-S`, `RB01-C`, `RB01-R`은 모두
 RQ01 계약과 같은 파라미터·Gold로 채점된다. 단일 턴 평가이므로 RQ17과 RQ19처럼
 복수 제품이나 생산 대상이 필요한 질문은 구어체에서도 제품 전체 이름을 유지한다.
 
-`subqueries`는 평가기가 검증·실행하는 계약이다. production `/chat`은
-`dependsOn`·`inputBindings`를 실행하지 않으며 `subqueries`를 응답에 노출하지
-않는다.
+`subqueries`는 평가기가 직접 실행하는 offline component 계약이다. production
+`/chat`은 현재 `dependsOn`·`inputBindings`를 실행하지 않으며 평가기와 같은 DB 실행
+경로를 사용하지 않는다. 따라서 이 점수는 자연어 최종 답변이나 production E2E
+정확도가 아니다.
 
 ## 기본 실행
 
@@ -92,17 +94,22 @@ holdout은 PR 마감 또는 릴리스 전에 수동 실행한다. 자동 CD gate
 `--suite robustness --ids RQ12 --runs 3`(해당 RQ의 S/C/R 세 case), holdout은
 `--suite holdout --ids HQ07 --runs 3`처럼 suite와 ID를 함께 지정한다.
 
-Holdout은 코드·프롬프트를 동결한 뒤 `--runs 1`로 한 번 평가한다. 그 결과를 보고
-성능을 수정했다면 기존 HQ 세트는 regression으로 전환하고, 다음 미공개 평가는 새
-Holdout으로 작성한다. HQ 계약·case·Gold 원문과 승인 snapshot의 Gold 결과 hash는
-테스트에 고정되어 있으므로 의도적인 기준선 갱신 없이 변경할 수 없다.
+Holdout은 코드·프롬프트를 동결한 뒤 `--runs 1`로 한 번 평가한다. HQ 질문과 Gold가
+같은 저장소에 공개되어 있으므로 이 suite는 최초 실행 전의 개발용 capability
+holdout이지, 접근이 차단된 blind holdout은 아니다. 그 결과를 보거나 성능을
+수정했다면 기존 HQ 세트는 regression으로 전환하고, 최종 일반화 평가는 개발자가
+튜닝 중 보지 않은 신규 질의로 별도 수행한다. RQ/HQ 계약·case·Gold 원문과 승인
+snapshot의 모든 canonical/holdout Gold 결과 행 수·hash는 테스트에 고정되어
+있으므로 의도적인 기준선 갱신 없이 변경할 수 없다.
 
 ## GitHub Actions에서 수동 실행
 
 `Text-to-query Manual Evaluation`에서 `Run workflow`를 누르고 대상 PR 브랜치를
 선택하면 기본값으로 canonical 20개를 1회 평가한다. workflow 입력에서 holdout도
-선택할 수 있지만 실행은 계속 수동이다. 결과 불일치는 리포트에 남기되 workflow를
-차단하지 않고, 환경·API·DB·snapshot 오류만 실패로 처리한다.
+선택할 수 있지만 실행은 계속 수동이다. 모델 호출 전에 canonical/holdout Gold 결과
+행 수·hash 통합 테스트를 실행해 승인 snapshot drift를 차단한다. 모델 결과 불일치는
+리포트에 남기되 workflow를 차단하지 않고, 환경·API·DB·snapshot·Gold 오류만
+실패로 처리한다.
 
 GitHub의 `workflow_dispatch`는 workflow 파일이 기본 브랜치에 존재해야 활성화된다.
 기본 브랜치에 workflow가 들어간 뒤부터 평가할 PR 브랜치를 선택해 병합 전에
@@ -112,7 +119,15 @@ Gold와 snapshot만 점검하려면 `--validate-gold`를 사용한다. 비밀번
 CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경변수에서만
 읽는다. 현재 승인 snapshot의 `syncRunId`와 모든 핵심 테이블·노드·관계 건수를
 실행 전에 검증하며, 계산된 snapshot hash도 artifact에 기록한다. snapshot을
-교체할 때는 Gold 결과와 run ID를 함께 리뷰해야 한다.
+교체할 때는 canonical 23개와 holdout 12개 Gold 결과 행 수·hash, run ID를 함께
+리뷰해야 한다.
+
+모델 평가 artifact는 내부에 기록된 정확한 commit과 작업 상태에 대한 증거다.
+후속 commit이 문서·테스트만 바꿔 production 평가 동작에 영향을 주지 않았다면 기존
+모델 결과를 PR 설명에서 그 근거와 함께 참조할 수 있지만, HEAD에서는 최소한
+`--validate-gold`를 다시 실행한다. 프롬프트·모델·라우터·entity 해석·query 생성·
+정규화·채점 로직이 바뀌면 기존 결과를 HEAD 결과로 간주하지 않고 해당 suite를 다시
+실행한다.
 
 종료 코드는 리포트 완료 `0`, 환경·API·DB·snapshot·Gold 오류 `2`다. report
 모드에서 모델의 쿼리 오답은 결과표에 기록하되 실행 자체를 실패시키지 않는다. 결과는

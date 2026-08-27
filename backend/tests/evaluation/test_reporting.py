@@ -204,7 +204,8 @@ def test_report_is_compact_and_keeps_query_details_in_evaluation_json(
     assert "| 채점 실행 완료 (인프라 정상) | 1/1 | 100% |" in report
     assert "| 엄격 파이프라인 PASS | 0/1 | 0% |" in report
     assert "| 의미 결과 비교 가능 | 1/1 | 100% |" in report
-    assert "| 의미 결과 정확도 | 0/1 | 0% |" in report
+    assert "| 검증된 의미 PASS | 0/1 | 0% |" in report
+    assert "| 비교 가능한 결과 중 정확도 | 0/1 | 0% |" in report
     assert "## Route별 엄격 PASS" in report
     assert "| SQL | 0/1 | 0% |" in report
     assert "| RQ01 | 1 | SQL |" in report

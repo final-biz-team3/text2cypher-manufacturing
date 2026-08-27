@@ -59,6 +59,11 @@ jobs:
       - name: Install backend dependencies
         run: python -m pip install -r backend/requirements.txt
 
+      - name: Verify approved Gold fingerprints
+        run: >-
+          PYTHONPATH=backend python -m pytest -q -m integration
+          backend/tests/evaluation/test_gold_integration.py
+
       - name: Run report-only evaluation
         id: evaluation
         shell: bash

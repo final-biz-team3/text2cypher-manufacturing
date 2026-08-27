@@ -449,8 +449,11 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                 score_row(
                     "의미 결과 비교 가능", len(semantic_applicable), len(completed)
                 ),
+                score_row("검증된 의미 PASS", semantic_passed, len(completed)),
                 score_row(
-                    "의미 결과 정확도", semantic_passed, len(semantic_applicable)
+                    "비교 가능한 결과 중 정확도",
+                    semantic_passed,
+                    len(semantic_applicable),
                 ),
                 score_row("최종 결과 평가 대상", len(final_evaluated), len(completed)),
                 score_row(

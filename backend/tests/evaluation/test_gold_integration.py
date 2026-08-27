@@ -30,7 +30,110 @@ def test_all_canonical_gold_queries_match_the_approved_snapshot() -> None:
 
     assert len(result.records) == 20
     assert all(record["status"] == "GOLD_VALIDATED" for record in result.records)
-    assert sum(len(record["subqueries"]) for record in result.records) == 23
+    subqueries = {
+        (record["caseId"], subquery["id"]): subquery
+        for record in result.records
+        for subquery in record["subqueries"]
+    }
+    assert len(subqueries) == 23
+    assert all(subquery["status"] == "PASS" for subquery in subqueries.values())
+    assert {
+        key: (subquery["rowCount"], subquery["goldHash"])
+        for key, subquery in subqueries.items()
+    } == {
+        ("RQ01", "sql_product_cost"): (
+            1,
+            "492d30c40b039ecaf38d4eb1717a6eefe88616e512e8f04802b4880d8f5f0a88",
+        ),
+        ("RQ02", "sql_inventory_locations"): (
+            6,
+            "ef9fb77bfadfa60cdcdf13fbdec3369e9e4a42dc89b6241333c26f5b7365ecd4",
+        ),
+        ("RQ03", "sql_active_supplier_count"): (
+            1,
+            "63358d84119d2025ca5bb079f2be364b7265d478a1f7a43147c8219f58c9383c",
+        ),
+        ("RQ04", "sql_purchased_product_count"): (
+            1,
+            "53f441930a223f121b0170e8dfa12eccdb711acf8a87afba0132fbfadcf5eeb2",
+        ),
+        ("RQ05", "sql_products_without_sell_end"): (
+            10,
+            "030ebe38da1b884ffe099500606405c536281d8cf27b31a59cf49b2fd783f222",
+        ),
+        ("RQ06", "sql_product_attributes"): (
+            1,
+            "a70650d88b5e2c871a7c4cdc110c277ba1389afae289d7d0c24a7bd2d43ca302",
+        ),
+        ("RQ07", "sql_category_product_count"): (
+            1,
+            "ddb1457f018753a879e6f09f4967ae33090de886f72787ebc82e4f86e4a0e3fc",
+        ),
+        ("RQ08", "sql_stock_shortage"): (
+            1,
+            "9f8470d3238421e137a0c21890d675439070b419e0422168ebf5bffe06dee76b",
+        ),
+        ("RQ09", "sql_top_finished_sales"): (
+            5,
+            "aebf47dbfcdb0c15b8baefc2ab341cae823fb2d88cc275a17f457795bd7cf606",
+        ),
+        ("RQ10", "sql_top_supplier_rejections"): (
+            5,
+            "ddbafe0ffd41dcba6c433acead4cb9a7833e739418bf0b03eddaf17c9bbd23d0",
+        ),
+        ("RQ11", "sql_top_scrapped_work_orders"): (
+            5,
+            "d309c768b65f67a03d1141c616be2edf59192e871f55cf384452c1a1572f367d",
+        ),
+        ("RQ12", "graph_component_usage"): (
+            54,
+            "526def0635da674100aa090a99da509dc3d6949bcf190debbc239eb3e823bac2",
+        ),
+        ("RQ13", "graph_bom_hierarchy"): (
+            24,
+            "4673abc9700cd9e3b658c6e09bc6ec27cba0d4f11d4070c073186fdb68ba0b82",
+        ),
+        ("RQ14", "graph_supplier_impact"): (
+            97,
+            "18d1bc44e354dc4049f24d39588a5d0c5b460f6357807acb4ed50541590c9d22",
+        ),
+        ("RQ15", "graph_work_order_operations"): (
+            2,
+            "e3304588163ebc4c1b8698e3793781aa8ccde97f95b5e5ba164e5238de19d529",
+        ),
+        ("RQ16", "graph_all_bom_paths"): (
+            3,
+            "ec0c20056b97a19544d0942dca3949e2256fdec2df62a0cebdedd50f1ad2dad6",
+        ),
+        ("RQ17", "graph_common_components"): (
+            53,
+            "b57c42fa56de77dd096adc0721f31fb4ae188828299474be00d914632f8f207c",
+        ),
+        ("RQ18", "graph_impact"): (
+            97,
+            "18d1bc44e354dc4049f24d39588a5d0c5b460f6357807acb4ed50541590c9d22",
+        ),
+        ("RQ18", "sql_stock"): (
+            1,
+            "99f30ec09a0a82969da6545206b5ece94b6d242b1a7b4123f5092f100de7e052",
+        ),
+        ("RQ19", "graph_bom_supply"): (
+            25,
+            "78c01a408ca1aaff9998cb04fee6159d6330ebe587a7596b6d19592c58cfe9bc",
+        ),
+        ("RQ19", "sql_component_stock"): (
+            21,
+            "d51df7e73440f149edf2d122264c871fd843c6cdd1c5e1de601579f8c730e391",
+        ),
+        ("RQ20", "sql_scrap_facts"): (
+            1,
+            "c681cd77797449a292622539029adc9286888713cc03d66faa2fff5cf3386722",
+        ),
+        ("RQ20", "graph_operations"): (
+            2,
+            "e3304588163ebc4c1b8698e3793781aa8ccde97f95b5e5ba164e5238de19d529",
+        ),
+    }
 
 
 def test_all_holdout_gold_queries_match_the_approved_snapshot() -> None:

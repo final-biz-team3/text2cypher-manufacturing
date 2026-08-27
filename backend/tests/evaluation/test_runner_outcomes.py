@@ -16,7 +16,7 @@ from orchestrator.state import OrchestratorState
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_sql_generation_receives_manifest_rules_and_outputs(
+def test_sql_generation_does_not_receive_gold_contract_hints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
@@ -39,11 +39,11 @@ def test_sql_generation_receives_manifest_rules_and_outputs(
         {},
     )
 
-    assert captured["business_rules"] == expected.business_rules
-    assert captured["required_outputs"] == expected.required_outputs
+    assert "business_rules" not in captured
+    assert "required_outputs" not in captured
 
 
-def test_cypher_generation_receives_manifest_rules_and_outputs(
+def test_cypher_generation_does_not_receive_gold_contract_hints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
@@ -69,8 +69,8 @@ def test_cypher_generation_receives_manifest_rules_and_outputs(
         {},
     )
 
-    assert captured["business_rules"] == expected.business_rules
-    assert captured["required_outputs"] == expected.required_outputs
+    assert "business_rules" not in captured
+    assert "required_outputs" not in captured
 
 
 def test_runner_accepts_integral_float_id_and_unused_single_query_output_plan() -> None:
