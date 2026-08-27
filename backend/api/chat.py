@@ -1,6 +1,9 @@
 import logging
+from typing import Any
 
+import neo4j.time
 from fastapi import APIRouter, Depends, Request
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, ConfigDict
 
 from core.auth import CurrentUser, get_current_user
@@ -12,6 +15,26 @@ from orchestrator.graph import build_orchestrator_graph
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# fastapi.encoders.jsonable_encoder는 Decimal은 알아서 float로 바꾸지만
+# neo4j.time.DateTime/Date/Time/Duration은 모르는 타입이라 __dict__를
+# 그대로 덤프해버린다(예: {"_DateTime__date": {...}} 같은 내부 속성명이
+# 그대로 샌다 - 실측으로 확인함). ISO 문자열로 명시적으로 바꿔준다.
+_NEO4J_TEMPORAL_ENCODERS: dict[type, Any] = {
+    neo4j.time.DateTime: lambda v: v.iso_format(),
+    neo4j.time.Date: lambda v: v.iso_format(),
+    neo4j.time.Time: lambda v: v.iso_format(),
+    neo4j.time.Duration: str,
+}
+
+
+def _to_json_safe(value: Any) -> Any:
+    """sql_result/graph_result를 HTTP 응답과 save_conversation의
+    json.dumps() 양쪽에 안전하게 쓸 수 있는 순수 JSON 타입으로 미리
+    바꿔둔다. Decimal(SQL)과 neo4j.time.*(Cypher) 둘 다 plain json.dumps는
+    아예 못 다루므로(TypeError), 대화기록 저장이 이런 값을 만날 때마다
+    조용히 실패하고 있었다 - 여기서 한 번만 변환해 두 경로 모두 해결한다."""
+    return jsonable_encoder(value, custom_encoder=_NEO4J_TEMPORAL_ENCODERS)
 
 
 class ChatRequest(BaseModel):
@@ -47,8 +70,8 @@ async def chat(
         "tool_plan": result.get("tool_plan"),
         "sql_query": result.get("sql_query"),
         "cypher_query": result.get("cypher_query"),
-        "sql_result": result.get("sql_result"),
-        "graph_result": result.get("graph_result"),
+        "sql_result": _to_json_safe(result.get("sql_result")),
+        "graph_result": _to_json_safe(result.get("graph_result")),
         "final_answer": result.get("final_answer"),
     }
     try:
