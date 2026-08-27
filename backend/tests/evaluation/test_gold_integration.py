@@ -1,15 +1,34 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 from dotenv import load_dotenv
 
+from evaluation.contracts import collect_input_bindings
 from evaluation.database import ReadOnlyDatabaseExecutor
-from evaluation.models import load_manifest
+from evaluation.models import EvaluationManifest, load_manifest
 from evaluation.runner import EvaluationRunner
 
 pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _holdout_gold_rows(
+    runner: EvaluationRunner, manifest: EvaluationManifest
+) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    """의존 binding까지 적용해 Holdout Gold의 정규화 결과를 반환한다."""
+    outputs: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for case in (case for case in manifest.cases if case.suite == "holdout"):
+        upstream: dict[str, list[dict[str, Any]]] = {}
+        contract = manifest.contracts[case.contract_id]
+        for expected in contract.subqueries:
+            inputs = collect_input_bindings(expected.input_bindings, upstream)
+            parameters = {**case.parameters, **inputs}
+            rows, _ = runner._gold_result(expected, parameters)
+            upstream[expected.id] = rows
+            outputs[(case.case_id, expected.id)] = rows
+    return outputs
 
 
 def test_all_canonical_gold_queries_match_the_approved_snapshot() -> None:
@@ -214,3 +233,191 @@ def test_all_holdout_gold_queries_match_the_approved_snapshot() -> None:
             "5a168bb30431ee60a166d40a8b7c5639ef66cf8dc08feb30bad443ec99d64ea4",
         ),
     }
+
+
+def test_holdout_gold_satisfies_independent_business_invariants() -> None:
+    """Gold hash와 다른 축에서 집계 grain·BOM leaf·source 동기화를 검증한다."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    cases = {case.case_id: case for case in manifest.cases if case.suite == "holdout"}
+    database = ReadOnlyDatabaseExecutor.from_environment()
+    try:
+        runner = EvaluationRunner(
+            manifest,
+            database,
+            None,
+            project_root=PROJECT_ROOT,
+        )
+        outputs = _holdout_gold_rows(runner, manifest)
+
+        shortages = outputs[("HQ02", "sql_top_inventory_shortages")]
+        shortage_facts = database.execute_sql(
+            """
+            SELECT p.productid AS "productId",
+                   p.safetystocklevel AS "safetyStockLevel",
+                   COALESCE((
+                     SELECT SUM(i.quantity)
+                     FROM production.productinventory AS i
+                     WHERE i.productid = p.productid
+                   ), 0) AS "actualStock"
+            FROM production.product AS p
+            WHERE p.productid = ANY(%(productIds)s)
+            """,
+            {"productIds": [row["productId"] for row in shortages]},
+            max_rows=5,
+        )
+        shortage_facts_by_id = {row["productId"]: row for row in shortage_facts}
+        assert all(
+            row["actualStock"] == shortage_facts_by_id[row["productId"]]["actualStock"]
+            and row["safetyStockLevel"]
+            == shortage_facts_by_id[row["productId"]]["safetyStockLevel"]
+            and row["shortageQty"] == row["safetyStockLevel"] - row["actualStock"] > 0
+            for row in shortages
+        )
+        assert [(-row["shortageQty"], row["productId"]) for row in shortages] == sorted(
+            (-row["shortageQty"], row["productId"]) for row in shortages
+        )
+
+        suppliers = outputs[("HQ03", "sql_top_active_suppliers")]
+        supplier_facts = database.execute_sql(
+            """
+            SELECT v.businessentityid AS "supplierId",
+                   v.activeflag AS "active",
+                   (
+                     SELECT COUNT(DISTINCT pv.productid)
+                     FROM purchasing.productvendor AS pv
+                     WHERE pv.businessentityid = v.businessentityid
+                   ) AS "suppliedProductCount"
+            FROM purchasing.vendor AS v
+            WHERE v.businessentityid = ANY(%(supplierIds)s)
+            """,
+            {"supplierIds": [row["supplierId"] for row in suppliers]},
+            max_rows=5,
+        )
+        supplier_facts_by_id = {row["supplierId"]: row for row in supplier_facts}
+        assert all(
+            supplier_facts_by_id[row["supplierId"]]["active"] is True
+            and supplier_facts_by_id[row["supplierId"]]["suppliedProductCount"]
+            == row["suppliedProductCount"]
+            for row in suppliers
+        )
+
+        leaf_rows = outputs[("HQ06", "graph_leaf_components")]
+        sql_leaf_rows = database.execute_sql(
+            """
+            WITH RECURSIVE bom_tree AS (
+              SELECT bom.componentid,
+                     1 AS depth,
+                     ARRAY[root.productid, bom.componentid] AS path
+              FROM production.product AS root
+              JOIN production.billofmaterials AS bom
+                ON bom.productassemblyid = root.productid
+              WHERE root.name = %(finishedProductName)s
+                AND bom.startdate <= %(bomAsOfDate)s
+                AND (bom.enddate IS NULL OR %(bomAsOfDate)s < bom.enddate)
+
+              UNION ALL
+
+              SELECT bom.componentid,
+                     tree.depth + 1,
+                     tree.path || bom.componentid
+              FROM bom_tree AS tree
+              JOIN production.billofmaterials AS bom
+                ON bom.productassemblyid = tree.componentid
+              WHERE tree.depth < 4
+                AND bom.startdate <= %(bomAsOfDate)s
+                AND (bom.enddate IS NULL OR %(bomAsOfDate)s < bom.enddate)
+                AND NOT bom.componentid = ANY(tree.path)
+            )
+            SELECT tree.componentid AS "componentId",
+                   MIN(tree.depth) AS "minDepth"
+            FROM bom_tree AS tree
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM production.billofmaterials AS child
+              WHERE child.productassemblyid = tree.componentid
+                AND child.startdate <= %(bomAsOfDate)s
+                AND (child.enddate IS NULL OR %(bomAsOfDate)s < child.enddate)
+            )
+            GROUP BY tree.componentid
+            ORDER BY "minDepth" DESC, "componentId" ASC
+            """,
+            cases["HQ06"].parameters,
+            max_rows=50,
+        )
+        assert [(row["componentId"], row["minDepth"]) for row in leaf_rows] == [
+            (row["componentId"], row["minDepth"]) for row in sql_leaf_rows
+        ]
+
+        supplier_pairs = outputs[("HQ07", "graph_supplier_pairs")]
+        sql_supplier_pairs = database.execute_sql(
+            """
+            SELECT a.businessentityid AS "supplierIdA",
+                   b.businessentityid AS "supplierIdB",
+                   COUNT(DISTINCT a.productid) AS "sharedComponentCount"
+            FROM purchasing.productvendor AS a
+            JOIN purchasing.productvendor AS b
+              ON b.productid = a.productid
+             AND a.businessentityid < b.businessentityid
+            JOIN purchasing.vendor AS va
+              ON va.businessentityid = a.businessentityid
+             AND va.activeflag = true
+            JOIN purchasing.vendor AS vb
+              ON vb.businessentityid = b.businessentityid
+             AND vb.activeflag = true
+            GROUP BY a.businessentityid, b.businessentityid
+            ORDER BY "sharedComponentCount" DESC,
+                     "supplierIdA" ASC,
+                     "supplierIdB" ASC
+            LIMIT 5
+            """,
+            {},
+            max_rows=5,
+        )
+        assert [
+            (row["supplierIdA"], row["supplierIdB"], row["sharedComponentCount"])
+            for row in supplier_pairs
+        ] == [
+            (row["supplierIdA"], row["supplierIdB"], row["sharedComponentCount"])
+            for row in sql_supplier_pairs
+        ]
+        assert all(row["supplierIdA"] < row["supplierIdB"] for row in supplier_pairs)
+
+        hybrid_leaf_rows = outputs[("HQ09", "graph_leaf_components")]
+        leaf_shortages = outputs[("HQ09", "sql_leaf_shortages")]
+        assert {(row["componentId"], row["minDepth"]) for row in hybrid_leaf_rows} == {
+            (row["componentId"], row["minDepth"]) for row in leaf_rows
+        }
+        leaf_ids = {row["componentId"] for row in hybrid_leaf_rows}
+        assert all(
+            row["componentId"] in leaf_ids
+            and row["shortageQty"] == row["safetyStockLevel"] - row["actualStock"] > 0
+            for row in leaf_shortages
+        )
+
+        location_products = outputs[("HQ10", "graph_location_products")]
+        sql_location_products = database.execute_sql(
+            """
+            SELECT DISTINCT w.productid AS "productId"
+            FROM production.workorderrouting AS routing
+            JOIN production.workorder AS w
+              ON w.workorderid = routing.workorderid
+            JOIN production.location AS location
+              ON location.locationid = routing.locationid
+            WHERE location.name = %(locationName)s
+            ORDER BY "productId" ASC
+            """,
+            cases["HQ10"].parameters,
+            max_rows=50,
+        )
+        graph_product_ids = [row["productId"] for row in location_products]
+        assert graph_product_ids == [row["productId"] for row in sql_location_products]
+        scrap_totals = outputs[("HQ10", "sql_product_scrap_totals")]
+        assert all(row["productId"] in graph_product_ids for row in scrap_totals)
+        assert [
+            (-row["totalScrappedQty"], row["productId"]) for row in scrap_totals
+        ] == sorted(
+            (-row["totalScrappedQty"], row["productId"]) for row in scrap_totals
+        )
+    finally:
+        database.close()

@@ -85,29 +85,35 @@ PYTHONPATH=backend python -m evaluation \
 
 기본은 항상 `--runs 1`이다. canonical은 평상시 확인에 사용하고 robustness와
 holdout은 PR 마감 또는 릴리스 전에 수동 실행한다. 자동 CD gate, 별도 대시보드,
-추세 DB에는 연결하지 않는다.
+추세 DB에는 연결하지 않는다. 단일 실행은 smoke 기준선이며 성능 개선을 주장할 때는
+같은 모델·snapshot에서 canonical과 현재 regression으로 사용하는 holdout을 각각
+`--runs 3`으로 실행해 case별 변동을 함께 확인한다. robustness는 같은 계약의 상관된
+표현 변형이므로 기본 1회를 유지한다.
 
 현재 단계별 모델 호출 수를 기준으로 canonical 20건은 약 63회, robustness
 60건은 약 189회, holdout 10건은 약 32회로 전체 90건에 약 284회가 필요하다.
-전체를 `--runs 3`으로 실행하면 약 852회이므로 실패 범위만 재현한다. canonical은
+전체를 `--runs 3`으로 실행하면 약 852회이므로 실행하지 않는다. 독립 계약인
+canonical과 holdout만 3회 실행하면 약 285회다. 개별 실패 재현은 canonical에서
 `--ids RQ12 --runs 3`, robustness는
 `--suite robustness --ids RQ12 --runs 3`(해당 RQ의 S/C/R 세 case), holdout은
 `--suite holdout --ids HQ07 --runs 3`처럼 suite와 ID를 함께 지정한다.
 
-Holdout은 코드·프롬프트를 동결한 뒤 `--runs 1`로 한 번 평가한다. HQ 질문과 Gold가
-같은 저장소에 공개되어 있으므로 이 suite는 최초 실행 전의 개발용 capability
+Holdout은 코드·프롬프트를 동결한 뒤 최초 capability 결과를 확인한다. HQ 질문과
+Gold가 같은 저장소에 공개되어 있으므로 이 suite는 최초 실행 전의 개발용 capability
 holdout이지, 접근이 차단된 blind holdout은 아니다. 그 결과를 보거나 성능을
-수정했다면 기존 HQ 세트는 regression으로 전환하고, 최종 일반화 평가는 개발자가
-튜닝 중 보지 않은 신규 질의로 별도 수행한다. RQ/HQ 계약·case·Gold 원문과 승인
+수정했다면 기존 HQ 세트는 regression으로 전환하고, 반복 실행은 모델 변동성 확인에만
+사용한다. 최종 일반화 평가는 개발자가 튜닝 중 보지 않은 신규 질의로 별도 수행한다.
+RQ/HQ 계약·case·Gold 원문과 승인
 snapshot의 모든 canonical/holdout Gold 결과 행 수·hash는 테스트에 고정되어
 있으므로 의도적인 기준선 갱신 없이 변경할 수 없다.
 
 ## GitHub Actions에서 수동 실행
 
 `Text-to-query Manual Evaluation`에서 `Run workflow`를 누르고 대상 PR 브랜치를
-선택하면 기본값으로 canonical 20개를 1회 평가한다. workflow 입력에서 holdout도
-선택할 수 있지만 실행은 계속 수동이다. 모델 호출 전에 canonical/holdout Gold 결과
-행 수·hash 통합 테스트를 실행해 승인 snapshot drift를 차단한다. 모델 결과 불일치는
+선택하면 기본값으로 canonical 20개를 1회 평가한다. workflow 입력에서 holdout과
+case별 1회/3회 실행을 선택할 수 있지만 실행은 계속 수동이다. 모델 호출 전에
+canonical/holdout Gold 결과 행 수·hash 통합 테스트를 실행해 승인 snapshot drift를
+차단한다. 모델 결과 불일치는
 리포트에 남기되 workflow를 차단하지 않고, 환경·API·DB·snapshot·Gold 오류만
 실패로 처리한다.
 
@@ -148,6 +154,12 @@ CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경�
 - `sqlPartialCoverage`/`sqlPartialAccuracy`,
   `graphPartialCoverage`/`graphPartialAccuracy`, `hybridSplitAccuracy`: source별
   비교 가능 범위와 그 안의 정확도, HYBRID 분할 진단 점수
+
+반복 실행에서는 case별 `CONSISTENT_PASS`, `VARIABLE`, `CONSISTENT_FAIL`,
+`INCOMPLETE`를 별도로 기록한다. `caseOutcomeConsistency`에는 전회 FAIL도 포함되므로
+정답률이 아니라 모델 변동성 지표다. 기존 `caseStability`는 JSON 호환성을 위해
+유지하지만 실제 의미는 전회 PASS case 비율이며, 신규 분석에는
+`consistentPassCaseRate`와 `caseTrialSummary`를 사용한다.
 
 entity가 일치하지 않아도 후속 쿼리와 Gold 비교는 계속해 복구 여부를 남긴다.
 다만 `stageAccuracy.entity`와 `ENTITY_MISMATCH` 실패 사유를 기록하고,
