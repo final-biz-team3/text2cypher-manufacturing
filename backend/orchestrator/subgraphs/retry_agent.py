@@ -6,7 +6,7 @@ sql_agent.py/cypher_agent.py는 완전히 대칭 구조라(생성 함수, 실행
 한 곳에 모아두고 각 모듈은 설정값만 주입한다."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -51,8 +51,8 @@ def make_retry_agent_subgraph(
     *,
     logger: logging.Logger,
     label: str,
-    generate: Callable[[RetryAgentState, str | None, str | None], str],
-    execute: Callable[[str], Any],
+    generate: Callable[[RetryAgentState, str | None, str | None], Awaitable[str]],
+    execute: Callable[[str], Awaitable[Any]],
     connection_exceptions: tuple[type[Exception], ...],
     retryable_exceptions: tuple[type[Exception], ...],
     empty_result_feedback: str,
@@ -73,9 +73,9 @@ def make_retry_agent_subgraph(
             return empty_result_feedback
         return error
 
-    def agent(state: RetryAgentState) -> dict:
+    async def agent(state: RetryAgentState) -> dict:
         previous_message = state["messages"][-1] if state["messages"] else None
-        query_text = generate(
+        query_text = await generate(
             state,
             previous_message["content"] if previous_message else None,
             feedback_text(state.get("error")),
@@ -93,7 +93,7 @@ def make_retry_agent_subgraph(
             "retryable": state.get("retryable", False),
         }
 
-    def tools(state: RetryAgentState) -> dict:
+    async def tools(state: RetryAgentState) -> dict:
         query_text = state["messages"][-1]["content"]
         attempts = state.get("attempts", [])
 
@@ -106,7 +106,7 @@ def make_retry_agent_subgraph(
             }
 
         try:
-            result = execute(query_text)
+            result = await execute(query_text)
         except retryable_exceptions as exc:
             logger.warning("%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True)
             return failure(exc, retryable=True)

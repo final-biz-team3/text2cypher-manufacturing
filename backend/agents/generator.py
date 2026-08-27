@@ -4,12 +4,12 @@ import os
 from typing import Any
 
 
-def generate_query(
+async def generate_query(
     openai_client: Any,
     messages: list[dict[str, str]],
 ) -> str:
     """LLM 응답에서 비어 있지 않은 쿼리 문자열을 추출한다."""
-    response = openai_client.chat.completions.create(
+    response = await openai_client.chat.completions.create(
         model=os.environ["OPENAI_MODEL"],
         messages=messages,
     )

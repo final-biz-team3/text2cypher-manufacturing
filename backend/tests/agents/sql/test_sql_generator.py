@@ -6,7 +6,7 @@ from agents.sql.generator import generate_sql
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 
-def test_generate_sql_builds_sql_prompt_and_returns_llm_query() -> None:
+async def test_generate_sql_builds_sql_prompt_and_returns_llm_query() -> None:
     """질의 문맥을 SQL 프롬프트에 넣고 생성된 PostgreSQL 문을 반환한다."""
     openai_client = MockOpenAIClient(
         make_content_response(
@@ -14,7 +14,7 @@ def test_generate_sql_builds_sql_prompt_and_returns_llm_query() -> None:
         )
     )
 
-    generated_sql = generate_sql(
+    generated_sql = await generate_sql(
         openai_client,
         query="Paint - Black의 정가를 알려줘.",
         entity={"productId": 985, "productName": "Paint - Black"},

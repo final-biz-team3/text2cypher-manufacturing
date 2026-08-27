@@ -106,7 +106,7 @@ class _MockCompletions:
         self._responses = responses
         self.calls: list[dict[str, Any]] = []
 
-    def create(self, **kwargs: Any) -> MockChatCompletion:
+    async def create(self, **kwargs: Any) -> MockChatCompletion:
         self.calls.append(kwargs)
         return self._responses[len(self.calls) - 1]
 

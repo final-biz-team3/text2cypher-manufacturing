@@ -1,24 +1,42 @@
 """대화기록 저장·조회를 다룬다."""
 
 import json
+from types import TracebackType
 from typing import Any, Protocol
 
 from core.auth import CurrentUser
 
 
 class Cursor(Protocol):
-    def fetchall(self) -> list[tuple[Any, ...]]: ...
+    async def fetchall(self) -> list[tuple[Any, ...]]: ...
 
 
-class DatabaseConnection(Protocol):
-    """실제 psycopg 커넥션과 테스트용 fake가 공통으로 만족하는 인터페이스."""
+class Connection(Protocol):
+    """실제 psycopg AsyncConnection과 테스트용 fake가 공통으로 만족하는
+    인터페이스. get_pool()/get_write_pool()이 async 풀로 바뀌면서
+    `async with pool.connection() as conn:` 패턴을 쓰게 됐으므로, 이전
+    (동기) Protocol과 달리 각 메서드가 코루틴을 반환한다."""
 
-    def execute(self, query: str, params: tuple[Any, ...] = ()) -> Cursor: ...
-    def commit(self) -> None: ...
+    async def execute(self, query: str, params: tuple[Any, ...] = ()) -> Cursor: ...
+    async def commit(self) -> None: ...
 
 
-def save_conversation(
-    connection: DatabaseConnection,
+class ConnectionContext(Protocol):
+    async def __aenter__(self) -> Connection: ...
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
+
+
+class Pool(Protocol):
+    def connection(self, timeout: float | None = None) -> ConnectionContext: ...
+
+
+async def save_conversation(
+    pool: Pool,
     username: str,
     query: str,
     final_answer: str | None,
@@ -27,35 +45,39 @@ def save_conversation(
     sql_result: dict | None,
     graph_result: dict | None,
 ) -> None:
-    connection.execute(
-        "INSERT INTO app.conversation_history "
-        "(username, query, final_answer, sql_query, cypher_query, sql_result, graph_result) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (
-            username,
-            query,
-            final_answer,
-            sql_query,
-            cypher_query,
-            json.dumps(sql_result) if sql_result is not None else None,
-            json.dumps(graph_result) if graph_result is not None else None,
-        ),
-    )
-    connection.commit()
+    async with pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO app.conversation_history "
+            "(username, query, final_answer, sql_query, cypher_query, sql_result, graph_result) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                username,
+                query,
+                final_answer,
+                sql_query,
+                cypher_query,
+                json.dumps(sql_result) if sql_result is not None else None,
+                json.dumps(graph_result) if graph_result is not None else None,
+            ),
+        )
+        await conn.commit()
 
 
-def list_history(connection: DatabaseConnection, user: CurrentUser) -> list[dict]:
+async def list_history(pool: Pool, user: CurrentUser) -> list[dict]:
     """admin이면 전체, 아니면 본인 기록만 최신순으로 반환한다."""
-    query = (
+    base_query = (
         "SELECT id, username, query, final_answer, sql_query, cypher_query, "
         "sql_result, graph_result, created_at FROM app.conversation_history"
     )
-    if user.role == "admin":
-        cursor = connection.execute(query + " ORDER BY created_at DESC")
-    else:
-        cursor = connection.execute(
-            query + " WHERE username = %s ORDER BY created_at DESC", (user.username,)
-        )
+    async with pool.connection() as conn:
+        if user.role == "admin":
+            cursor = await conn.execute(base_query + " ORDER BY created_at DESC")
+        else:
+            cursor = await conn.execute(
+                base_query + " WHERE username = %s ORDER BY created_at DESC",
+                (user.username,),
+            )
+        rows = await cursor.fetchall()
     return [
         {
             "id": row[0],
@@ -68,5 +90,5 @@ def list_history(connection: DatabaseConnection, user: CurrentUser) -> list[dict
             "graph_result": row[7],
             "created_at": row[8].isoformat(),
         }
-        for row in cursor.fetchall()
+        for row in rows
     ]
