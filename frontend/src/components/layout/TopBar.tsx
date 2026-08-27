@@ -22,7 +22,7 @@ export function TopBar({ connected, readOnly, onNavigateHome, username, onLogout
         type="button"
         onClick={onNavigateHome}
         title="홈으로 이동"
-        className="flex cursor-pointer items-center gap-2 rounded-md border border-border-strong px-2 py-1 text-left transition-colors hover:bg-panel-2 active:bg-border"
+        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-panel-2 active:bg-border"
       >
         <Home className="size-4 text-text-muted" />
         <span className="flex items-baseline gap-2">
@@ -50,8 +50,9 @@ export function TopBar({ connected, readOnly, onNavigateHome, username, onLogout
         ) : null}
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
+          className="rounded-full border-border-strong bg-transparent hover:bg-panel-2"
           onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
         >
           {theme === 'light' ? '다크모드' : '라이트모드'}
