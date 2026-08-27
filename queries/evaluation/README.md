@@ -48,8 +48,8 @@ CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경�
 
 주요 점수는 서로 대체하지 않는다.
 
-- `queryPipelineAccuracy`: route, HYBRID 전달·결합 계약, 안전한 실행과 Gold
-  결과를 통과한 비율. 자연어 최종 답변 E2E 점수는 아니다.
+- `queryPipelineAccuracy`: entity, route, HYBRID 전달·결합 계약, 안전한 실행과
+  Gold 결과를 모두 통과한 비율. 자연어 최종 답변 E2E 점수는 아니다.
 - `semanticResultCoverage`: 출력 필드를 계약 필드로 정규화해 Gold와 실제 비교할
   수 있었던 비율
 - `semanticResultAccuracy`: 비교 가능한 결과 중 source별 실행 결과가 Gold와
@@ -61,9 +61,10 @@ CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경�
   `graphPartialCoverage`/`graphPartialAccuracy`, `hybridSplitAccuracy`: source별
   비교 가능 범위와 그 안의 정확도, HYBRID 분할 진단 점수
 
-entity 일치 여부는 `stageAccuracy.entity`와 case의 `contractWarnings`에 진단값으로
-남긴다. entity 객체 형태가 다르더라도 생성 쿼리의 실행 결과가 Gold와 같으면
-`queryPipelinePass`를 막지 않는다.
+entity가 일치하지 않아도 후속 쿼리와 Gold 비교는 계속해 복구 여부를 남긴다.
+다만 `stageAccuracy.entity`와 `ENTITY_MISMATCH` 실패 사유를 기록하고,
+`queryPipelinePass`는 실패로 판정한다. 비교할 때는 필수 identity와 복수 entity의
+질문 등장 순서를 확인하되, 이름의 대소문자·공백과 추가 메타데이터는 허용한다.
 
 인프라 `ERROR`는 정확도 분모에서 제외하고 `evaluationCoverage`에 반영하며,
 `BLOCKED_BY_DEPENDENCY`는 후속 단계 오답으로 중복 집계하지 않는다. 필수 출력

@@ -135,9 +135,43 @@ def compare_execution_contract(
     }
 
 
+def _entity_items(value: Any) -> list[dict[str, Any]] | None:
+    if value is None or value == []:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        return value
+    return None
+
+
+def _entity_value_matches(field: str, expected: Any, actual: Any) -> bool:
+    if field.casefold().endswith("name"):
+        return (
+            isinstance(expected, str)
+            and isinstance(actual, str)
+            and " ".join(expected.casefold().split())
+            == " ".join(actual.casefold().split())
+        )
+    return type(expected) is type(actual) and expected == actual
+
+
 def entity_matches(expected: Any, actual: Any) -> bool:
-    """복수 엔티티는 질문 등장 순서를 포함해 정확히 비교한다."""
-    return expected == actual
+    """필수 identity와 복수 엔티티의 질문 등장 순서를 비교한다."""
+    expected_items = _entity_items(expected)
+    actual_items = _entity_items(actual)
+    if expected_items is None or actual_items is None:
+        return False
+    if len(expected_items) != len(actual_items):
+        return False
+    return all(
+        all(
+            field in actual_item
+            and _entity_value_matches(field, expected_value, actual_item[field])
+            for field, expected_value in expected_item.items()
+        )
+        for expected_item, actual_item in zip(expected_items, actual_items, strict=True)
+    )
 
 
 def collect_input_bindings(

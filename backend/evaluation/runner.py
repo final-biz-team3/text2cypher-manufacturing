@@ -514,7 +514,8 @@ class EvaluationRunner:
         else:
             result_contract_pass = None
         query_pipeline_pass = (
-            comparison["routingPass"]
+            entity_pass
+            and comparison["routingPass"]
             and comparison["splitPass"]
             and all_subqueries_pass
         )
@@ -535,6 +536,8 @@ class EvaluationRunner:
             "result": semantic_result_pass,
         }
         failure_reasons: list[str] = []
+        if not entity_pass:
+            failure_reasons.append("ENTITY_MISMATCH")
         if not comparison["routingPass"]:
             failure_reasons.append("ROUTE_MISMATCH")
         if not comparison["splitPass"]:
@@ -545,9 +548,6 @@ class EvaluationRunner:
             if item.get("failureCategory") not in {None, "DEPENDENCY_BLOCKED"}
         )
         failure_reasons = list(dict.fromkeys(failure_reasons))
-        contract_warnings: list[str] = []
-        if not entity_pass:
-            contract_warnings.append("ENTITY_MISMATCH")
         record.update(
             {
                 "toolPlan": plan.get("tool_plan"),
@@ -556,7 +556,6 @@ class EvaluationRunner:
                 "subqueries": subquery_records,
                 "checks": checks,
                 "failureReasons": failure_reasons,
-                "contractWarnings": contract_warnings,
                 "queryPipelinePass": query_pipeline_pass,
                 "semanticResultPass": semantic_result_pass,
                 "finalResultEvaluated": contract.support_status == "FULLY_EVALUATED",

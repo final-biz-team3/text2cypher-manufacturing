@@ -319,16 +319,13 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
     else:
         lines.extend(
             [
-                "| Case | Question | Route | Entity | Routing | Integration split | Execution | Output contract | Result | Pipeline | Reasons / warnings |",
+                "| Case | Question | Route | Entity | Routing | Integration split | Execution | Output contract | Result | Pipeline | Reasons |",
                 "|---|---|---|---|---|---|---|---|---|---|---|",
             ]
         )
         for record in records:
             checks = record.get("checks", {})
             reasons = ", ".join(record.get("failureReasons", [])) or "-"
-            warnings = ", ".join(record.get("contractWarnings", []))
-            if warnings:
-                reasons = f"{reasons} / {warnings}"
             question = str(record.get("question", "")).replace("|", "\\|")
             lines.append(
                 f"| {record.get('caseId')} | {question} | {record.get('route')} | "
