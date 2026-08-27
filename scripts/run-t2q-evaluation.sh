@@ -117,7 +117,12 @@ else:
         len(completed),
     )
     score(
-        "의미 결과 정확도",
+        "검증된 의미 PASS",
+        sum(record.get("semanticResultPass") is True for record in completed),
+        len(completed),
+    )
+    score(
+        "비교 가능한 결과 중 정확도",
         sum(record.get("semanticResultPass") is True for record in semantic_applicable),
         len(semantic_applicable),
     )
