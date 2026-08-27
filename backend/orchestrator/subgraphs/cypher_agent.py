@@ -7,6 +7,7 @@ from typing import Any
 from langgraph.graph.state import CompiledStateGraph
 from neo4j.exceptions import (
     AuthError,
+    ClientError,
     ConstraintError,
     CypherSyntaxError,
     CypherTypeError,
@@ -32,11 +33,52 @@ _CONNECTION_EXCEPTIONS: tuple[type[Exception], ...] = (
     AuthError,
 )
 
+# Neo4j 쿼리 타임아웃은 전용 예외 서브클래스가 없고 ClientError + 이 code
+# 값으로만 구분된다(실측 결과, md/2026-08-25-execute_sql_cypher-구현-고려사항-정리.md
+# §2-6). 재시도 예산이 넘치는 쿼리를 재생성하면 해결될 수 있어 재시도
+# 대상이다.
+_TIMEOUT_ERROR_CODE = (
+    "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
+)
+
+
+class _CypherQueryTimeoutError(Exception):
+    """Neo4j ClientError 중 타임아웃 code만 이 타입으로 재포장해 재시도
+    대상임을 표시한다. 원본 예외는 __cause__로 보존되고, retry_agent.py의
+    failure()가 str(exc)로 메시지를 꺼낼 때도 원본 메시지를 그대로 쓴다."""
+
+    def __init__(self, original: Exception) -> None:
+        super().__init__(str(original))
+        self.original = original
+
+
+def _wrap_execute_cypher(
+    execute_cypher: Callable[[str], Awaitable[Any]],
+) -> Callable[[str], Awaitable[Any]]:
+    """execute_cypher가 던진 ClientError 중 타임아웃 code만
+    _CypherQueryTimeoutError로 재포장해 _RETRYABLE_EXCEPTIONS에 편입시킨다.
+    AuthError도 ClientError의
+    서브클래스라 이 except에 걸리지만, code가 타임아웃과 다르면 즉시 원본을
+    그대로 다시 던지므로(재포장하지 않음) _CONNECTION_EXCEPTIONS 분류가
+    깨지지 않는다."""
+
+    async def wrapped(cypher: str) -> Any:
+        try:
+            return await execute_cypher(cypher)
+        except ClientError as exc:
+            if getattr(exc, "code", None) == _TIMEOUT_ERROR_CODE:
+                raise _CypherQueryTimeoutError(exc) from exc
+            raise
+
+    return wrapped
+
+
 # 실행/쿼리 결함 오류: LLM에 오류를 피드백해 쿼리를 재생성하면 해결될 수 있다.
 _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     CypherSyntaxError,
     CypherTypeError,
     ConstraintError,
+    _CypherQueryTimeoutError,
 )
 
 _EMPTY_RESULT_FEEDBACK = (
@@ -71,7 +113,7 @@ def make_cypher_agent_subgraph(
         logger=logger,
         label="cypher_agent",
         generate=generate,
-        execute=execute_cypher,
+        execute=_wrap_execute_cypher(execute_cypher),
         connection_exceptions=_CONNECTION_EXCEPTIONS,
         retryable_exceptions=_RETRYABLE_EXCEPTIONS,
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
