@@ -48,14 +48,29 @@ def _is_forbidden_function(name: str) -> bool:
     )
 
 
+def _function_name_candidate(tok: Any) -> str | None:
+    """함수 호출 이름 후보를 뽑는다. 쌍따옴표로 감싼 식별자
+    (Token.Literal.String.Symbol, 예: "pg_advisory_lock"(42))도 PostgreSQL에서는
+    동일 함수를 호출하는 유효한 인용 표기라 따옴표를 벗겨 함께 검사해야 한다 -
+    Token.Name만 보면 이 형태로 검사를 우회할 수 있다."""
+    if tok.ttype is sql_tokens.Name:
+        return str(tok.value)
+    if tok.ttype is sql_tokens.Literal.String.Symbol:
+        raw = str(tok.value)
+        if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+            return raw[1:-1]
+    return None
+
+
 def _find_forbidden_function_call(statement: Statement) -> str | None:
     """평탄화한 토큰에서 '이름 바로 뒤에 (' 형태(함수 호출)를 찾아 위험 함수인지 본다.
     WHERE절/서브쿼리 등 어디에 있든(중첩 깊이 무관) 잡기 위해 flatten()을 쓴다."""
     tokens = [tok for tok in statement.flatten() if not tok.is_whitespace]
     for index, tok in enumerate(tokens):
-        if tok.ttype is sql_tokens.Name and _is_forbidden_function(tok.value):
+        name = _function_name_candidate(tok)
+        if name is not None and _is_forbidden_function(name):
             if index + 1 < len(tokens) and tokens[index + 1].value == "(":
-                return str(tok.value)
+                return name
     return None
 
 

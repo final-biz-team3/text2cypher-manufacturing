@@ -129,6 +129,40 @@ def test_cypher_guard_allows_multi_label_when_all_whitelisted() -> None:
     assert result.allowed is True
 
 
+def test_cypher_guard_blocks_unknown_label_hidden_behind_ampersand_conjunction() -> (
+    None
+):
+    """Neo4j 5 label-expression의 '&'(AND) 결합은 '|'만 처리하던 예전 코드가
+    못 봤다 - 코드 리뷰로 발견된 우회. (:Product&Secret)에서 Secret이
+    화이트리스트에 없어도 Product만 보고 통과시켰었다."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard("MATCH (n:Product&Secret) RETURN n")
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_LABEL_OR_RELATIONSHIP"
+    assert "Secret" in (result.reason_detail or "")
+
+
+def test_cypher_guard_allows_ampersand_conjunction_when_all_whitelisted() -> None:
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard("MATCH (n:Product&Supplier) RETURN n")
+
+    assert result.allowed is True
+
+
+def test_cypher_guard_blocks_unsupported_label_expression_negation() -> None:
+    """'!'(부정) 같은 아직 지원하지 않는 label-expression 연산자는 조용히
+    통과시키지 않고 fail-closed 한다."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard("MATCH (n:!Product) RETURN n")
+
+    assert result.allowed is False
+    assert result.reason_code == "UNRECOGNIZED_LABEL_SYNTAX"
+
+
 def test_cypher_guard_does_not_false_positive_on_property_map_colon() -> None:
     """'{key: value}' 맵 리터럴의 콜론은 레이블이 아니므로 오탐하면 안 된다."""
     guard = make_cypher_guard(_SCHEMA)

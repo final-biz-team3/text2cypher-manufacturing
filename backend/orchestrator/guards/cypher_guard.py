@@ -20,11 +20,13 @@ _UNQUOTED_NAME = re.compile(r"\w+")
 
 def _extract_label_and_type_references(cypher: str) -> tuple[set[str], bool]:
     """':' 뒤에 오는 Label/RelationshipType 이름을 전부 모은다 - 노드 패턴
-    (`(n:A:B)`), 관계 패턴의 '|' 대안(`[:A|B]`), 백틱 식별자, WHERE절/RETURN절의
-    predicate 형태(`n:Label`)까지 전부 같은 방식으로 잡는다. '{...}' 맵 리터럴
-    안의 콜론(키: 값)은 레이블이 아니므로 건너뛰고, 문자열 리터럴 안의 콜론도
-    건너뛴다. 인식하지 못한 콜론 구문(닫히지 않은 백틱, '::' 등)을 만나면
-    unresolved=True를 반환해 호출부가 fail-closed 하도록 한다."""
+    (`(n:A:B)`), Neo4j 5 label-expression의 '|'/'&' 결합(`[:A|B]`, `(n:A&B)`),
+    백틱 식별자, WHERE절/RETURN절의 predicate 형태(`n:Label`)까지 전부 같은
+    방식으로 잡는다. '{...}' 맵 리터럴 안의 콜론(키: 값)은 레이블이 아니므로
+    건너뛰고, 문자열 리터럴 안의 콜론도 건너뛴다. 인식하지 못한 콜론 구문
+    (닫히지 않은 백틱, '::' 등)이나 아직 지원하지 않는 label-expression
+    연산자('!' 부정, '%' 와일드카드, 중첩 괄호 그룹)를 만나면 unresolved=True를
+    반환해 호출부가 fail-closed 하도록 한다."""
     names: set[str] = set()
     unresolved = False
     depth = 0
@@ -77,6 +79,13 @@ def _extract_label_and_type_references(cypher: str) -> tuple[set[str], bool]:
                         break
                     names.add(cypher[index + 1 : end])
                     index = end + 1
+                elif index < length and cypher[index] in "!%(":
+                    # '!'(부정)/'%'(와일드카드)/'('(중첩 괄호 그룹)는 아직
+                    # 파싱하지 않는 label-expression 연산자다 - 조용히
+                    # 통과시키면 그 안의 레이블이 검사망을 빠져나가므로
+                    # fail-closed 한다.
+                    unresolved = True
+                    break
                 else:
                     match = _UNQUOTED_NAME.match(cypher[index:])
                     if match:
@@ -88,7 +97,7 @@ def _extract_label_and_type_references(cypher: str) -> tuple[set[str], bool]:
                 lookahead = index
                 while lookahead < length and cypher[lookahead] in " \t\r\n":
                     lookahead += 1
-                if lookahead < length and cypher[lookahead] == "|":
+                if lookahead < length and cypher[lookahead] in "|&":
                     index = lookahead + 1
                     continue
                 break

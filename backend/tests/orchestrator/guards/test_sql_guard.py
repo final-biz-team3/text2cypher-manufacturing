@@ -176,6 +176,27 @@ def test_sql_guard_blocks_pg_advisory_lock_inside_from_clause() -> None:
     assert result.reason_code == "FORBIDDEN_FUNCTION_CALL"
 
 
+def test_sql_guard_blocks_double_quoted_forbidden_function_name() -> None:
+    """PostgreSQL에서 쌍따옴표는 유효한 식별자 인용이라 "pg_advisory_lock"(42)도
+    동일 함수를 호출한다. Token.Name만 검사하던 예전 코드는 이 형태를
+    Token.Literal.String.Symbol로 놓쳤다 - 코드 리뷰로 발견된 우회."""
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard('SELECT "pg_advisory_lock"(42)')
+
+    assert result.allowed is False
+    assert result.reason_code == "FORBIDDEN_FUNCTION_CALL"
+
+
+def test_sql_guard_blocks_double_quoted_forbidden_function_name_qualified() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard('SELECT pg_catalog."pg_advisory_lock"(42)')
+
+    assert result.allowed is False
+    assert result.reason_code == "FORBIDDEN_FUNCTION_CALL"
+
+
 def test_sql_guard_blocks_select_into() -> None:
     """SELECT ... INTO는 sqlparse상 SELECT 타입이지만 새 테이블을 만드는
     쓰기 작업이다 - 코드 리뷰로 발견됨."""
