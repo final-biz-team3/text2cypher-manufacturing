@@ -367,28 +367,20 @@ def test_join_empty_result_reason_priority(
 
 
 @pytest.mark.parametrize(
-    (
-        "left_rows",
-        "right_rows",
-        "left_reason",
-        "right_reason",
-        "expected_reason",
-    ),
+    ("left_reason", "right_reason", "expected_reason"),
     [
-        ([], [{"id": 999}], "INCONCLUSIVE", None, "INCONCLUSIVE"),
-        ([{"id": 1}], [], None, "NO_DATA", "NO_DATA"),
+        (None, "NO_DATA", "NO_DATA"),
+        (None, "INCONCLUSIVE", "INCONCLUSIVE"),
     ],
 )
-def test_join_one_empty_source_uses_empty_result_contract(
-    left_rows: list[Any],
-    right_rows: list[Any],
+def test_join_empty_right_source_uses_empty_result_contract(
     left_reason: str | None,
     right_reason: str | None,
     expected_reason: str,
 ) -> None:
     result = _joined(
-        left_rows,
-        right_rows,
+        [{"id": 1}],
+        [],
         left_empty_reason=left_reason,
         right_empty_reason=right_reason,
     )
@@ -397,6 +389,45 @@ def test_join_one_empty_source_uses_empty_result_contract(
     assert result["rows"] == []
     assert result["error"] is None
     assert result["empty_reason"] == expected_reason
+
+
+def test_join_rejects_nonempty_right_when_left_binding_domain_is_empty() -> None:
+    result = _joined(
+        [],
+        [{"id": 999}],
+        left_empty_reason="INCONCLUSIVE",
+    )
+
+    assert result["rows"] == []
+    assert result["empty_reason"] is None
+    assert "바인딩 범위를 벗어났습니다" in str(result["error"])
+
+
+@pytest.mark.parametrize(
+    ("left_reason", "right_reason"),
+    [
+        ("NO_DATA", None),
+        ("INCONCLUSIVE", None),
+        (None, "NO_DATA"),
+        (None, "INCONCLUSIVE"),
+    ],
+)
+def test_source_rejects_empty_reason_for_nonempty_rows(
+    left_reason: str | None,
+    right_reason: str | None,
+) -> None:
+    result = _joined(
+        [{"id": 1}],
+        [{"id": 1}],
+        left_empty_reason=left_reason,
+        right_empty_reason=right_reason,
+    )
+
+    assert result["rows"] == []
+    assert result["empty_reason"] is None
+    assert "result가 비어 있지 않아 empty_reason을 지정할 수 없습니다" in str(
+        result["error"]
+    )
 
 
 def test_separate_empty_sections_use_inconclusive_priority() -> None:

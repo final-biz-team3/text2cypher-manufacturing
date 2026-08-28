@@ -73,6 +73,15 @@ def _source_rows(
                 f"{label} empty_reason이 지원되지 않습니다: {raw_empty_reason!r}",
             ),
         )
+    if rows and empty_reason is not None:
+        return (
+            None,
+            None,
+            _failure(
+                mode,
+                f"{label}의 result가 비어 있지 않아 empty_reason을 지정할 수 없습니다.",
+            ),
+        )
     return (
         cast(list[dict[str, Any]], rows),
         empty_reason,
@@ -147,22 +156,6 @@ def _compose_joined(
     mode: CompositionMode = "joined"
     left_rows, left_reason = sources[0]
     right_rows, right_reason = sources[1]
-    if not left_rows or not right_rows:
-        empty_reason: EmptyReason = (
-            "INCONCLUSIVE"
-            if "INCONCLUSIVE" in (left_reason, right_reason)
-            else "NO_DATA"
-        )
-        return {
-            "mode": mode,
-            "rows": [],
-            "sections": {},
-            "error": None,
-            "empty_reason": empty_reason,
-            "total_count": 0,
-            "truncated": False,
-        }
-
     join_keys = subqueries[0]["joinKeys"]
     left_keyed: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     left_domain: set[tuple[Any, ...]] = set()
@@ -197,6 +190,22 @@ def _compose_joined(
                 f"{key!r}가 선행 결과의 바인딩 범위를 벗어났습니다.",
             )
         right_by_key.setdefault(key, []).append(row)
+
+    if not left_rows or not right_rows:
+        empty_reason: EmptyReason = (
+            "INCONCLUSIVE"
+            if "INCONCLUSIVE" in (left_reason, right_reason)
+            else "NO_DATA"
+        )
+        return {
+            "mode": mode,
+            "rows": [],
+            "sections": {},
+            "error": None,
+            "empty_reason": empty_reason,
+            "total_count": 0,
+            "truncated": False,
+        }
 
     rows: list[dict[str, Any]] = []
     total_count = 0
