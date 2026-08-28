@@ -27,12 +27,6 @@ def _failure(mode: CompositionMode, message: str) -> ComposedResult:
     }
 
 
-def _empty_reason(value: Any) -> EmptyReason | None:
-    if value in _EMPTY_REASONS:
-        return cast(EmptyReason, value)
-    return None
-
-
 def _source_rows(
     subquery: Subquery,
     tool_results: Mapping[str, dict[str, Any] | None],
@@ -57,9 +51,31 @@ def _source_rows(
         return None, None, _failure(mode, f"{label} result가 None입니다.")
     if not isinstance(rows, list):
         return None, None, _failure(mode, f"{label} result는 배열이어야 합니다.")
+    for row_index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            return (
+                None,
+                None,
+                _failure(mode, f"{label}의 {row_index}번 행이 객체가 아닙니다."),
+            )
+
+    raw_empty_reason = source.get("empty_reason")
+    if raw_empty_reason is None:
+        empty_reason = None
+    elif isinstance(raw_empty_reason, str) and raw_empty_reason in _EMPTY_REASONS:
+        empty_reason = cast(EmptyReason, raw_empty_reason)
+    else:
+        return (
+            None,
+            None,
+            _failure(
+                mode,
+                f"{label} empty_reason이 지원되지 않습니다: {raw_empty_reason!r}",
+            ),
+        )
     return (
         cast(list[dict[str, Any]], rows),
-        _empty_reason(source.get("empty_reason")),
+        empty_reason,
         None,
     )
 
@@ -224,8 +240,6 @@ def compose_results(
         return _failure("single", "실행 계획에 subquery가 없습니다.")
     if len(subqueries) > 2:
         return _failure("separate", "두 개를 넘는 subquery는 지원하지 않습니다.")
-    if row_limit < 0:
-        return _failure("joined", "결과 행 상한은 0 이상이어야 합니다.")
 
     if len(subqueries) == 1:
         mode: CompositionMode = "single"
@@ -239,6 +253,8 @@ def compose_results(
         mode = "joined"
     else:
         return _failure("joined", "HYBRID joinKeys 계약이 일치하지 않습니다.")
+    if row_limit < 0:
+        return _failure(mode, "결과 행 상한은 0 이상이어야 합니다.")
 
     sources: list[tuple[list[dict[str, Any]], EmptyReason | None]] = []
     for subquery in subqueries:
