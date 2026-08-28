@@ -138,3 +138,89 @@ def test_parse_execution_plan_rejects_more_than_one_subquery_for_same_tool() -> 
 
     with pytest.raises(ValueError, match="도구 하나당 subquery"):
         parse_execution_plan(content, "가격과 재고")
+
+
+def test_validate_subqueries_accepts_same_hybrid_join_keys_in_different_order() -> None:
+    result = validate_subqueries(
+        [
+            _step(
+                "graph",
+                outputs=["componentId", "supplierId"],
+                join_keys=["componentId", "supplierId"],
+            ),
+            _step(
+                "sql",
+                tool="sql",
+                outputs=["supplierId", "componentId"],
+                join_keys=["supplierId", "componentId"],
+            ),
+        ]
+    )
+
+    assert result[0]["joinKeys"] == ["componentId", "supplierId"]
+    assert result[1]["joinKeys"] == ["supplierId", "componentId"]
+
+
+@pytest.mark.parametrize(
+    ("subqueries", "message"),
+    [
+        (
+            [
+                _step("graph", join_keys=["componentId"]),
+                _step("sql", tool="sql"),
+            ],
+            "모두 지정하거나 모두 비워야",
+        ),
+        (
+            [
+                _step("graph", join_keys=["componentId"]),
+                _step(
+                    "sql",
+                    tool="sql",
+                    outputs=["supplierId"],
+                    join_keys=["supplierId"],
+                ),
+            ],
+            "구성이 일치",
+        ),
+        (
+            [
+                _step("graph"),
+                _step(
+                    "sql",
+                    tool="sql",
+                    depends_on=["graph"],
+                    bindings={"ids": "graph.componentId"},
+                ),
+            ],
+            "공통 joinKeys",
+        ),
+        (
+            [
+                _step("graph", join_keys=["componentId"]),
+                _step(
+                    "sql",
+                    tool="sql",
+                    depends_on=["graph"],
+                    outputs=["componentId", "supplierId"],
+                    join_keys=["supplierId"],
+                    bindings={"ids": "graph.componentId"},
+                ),
+            ],
+            "선행 단계에 없습니다",
+        ),
+    ],
+)
+def test_validate_subqueries_rejects_invalid_hybrid_join_contracts(
+    subqueries: list[dict[str, Any]], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        validate_subqueries(subqueries)
+
+
+def test_validate_subqueries_keeps_single_and_legacy_hybrid_compatible() -> None:
+    single = validate_subqueries([_step("sql", tool="sql", join_keys=["componentId"])])
+    legacy = parse_execution_plan('["sql", "graph"]', "독립 복합 질문")
+
+    assert single[0]["joinKeys"] == ["componentId"]
+    assert [item["joinKeys"] for item in legacy["subqueries"]] == [[], []]

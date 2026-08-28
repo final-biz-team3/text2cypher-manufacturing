@@ -10,8 +10,9 @@ subquery의 `question`, `businessRules`, `requiredOutputs`는 Gold가 검증하�
 query ID와 담당 subquery 질문을 적고, manifest와 달라지면 테스트가 실패한다.
 
 RQ01~RQ17과 HQ01~HQ08은 `FULLY_EVALUATED`다. RQ18~RQ20과 HQ09~HQ10은
-부분 SQL/Cypher까지 채점하는 `QUERY_EVALUATED_FINAL_JOIN_PENDING`이며, 후자의
-애플리케이션 계산·최종 결합은 점수에 포함하지 않는다.
+source별 SQL/Cypher까지 채점하는 `QUERY_EVALUATED_FINAL_JOIN_PENDING`이다.
+production 오케스트레이터는 HYBRID 결과를 join key로 결합하지만, 평가 러너는 아직
+애플리케이션의 최종 결합 결과를 채점하지 않으므로 이 상태와 점수 범위는 유지한다.
 
 ## 평가 suite
 
@@ -26,10 +27,11 @@ robustness case ID의 `S`는 짧은 표현·문장 파편, `C`는 일상 구어�
 RQ01 계약과 같은 파라미터·Gold로 채점된다. 단일 턴 평가이므로 RQ17과 RQ19처럼
 복수 제품이나 생산 대상이 필요한 질문은 구어체에서도 제품 전체 이름을 유지한다.
 
-`subqueries`는 평가기가 직접 실행하는 offline component 계약이다. production
-`/chat`은 현재 `dependsOn`·`inputBindings`를 실행하지 않으며 평가기와 같은 DB 실행
-경로를 사용하지 않는다. 따라서 이 점수는 자연어 최종 답변이나 production E2E
-정확도가 아니다.
+`subqueries`는 평가기와 production 오케스트레이터가 공유하는 계획 계약이다.
+production `/chat`은 `dependsOn`·`inputBindings`에 따라 source를 실행하고 동일한
+`joinKeys`로 내부 최종 데이터를 조합한다. 다만 평가기는 별도의 읽기 전용 DB 실행
+경로에서 source별 결과까지만 채점하므로, 이 점수는 자연어 최종 답변이나 production
+E2E 정확도가 아니다.
 
 ## 기본 실행
 

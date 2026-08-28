@@ -12,6 +12,7 @@ from agents.sql.schema.models import SqlSchema
 from agents.sql.schema.serializer import serialize_sql_schema
 from orchestrator.execution.cypher_executor import execute_cypher
 from orchestrator.execution.sql_executor import execute_sql
+from orchestrator.nodes.compose_results import make_compose_results_node
 from orchestrator.nodes.execute_plan import make_execute_plan_node
 from orchestrator.nodes.generate_answer import make_generate_answer_node
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
@@ -39,7 +40,8 @@ def _load_schema_context() -> tuple[SqlSchema, str, GraphSchema, str]:
 
 
 # OpenAI 클라이언트/PostgreSQL 풀을 주입받아 컴파일된 그래프를 반환
-# START -> resolve_entity -> route_query -> execute_plan -> generate_answer -> END
+# START -> resolve_entity -> route_query -> execute_plan -> compose_results
+# -> generate_answer -> END
 def build_orchestrator_graph(
     openai_client: Any,
     pool: Any,
@@ -80,12 +82,17 @@ def build_orchestrator_graph(
         ),
     )
     graph.add_node(
+        "compose_results",
+        cast(Any, make_compose_results_node()),
+    )
+    graph.add_node(
         "generate_answer",
         cast(Any, make_generate_answer_node()),
     )
     graph.add_edge(START, "resolve_entity")
     graph.add_edge("resolve_entity", "route_query")
     graph.add_edge("route_query", "execute_plan")
-    graph.add_edge("execute_plan", "generate_answer")
+    graph.add_edge("execute_plan", "compose_results")
+    graph.add_edge("compose_results", "generate_answer")
     graph.add_edge("generate_answer", END)
     return graph.compile()

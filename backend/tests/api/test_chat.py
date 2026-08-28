@@ -82,6 +82,8 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert result["sql_result"]["error"] is None
     assert result["sql_result"]["result"] == [{"listprice": 2384.07}]
     assert result["final_answer"] is not None
+    assert result["final_answer"].startswith("COMPOSED: ")
+    assert "composed_result" not in result
     assert "subqueries" not in result
     assert "subquery_results" not in result
     assert len(openai_client.calls) == 3
@@ -308,3 +310,64 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     json.dumps(result["sql_result"])
     json.dumps(result["graph_result"])
     assert write_pool.statements
+
+
+async def test_chat_keeps_source_results_but_hides_internal_composition_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """범위 밖 HYBRID 결과는 final_answer에서 차단하되 API 필드는 유지한다."""
+    route_plan = """{
+      "tool_plan": ["sql", "graph"],
+      "subqueries": [
+        {
+          "id": "sql_base",
+          "tool": "sql",
+          "question": "기준 사실을 조회한다.",
+          "dependsOn": [],
+          "requiredOutputs": ["id"],
+          "joinKeys": ["id"]
+        },
+        {
+          "id": "graph_followup",
+          "tool": "graph",
+          "question": "관련 경로를 조회한다.",
+          "dependsOn": [],
+          "requiredOutputs": ["id"],
+          "joinKeys": ["id"]
+        }
+      ]
+    }"""
+    openai_client = MockOpenAIClient(
+        make_no_tool_call_response(),
+        make_content_response(route_plan),
+        make_content_response("SELECT 1 AS id"),
+        make_content_response("MATCH (p:Product) RETURN p.productId AS id LIMIT 1"),
+    )
+    monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
+    monkeypatch.setattr(
+        chat_module, "get_pool", lambda: MockAsyncPostgresPool(rows_by_name={})
+    )
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: MockAsyncWritePool())
+
+    async def fake_execute_sql(sql: str) -> list[dict]:
+        return [{"id": 1, "sqlFact": "kept"}]
+
+    async def fake_execute_cypher(cypher: str) -> list[dict]:
+        return [{"id": 999, "graphFact": "kept"}]
+
+    monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
+    monkeypatch.setattr(graph_module, "execute_cypher", fake_execute_cypher)
+
+    result = await chat(
+        ChatRequest(query="독립 결과를 결합해줘."),
+        request=_fake_request(),
+        user=CurrentUser(username="kim.quality", role="user"),
+    )
+
+    assert result["sql_result"]["result"] == [{"id": 1, "sqlFact": "kept"}]
+    assert result["graph_result"]["result"] == [{"id": 999, "graphFact": "kept"}]
+    assert result["final_answer"].startswith("COMPOSED: ")
+    assert "바인딩 범위를 벗어났습니다" in result["final_answer"]
+    assert "composed_result" not in result
+    assert "subqueries" not in result
+    assert "subquery_results" not in result

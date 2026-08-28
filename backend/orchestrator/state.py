@@ -1,6 +1,26 @@
-from typing import NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from orchestrator.planning import Subquery
+
+EmptyReason = Literal["NO_DATA", "INCONCLUSIVE"]
+CompositionMode = Literal["single", "joined", "separate"]
+ToolName = Literal["sql", "graph"]
+
+
+class ComposedSection(TypedDict):
+    tool: ToolName
+    rows: list[dict[str, Any]]
+    empty_reason: EmptyReason | None
+
+
+class ComposedResult(TypedDict):
+    mode: CompositionMode
+    rows: list[dict[str, Any]]
+    sections: dict[str, ComposedSection]
+    error: str | None
+    empty_reason: EmptyReason | None
+    total_count: int
+    truncated: bool
 
 
 # query만 필수이고 나머지는 그래프 실행 중 노드가 채워나가므로 NotRequired로 선언한다
@@ -28,6 +48,10 @@ class OrchestratorState(TypedDict):
 
     # Cypher 실행 결과
     graph_result: NotRequired[dict | None]
+
+    # SQL·GRAPH 실행 결과를 계획의 join 계약에 따라 조합한 내부 결과
+    # (/chat 응답에는 노출하지 않는다.)
+    composed_result: NotRequired[ComposedResult]
 
     # 최종 자연어 응답
     final_answer: NotRequired[str | None]
