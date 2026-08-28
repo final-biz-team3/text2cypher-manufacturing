@@ -10,8 +10,8 @@ export function LoginAsidePanel() {
           이 도구로 할 수 있는 것
         </div>
         <p className="text-sm leading-relaxed text-text-muted">
-          Cypher를 몰라도 한국어로 질문하면 공정 지식그래프에서 다중 홉 원인 경로를 추적하고 집계
-          결과를 확인할 수 있습니다.
+          재고, 가격, 부품, 공정, 공급업체 등 필요한 정보를 한 곳에서 확인할 수 있습니다. 데이터 간
+          복잡한 관계는 그래프 기반으로 추적하여 원인과 영향을 분석할 수 있습니다.
         </p>
       </div>
       <div>

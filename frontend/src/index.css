@@ -42,11 +42,12 @@
   --color-code: var(--code);
   --color-code-text: var(--code-text);
 
-  --color-node-lot: var(--node-lot);
-  --color-node-process: var(--node-process);
-  --color-node-equipment: var(--node-equipment);
-  --color-node-material: var(--node-material);
-  --color-node-defect: var(--node-defect);
+  --color-node-product: var(--node-product);
+  --color-node-supplier: var(--node-supplier);
+  --color-node-workorder: var(--node-workorder);
+  --color-node-routingoperation: var(--node-routingoperation);
+  --color-node-location: var(--node-location);
+  --color-node-scrapreason: var(--node-scrapreason);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -93,11 +94,12 @@
   --code: #1c1f24;
   --code-text: #e7eaed;
 
-  --node-lot: #0072b2;
-  --node-process: #009e73;
-  --node-equipment: #e69f00;
-  --node-material: #cc79a7;
-  --node-defect: #d55e00;
+  --node-product: #0072b2;
+  --node-supplier: #009e73;
+  --node-workorder: #e69f00;
+  --node-routingoperation: #cc79a7;
+  --node-location: #56b4e9;
+  --node-scrapreason: #d55e00;
 
   --radius: 0.625rem;
 }

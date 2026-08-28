@@ -6,7 +6,7 @@ export interface SelfCorrectionStep {
   status: 'success' | 'fail' | 'warn'
   title: string
   detail: string
-  elapsedMs: number
+  elapsedMs?: number
 }
 
 export interface ResultColumn {
@@ -14,7 +14,25 @@ export interface ResultColumn {
   label: string
 }
 
-export type NodeLabel = 'Lot' | 'Process' | 'Equipment' | 'Material' | 'Defect'
+export interface RetryAttempt {
+  query: string
+  error: string | null
+}
+
+// /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있게 정리한 형태
+export interface DisplayResult {
+  query: string
+  answer: string
+  sql: string | null
+  cypher: string | null
+  columns: ResultColumn[]
+  rows: Record<string, string>[]
+  sqlAttempts: RetryAttempt[]
+  cypherAttempts: RetryAttempt[]
+}
+
+export type NodeLabel =
+  'Product' | 'Supplier' | 'WorkOrder' | 'RoutingOperation' | 'Location' | 'ScrapReason'
 
 // 지식그래프 스키마 사이드바에 표시되는 노드 타입 정보
 export interface SchemaNode {

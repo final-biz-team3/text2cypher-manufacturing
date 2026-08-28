@@ -1,53 +1,30 @@
 import { useEffect, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import { TopBar } from '@/components/layout/TopBar'
 import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
-import { ExampleQuestionCard } from '@/components/query/ExampleQuestionCard'
 import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnswerBox'
 import { ResultsTable } from '@/components/result/ResultsTable'
-import { CypherSlidePanel } from '@/components/result/CypherSlidePanel'
+import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
+import { EvidencePanel } from '@/components/result/EvidencePanel'
+import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useHealthStore } from '@/store/useHealthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
 import type { ChatResponse, HistoryEntry } from '@/lib/schemas'
-import type { NodeLabel, ResultColumn } from '@/types/query'
+import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
-const EXAMPLE_QUESTIONS: {
-  kind: '경로추적' | '집계'
-  question: string
-  path: { glyph: string; label: string; nodeLabel: NodeLabel }[]
-}[] = [
-  {
-    kind: '경로추적',
-    question: 'LOT-2041에서 발생한 불량의 원인 경로를 찾아줘',
-    path: [
-      { glyph: 'L', label: 'LOT-2041', nodeLabel: 'Lot' },
-      { glyph: 'P', label: '식각', nodeLabel: 'Process' },
-      { glyph: 'D', label: 'D-114', nodeLabel: 'Defect' },
-    ],
-  },
-  {
-    kind: '집계',
-    question: '지난 분기 작업장별 폐기 수량과 주요 폐기 사유를 알려줘',
-    path: [
-      { glyph: 'EQ', label: '작업장', nodeLabel: 'Equipment' },
-      { glyph: 'D', label: '폐기 사유', nodeLabel: 'Defect' },
-    ],
-  },
+const EXAMPLE_QUESTIONS: string[] = [
+  '재고가 부족한 제품을 알려줘',
+  '이 제품에 필요한 부품은 뭐야?',
+  '부품 A의 공급업체를 알려줘',
+  '폐기 수량이 많은 작업지시와 그 사유를 알려줘',
 ]
 
-const CONNECTED = false
-const CONNECTION_ENDPOINT = 'bolt://prod-kg-01'
 const READ_ONLY = true
-
-interface DisplayResult {
-  answer: string
-  cypher: string | null
-  columns: ResultColumn[]
-  rows: Record<string, string>[]
-}
 
 // /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있는 형태로 정리한다
 function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
@@ -60,11 +37,30 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
     ),
   )
   return {
+    query: response.query,
     answer: response.final_answer ?? '답변을 생성하지 못했습니다.',
+    sql: response.sql_query ?? null,
     cypher: response.cypher_query ?? null,
     columns,
     rows,
+    sqlAttempts: response.sql_result?.attempts ?? [],
+    cypherAttempts: response.graph_result?.attempts ?? [],
   }
+}
+
+// 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다
+function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrectionStep[] {
+  return attempts.map((attempt, index) => ({
+    id: `${prefix}-${index}`,
+    status: attempt.error === null ? 'success' : 'fail',
+    title: `시도 ${index + 1}`,
+    detail:
+      attempt.error === null
+        ? '성공'
+        : attempt.error === 'EMPTY_RESULT'
+          ? '결과 없음'
+          : attempt.error,
+  }))
 }
 
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
@@ -72,15 +68,25 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
 export function Dashboard() {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
-  const [queryText, setQueryText] = useState('')
+  const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [result, setResult] = useState<DisplayResult | null>(null)
-  const [errorMessage, setErrorMessage] = useState('')
-  // 화면 단계(activeScreen)와 패널 열림/접힘 상태는 여러 컴포넌트가 공유해야 해서 전역 store에 둔다.
+  // 입력창 텍스트는 로컬 상태로만 둔다 - store(sessionStorage 영속)에 두면 한
+  // 글자 칠 때마다 result(수백 행)까지 통째로 다시 직렬화해서 저장하게 된다.
+  // 새로고침 시 보여줄 초기값은 이미 복원된 result.query에서 가져온다(App.tsx가
+  // uiHydrated를 보장한 뒤에만 Dashboard가 마운트되므로 안전하다).
+  const [queryText, setQueryText] = useState(() => useUiStore.getState().result?.query ?? '')
+  // 새로고침해도 보던 화면 그대로 남아있어야 해서(결과/화면 단계 포함)
+  // 전역 store(sessionStorage 영속)에 둔다.
   const activeScreen = useUiStore((s) => s.activeScreen)
   const setActiveScreen = useUiStore((s) => s.setActiveScreen)
-  const cypherCollapsed = useUiStore((s) => s.cypherCollapsed)
-  const toggleCypherCollapsed = useUiStore((s) => s.toggleCypherCollapsed)
+  const result = useUiStore((s) => s.result)
+  const setResult = useUiStore((s) => s.setResult)
+  const errorMessage = useUiStore((s) => s.errorMessage)
+  const setErrorMessage = useUiStore((s) => s.setErrorMessage)
+  const queryPanelCollapsed = useUiStore((s) => s.queryPanelCollapsed)
+  const toggleQueryPanelCollapsed = useUiStore((s) => s.toggleQueryPanelCollapsed)
+  const evidencePanelOpen = useUiStore((s) => s.evidencePanelOpen)
+  const toggleEvidencePanel = useUiStore((s) => s.toggleEvidencePanel)
 
   // 화면이 열릴 때 대화기록을 불러온다
   useEffect(() => {
@@ -114,13 +120,13 @@ export function Dashboard() {
     setActiveScreen('success')
   }
 
-  // 홈으로 돌아갈 때는 이전 질문의 잔여 UI 상태(Cypher 패널)도 함께 초기화해서
+  // 홈으로 돌아갈 때는 이전 질문의 잔여 UI 상태(쿼리 패널)도 함께 초기화해서
   // 다음 질문 결과에 이전 상태가 그대로 남지 않도록 한다.
   const handleNavigateHome = () => {
     setActiveScreen('idle')
     setQueryText('')
     setResult(null)
-    if (cypherCollapsed) toggleCypherCollapsed()
+    if (queryPanelCollapsed) toggleQueryPanelCollapsed()
   }
 
   const queryInputBar = (
@@ -130,8 +136,7 @@ export function Dashboard() {
   return (
     <div className="flex h-screen flex-col bg-bg">
       <TopBar
-        connected={CONNECTED}
-        connectionEndpoint={CONNECTION_ENDPOINT}
+        connected={neo4jConnected}
         readOnly={READ_ONLY}
         onNavigateHome={handleNavigateHome}
         username={user?.username}
@@ -149,30 +154,39 @@ export function Dashboard() {
             <div className="flex flex-1 flex-col items-center justify-center gap-6">
               <div className="flex flex-col items-center gap-1 text-center">
                 <h1 className="text-lg font-semibold text-text">
-                  공정 데이터에 대해 무엇이든 물어보세요
+                  제조 데이터, 궁금한 것을 질문하세요.
                 </h1>
                 <p className="text-[13px] text-text-muted">
-                  Neo4j 지식그래프 기반으로 공정·품질 데이터를 자연어로 질의할 수 있습니다
+                  제품, 재고, 부품, 공급업체 등 필요한 정보를 질문하면 관련 데이터를 찾아 답변해
+                  드립니다.
                 </p>
               </div>
               <div className="w-full max-w-2xl">{queryInputBar}</div>
               {history.length === 0 ? (
-                <div className="grid w-full max-w-2xl grid-cols-2 gap-3">
-                  {EXAMPLE_QUESTIONS.map((example) => (
-                    <ExampleQuestionCard
-                      key={example.question}
-                      kind={example.kind}
-                      question={example.question}
-                      path={example.path}
-                      onClick={() => setQueryText(example.question)}
-                    />
-                  ))}
+                <div className="w-full max-w-2xl">
+                  <p className="mb-2 text-[12px] font-semibold text-text-faint">
+                    이렇게 질문해 보세요
+                  </p>
+                  <ul className="flex flex-col gap-1.5">
+                    {EXAMPLE_QUESTIONS.map((question) => (
+                      <li key={question}>
+                        <button
+                          type="button"
+                          onClick={() => setQueryText(question)}
+                          className="w-full rounded-md border border-border bg-panel px-3 py-2 text-left text-[12.5px] text-text transition-colors hover:border-border-strong"
+                        >
+                          {question}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
             </div>
           )}
           {activeScreen === 'loading' && (
             <div className="flex flex-1 flex-col items-center justify-center gap-4">
+              <Loader2 className="size-6 animate-spin text-text-muted" />
               <p className="text-sm text-text-muted">답변을 생성하는 중입니다…</p>
             </div>
           )}
@@ -189,14 +203,43 @@ export function Dashboard() {
               {result.columns.length > 0 ? (
                 <ResultsTable columns={result.columns} rows={result.rows} />
               ) : null}
+              {result.sqlAttempts.length > 0 || result.cypherAttempts.length > 0 ? (
+                <EvidencePanel open={evidencePanelOpen} onToggle={toggleEvidencePanel}>
+                  {result.sqlAttempts.length > 0 ? (
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
+                        SQL 시도
+                      </p>
+                      <SelfCorrectionTimeline steps={attemptsToSteps('sql', result.sqlAttempts)} />
+                    </div>
+                  ) : null}
+                  {result.cypherAttempts.length > 0 ? (
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
+                        Cypher 시도
+                      </p>
+                      <SelfCorrectionTimeline
+                        steps={attemptsToSteps('cypher', result.cypherAttempts)}
+                      />
+                    </div>
+                  ) : null}
+                </EvidencePanel>
+              ) : null}
             </div>
           )}
         </main>
-        {activeScreen === 'success' && result?.cypher ? (
-          <CypherSlidePanel
-            cypher={result.cypher}
-            collapsed={cypherCollapsed}
-            onToggleCollapsed={toggleCypherCollapsed}
+        {activeScreen === 'success' && result && (result.sql || result.cypher) ? (
+          <GeneratedQueryPanel
+            queries={[
+              ...(result.sql
+                ? [{ label: '생성된 SQL', language: 'sql' as const, query: result.sql }]
+                : []),
+              ...(result.cypher
+                ? [{ label: '생성된 Cypher', language: 'cypher' as const, query: result.cypher }]
+                : []),
+            ]}
+            collapsed={queryPanelCollapsed}
+            onToggleCollapsed={toggleQueryPanelCollapsed}
           />
         ) : null}
       </div>

@@ -1,9 +1,11 @@
 import axios, { AxiosError } from 'axios'
 import {
   CurrentUserSchema,
+  HealthSchema,
   LoginErrorSchema,
   LoginRequestSchema,
   type CurrentUser,
+  type Health,
   type LoginRequest,
 } from './schemas'
 
@@ -36,6 +38,12 @@ export async function login(payload: LoginRequest): Promise<CurrentUser> {
 // 로그아웃 요청을 보낸다
 export async function logout(): Promise<void> {
   await api.post('/auth/logout')
+}
+
+// 서버·Neo4j·Postgres 연결 상태를 조회한다(인증 불필요)
+export async function fetchHealth(): Promise<Health> {
+  const res = await api.get('/health')
+  return HealthSchema.parse(res.data)
 }
 
 // 현재 로그인된 사용자 정보를 조회한다(비로그인 시 401)
