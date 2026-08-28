@@ -158,6 +158,19 @@ def validate_subqueries(subqueries: Any) -> list[Subquery]:
             for dependencies in pending.values():
                 dependencies.discard(subquery_id)
 
+    if len(ordered) == 2:
+        first_join_keys = ordered[0]["joinKeys"]
+        second_join_keys = ordered[1]["joinKeys"]
+        if bool(first_join_keys) != bool(second_join_keys):
+            raise ValueError(
+                "HYBRID 계획은 양쪽 subquery에 joinKeys를 모두 지정하거나 "
+                "모두 비워야 합니다."
+            )
+        if first_join_keys and set(first_join_keys) != set(second_join_keys):
+            raise ValueError("HYBRID 계획의 양쪽 joinKeys 구성이 일치해야 합니다.")
+        if any(item["dependsOn"] for item in ordered) and not first_join_keys:
+            raise ValueError("의존 HYBRID 계획에는 양쪽의 공통 joinKeys가 필요합니다.")
+
     return ordered
 
 
