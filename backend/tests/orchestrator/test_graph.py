@@ -2,6 +2,7 @@
 execute_sql/execute_cypher가 이제 진짜 DB를 치므로 이 파일은 전부 integration
 마커가 붙는다(OpenAI 호출만 mock, DB는 실제)."""
 
+import json
 from decimal import Decimal
 
 import pytest
@@ -181,3 +182,85 @@ async def test_graph_builds_final_answer_from_sql_result(postgres_pool) -> None:
     assert result["sql_result"]["result"] == [{"count": 504}]
     assert result["final_answer"] is not None
     assert "504" in result["final_answer"]
+
+
+async def test_graph_executes_dependent_graph_then_sql_plan(postgres_pool) -> None:
+    """canonical RQ18 유형에서 GRAPH 결과를 SQL 생성 입력으로 전달한다."""
+    route_plan = """{
+      "tool_plan": ["graph", "sql"],
+      "subqueries": [
+        {
+          "id": "graph_components",
+          "tool": "graph",
+          "question": "활성 공급업체 Allenson Cycles의 공급 부품과 영향 완제품 경로를 조회한다.",
+          "dependsOn": [],
+          "requiredOutputs": ["componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds"],
+          "joinKeys": ["componentId"]
+        },
+        {
+          "id": "sql_stock",
+          "tool": "sql",
+          "question": "앞 단계에서 확인한 componentId별 현재 재고를 조회한다.",
+          "dependsOn": ["graph_components"],
+          "inputBindings": {"componentIds": "graph_components.componentId"},
+          "requiredOutputs": ["componentId", "actualStock"],
+          "joinKeys": ["componentId"]
+        }
+      ]
+    }"""
+    cypher = """MATCH (supplier:Supplier {supplierId: 1494})-[:SUPPLIES]->(component:Product)
+MATCH path = (component)<-[rels:REQUIRES_COMPONENT*1..4]-(finished:Product)
+WHERE supplier.active = true
+  AND finished.sellableFinishedGood = true
+  AND all(rel IN rels WHERE rel.startDate <= date('2014-08-08')
+    AND (rel.endDate IS NULL OR date('2014-08-08') < rel.endDate))
+RETURN component.productId AS componentId,
+  component.name AS componentName,
+  finished.productId AS finishedProductId,
+  finished.name AS finishedProductName,
+  length(path) AS depth,
+  [node IN nodes(path) | node.productId] AS pathProductIds
+ORDER BY componentId, depth, finishedProductId, pathProductIds"""
+    sql = """SELECT p.productid AS "componentId",
+  COALESCE(SUM(i.quantity), 0) AS "actualStock"
+FROM production.product AS p
+LEFT JOIN production.productinventory AS i ON i.productid = p.productid
+WHERE p.productid IN (530)
+GROUP BY p.productid
+ORDER BY p.productid"""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "supplier", "entityName": "Allenson Cycles"},
+        ),
+        make_content_response(route_plan),
+        make_content_response(cypher),
+        make_content_response(sql),
+    )
+    graph = build_orchestrator_graph(openai_client, postgres_pool)
+
+    result = await graph.ainvoke(
+        {
+            "query": (
+                "공급업체 Allenson Cycles가 공급을 중단하면 영향을 받는 부품과 "
+                "완제품, 각 부품의 현재 재고를 알려줘."
+            )
+        }
+    )
+
+    graph_rows = result["graph_result"]["result"]
+    assert graph_rows
+    expected_component_ids = [row["componentId"] for row in graph_rows]
+    sql_user_message = next(
+        message["content"]
+        for message in openai_client.calls[3]["messages"]
+        if message["role"] == "user"
+    )
+    assert json.loads(sql_user_message)["inputBindings"] == {
+        "componentIds": expected_component_ids
+    }
+    assert result["sql_query"] == sql
+    assert result["sql_result"]["error"] is None
+    sql_rows = result["sql_result"]["result"]
+    assert sql_rows
+    assert {row["componentId"] for row in sql_rows} == set(expected_component_ids)

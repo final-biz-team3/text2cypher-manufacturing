@@ -7,7 +7,7 @@ sql_agent.py/cypher_agent.py는 완전히 대칭 구조라(생성 함수, 실행
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -53,6 +53,8 @@ class RetryAgentState(TypedDict):
     empty_retried: bool
     retryable: bool
     empty_reason: str | None
+    required_outputs: NotRequired[list[str]]
+    input_bindings: NotRequired[dict[str, list[Any]]]
 
 
 def _classify_empty_result(prior_attempts: list[dict]) -> str:
@@ -218,6 +220,20 @@ def make_retry_agent_subgraph(
                 "attempts": new_attempts,
                 "retryable": False,
             }
+
+        required_outputs = state.get("required_outputs", [])
+        for row_index, row in enumerate(result):
+            missing = [
+                alias
+                for alias in required_outputs
+                if not isinstance(row, dict) or alias not in row
+            ]
+            if missing:
+                aliases = ", ".join(missing)
+                return failure(
+                    f"결과의 {row_index}번 행에 필수 alias가 없습니다: {aliases}",
+                    retryable=True,
+                )
 
         return {
             "result": result,

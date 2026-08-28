@@ -107,6 +107,8 @@ def make_cypher_agent_subgraph(
             entity=state["entity"],
             schema_text=state["schema"],
             query_policy=query_policy,
+            required_outputs=state.get("required_outputs", []),
+            input_bindings=state.get("input_bindings"),
             previous_query=previous_query,
             previous_error=previous_error,
         )

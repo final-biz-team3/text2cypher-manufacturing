@@ -1,6 +1,7 @@
 """제조 데이터 질문을 Neo4j Cypher로 변환하기 위한 프롬프트를 구성한다."""
 
 from collections.abc import Sequence
+from typing import Any
 
 from agents.cypher.schema.models import GraphQueryPolicy
 from agents.prompt import build_prompt_messages
@@ -50,6 +51,7 @@ def build_cypher_prompt(
     query_policy: GraphQueryPolicy,
     business_rules: Sequence[str] = (),
     required_outputs: Sequence[str] = (),
+    input_bindings: dict[str, list[Any]] | None = None,
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> list[dict[str, str]]:
@@ -61,6 +63,7 @@ def build_cypher_prompt(
         schema_text=schema_text,
         business_rules=(*_build_cypher_domain_rules(query_policy), *business_rules),
         required_outputs=required_outputs,
+        input_bindings=input_bindings,
         previous_query=previous_query,
         previous_error=previous_error,
     )

@@ -98,6 +98,38 @@ async def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
     assert result["attempts"][1]["error"] is None
 
 
+async def test_sql_agent_retries_when_required_alias_is_missing() -> None:
+    """비어 있지 않은 결과의 모든 행에 필수 alias가 있을 때까지 재생성한다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT productid FROM production.product"),
+        make_content_response(
+            'SELECT productid AS "productId" FROM production.product'
+        ),
+    )
+    calls = []
+
+    async def execute_sql(sql: str) -> list[dict]:
+        calls.append(sql)
+        if len(calls) == 1:
+            return [{"productId": 10}, {"productid": 11}]
+        return [{"productId": 10}, {"productId": 11}]
+
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
+    state = _initial_state()
+    state["required_outputs"] = ["productId"]
+
+    result = await subgraph.ainvoke(state)
+
+    assert result["result"] == [{"productId": 10}, {"productId": 11}]
+    assert len(result["attempts"]) == 2
+    assert "1번 행" in result["attempts"][0]["error"]
+    assert "productId" in result["attempts"][0]["error"]
+    retry_system_prompt = openai_client.calls[1]["messages"][0]["content"]
+    assert "필수 alias" in retry_system_prompt
+
+
 async def test_sql_agent_retries_after_query_canceled_then_succeeds() -> None:
     """QueryCanceled(statement_timeout 등)는 OperationalError의 서브클래스지만
     실행 오류(재시도 대상)로 분류돼야 하며, 접속 오류로 오분류되어 즉시

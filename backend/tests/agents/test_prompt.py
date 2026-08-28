@@ -1,6 +1,11 @@
 """SQL과 Cypher Agent가 공유하는 프롬프트 메시지 조립을 테스트한다."""
 
 import json
+from datetime import date
+from decimal import Decimal
+
+import neo4j.time
+import pytest
 
 from agents.prompt import build_prompt_messages
 
@@ -65,3 +70,57 @@ Product {}"""
         "query": "전체 개수를 알려줘.",
         "entity": None,
     }
+
+
+def test_build_prompt_messages_includes_aligned_input_bindings() -> None:
+    """선행 결과에서 추출한 배열과 행 대응·중복 보존 규칙을 전달한다."""
+    messages = build_prompt_messages(
+        instructions="쿼리를 생성하세요.",
+        query="해당 부품의 재고를 알려줘.",
+        entity={"supplierId": 2},
+        schema_text="Product {}",
+        input_bindings={
+            "componentIds": [7, 7, 9],
+            "supplierIds": [2, 3, 3],
+        },
+    )
+
+    assert "aligned by row index" in messages[0]["content"]
+    assert "may contain duplicates" in messages[0]["content"]
+    assert json.loads(messages[1]["content"])["inputBindings"] == {
+        "componentIds": [7, 7, 9],
+        "supplierIds": [2, 3, 3],
+    }
+
+
+def test_build_prompt_messages_serializes_database_binding_scalars() -> None:
+    """Decimal과 표준/Neo4j 날짜 타입을 손실 없는 문자열로 전달한다."""
+    messages = build_prompt_messages(
+        instructions="쿼리를 생성하세요.",
+        query="조건에 맞는 제품을 알려줘.",
+        entity=None,
+        schema_text="Product {}",
+        input_bindings={
+            "prices": [Decimal("12.50")],
+            "dates": [date(2026, 8, 28)],
+            "timestamps": [neo4j.time.DateTime(2026, 8, 28, 12, 34, 56)],
+        },
+    )
+
+    assert json.loads(messages[1]["content"])["inputBindings"] == {
+        "prices": ["12.50"],
+        "dates": ["2026-08-28"],
+        "timestamps": ["2026-08-28T12:34:56.000000000"],
+    }
+
+
+def test_build_prompt_messages_rejects_unsupported_binding_value() -> None:
+    """지원하지 않는 객체를 불명확한 repr 문자열로 조용히 변환하지 않는다."""
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        build_prompt_messages(
+            instructions="쿼리를 생성하세요.",
+            query="질문",
+            entity=None,
+            schema_text="Product {}",
+            input_bindings={"values": [object()]},
+        )
