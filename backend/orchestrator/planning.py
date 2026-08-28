@@ -105,8 +105,10 @@ def validate_subqueries(subqueries: Any) -> list[Subquery]:
                     f"{dependency_id!r}을 참조합니다."
                 )
 
+        binding_dependencies: set[str] = set()
         for source in item.get("inputBindings", {}).values():
             dependency_id, output_field = source.split(".", 1)
+            binding_dependencies.add(dependency_id)
             if dependency_id not in item["dependsOn"]:
                 raise ValueError(
                     f"subquery {subquery_id!r}의 binding {source!r}는 dependsOn에 "
@@ -117,6 +119,18 @@ def validate_subqueries(subqueries: Any) -> list[Subquery]:
                     f"subquery {subquery_id!r}의 binding {source!r}가 선행 단계의 "
                     "requiredOutputs에 없는 필드를 참조합니다."
                 )
+
+        unbound_dependencies = [
+            dependency_id
+            for dependency_id in item["dependsOn"]
+            if dependency_id not in binding_dependencies
+        ]
+        if unbound_dependencies:
+            names = ", ".join(unbound_dependencies)
+            raise ValueError(
+                f"subquery {subquery_id!r}의 dependsOn {names!r}는 "
+                "inputBindings에서 참조되어야 합니다."
+            )
 
         for join_key in item["joinKeys"]:
             if item["dependsOn"] and not any(
@@ -189,7 +203,9 @@ def parse_execution_plan(content: str, query: str) -> ExecutionPlan:
 
     subqueries = _legacy_subqueries(tool_plan, query) if legacy else raw_subqueries
     validated = validate_subqueries(subqueries)
-    planned_tools = list(dict.fromkeys(item["tool"] for item in validated))
+    planned_tools = [item["tool"] for item in validated]
+    if len(planned_tools) != len(set(planned_tools)):
+        raise ValueError("도구 하나당 subquery를 정확히 하나만 지정할 수 있습니다.")
     if set(planned_tools) != set(tool_plan):
         raise ValueError("tool_plan과 subqueries의 도구 구성이 일치하지 않습니다.")
     tool_positions = {tool: index for index, tool in enumerate(tool_plan)}
@@ -201,4 +217,6 @@ def parse_execution_plan(content: str, query: str) -> ExecutionPlan:
                 raise ValueError(
                     "tool_plan이 subqueries의 의존 실행 순서와 일치하지 않습니다."
                 )
+    if planned_tools != tool_plan:
+        raise ValueError("tool_plan이 subqueries의 실행 순서와 일치하지 않습니다.")
     return {"tool_plan": tool_plan, "subqueries": validated}

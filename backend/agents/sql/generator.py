@@ -15,6 +15,7 @@ async def generate_sql(
     schema_text: str,
     business_rules: Sequence[str] = (),
     required_outputs: Sequence[str] = (),
+    input_bindings: dict[str, list[Any]] | None = None,
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> str:
@@ -27,6 +28,7 @@ async def generate_sql(
         schema_text=schema_text,
         business_rules=business_rules,
         required_outputs=required_outputs,
+        input_bindings=input_bindings,
         previous_query=previous_query,
         previous_error=previous_error,
     )

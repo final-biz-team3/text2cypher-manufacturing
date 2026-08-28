@@ -54,6 +54,8 @@ def make_sql_agent_subgraph(
             query=state["query"],
             entity=state["entity"],
             schema_text=state["schema"],
+            required_outputs=state.get("required_outputs", []),
+            input_bindings=state.get("input_bindings"),
             previous_query=previous_query,
             previous_error=previous_error,
         )

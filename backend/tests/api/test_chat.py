@@ -83,6 +83,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert result["sql_result"]["result"] == [{"listprice": 2384.07}]
     assert result["final_answer"] is not None
     assert "subqueries" not in result
+    assert "subquery_results" not in result
     assert len(openai_client.calls) == 3
 
 
