@@ -8,6 +8,8 @@ import psycopg
 from langgraph.graph.state import CompiledStateGraph
 
 from agents.sql.generator import generate_sql
+from agents.sql.schema.models import SqlSchema
+from orchestrator.guards.sql_guard import make_sql_guard
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
     make_retry_agent_subgraph,
@@ -39,8 +41,9 @@ _EMPTY_RESULT_FEEDBACK = (
 def make_sql_agent_subgraph(
     openai_client: Any,
     execute_sql: Callable[[str], Awaitable[Any]],
+    sql_schema: SqlSchema,
 ) -> CompiledStateGraph:
-    """SQL 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
+    """SQL 생성 -> 쿼리 가드 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_sql 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
 
     async def generate(
@@ -63,4 +66,5 @@ def make_sql_agent_subgraph(
         connection_exceptions=_CONNECTION_EXCEPTIONS,
         retryable_exceptions=_RETRYABLE_EXCEPTIONS,
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
+        guard=make_sql_guard(sql_schema),
     )

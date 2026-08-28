@@ -9,6 +9,7 @@ from agents.cypher.schema.loader import load_graph_schema
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
 from agents.cypher.schema.serializer import serialize_graph_schema
 from agents.sql.schema.loader import load_sql_schema
+from agents.sql.schema.models import SqlSchema
 from agents.sql.schema.serializer import serialize_sql_schema
 from orchestrator.execution.cypher_executor import execute_cypher
 from orchestrator.execution.sql_executor import execute_sql
@@ -22,7 +23,7 @@ from orchestrator.subgraphs.sql_agent import make_sql_agent_subgraph
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load_schema_context() -> tuple[str, str, GraphSchema]:
+def _load_schema_context() -> tuple[SqlSchema, str, GraphSchema, str]:
     """SQL/Cypher 스키마를 프로젝트 YAML에서 읽는다."""
     sql_schema = load_sql_schema(_PROJECT_ROOT / "schema" / "sql_schema.yaml")
     cypher_schema = load_graph_schema(_PROJECT_ROOT / "schema" / "graph_schema.yaml")
@@ -30,9 +31,10 @@ def _load_schema_context() -> tuple[str, str, GraphSchema]:
         raise ValueError("Graph schema requires BOM query policy metadata.")
 
     return (
+        sql_schema,
         serialize_sql_schema(sql_schema),
-        serialize_graph_schema(cypher_schema),
         cypher_schema,
+        serialize_graph_schema(cypher_schema),
     )
 
 
@@ -65,10 +67,12 @@ def _retry_agent_result_summary(result: dict) -> dict:
 
 
 def _make_sql_agent_node(
-    openai_client: Any, sql_schema_text: str
+    openai_client: Any, sql_schema: SqlSchema, sql_schema_text: str
 ) -> Callable[[OrchestratorState], Awaitable[dict]]:
     """SQL Agent SubGraph를 감싸 OrchestratorState와 주고받는 노드를 만든다."""
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=sql_schema
+    )
 
     async def sql_agent(state: OrchestratorState) -> dict:
         if "sql" not in (state.get("tool_plan") or []):
@@ -87,13 +91,17 @@ def _make_sql_agent_node(
 
 
 def _make_cypher_agent_node(
-    openai_client: Any, cypher_schema_text: str, cypher_query_policy: GraphQueryPolicy
+    openai_client: Any,
+    cypher_schema: GraphSchema,
+    cypher_schema_text: str,
+    cypher_query_policy: GraphQueryPolicy,
 ) -> Callable[[OrchestratorState], Awaitable[dict]]:
     """Cypher Agent SubGraph를 감싸 OrchestratorState와 주고받는 노드를 만든다."""
     subgraph = make_cypher_agent_subgraph(
         openai_client,
         execute_cypher=execute_cypher,
         query_policy=cypher_query_policy,
+        graph_schema=cypher_schema,
     )
 
     async def cypher_agent(state: OrchestratorState) -> dict:
@@ -118,7 +126,9 @@ def build_orchestrator_graph(
     openai_client: Any,
     pool: Any,
 ) -> CompiledStateGraph:
-    sql_schema_text, cypher_schema_text, cypher_schema = _load_schema_context()
+    sql_schema, sql_schema_text, cypher_schema, cypher_schema_text = (
+        _load_schema_context()
+    )
     cypher_query_policy = cypher_schema.query_policy
     assert cypher_query_policy is not None
 
@@ -133,14 +143,14 @@ def build_orchestrator_graph(
     graph.add_node("route_query", cast(Any, make_route_query_node(openai_client)))
     graph.add_node(
         "sql_agent",
-        cast(Any, _make_sql_agent_node(openai_client, sql_schema_text)),
+        cast(Any, _make_sql_agent_node(openai_client, sql_schema, sql_schema_text)),
     )
     graph.add_node(
         "cypher_agent",
         cast(
             Any,
             _make_cypher_agent_node(
-                openai_client, cypher_schema_text, cypher_query_policy
+                openai_client, cypher_schema, cypher_schema_text, cypher_query_policy
             ),
         ),
     )

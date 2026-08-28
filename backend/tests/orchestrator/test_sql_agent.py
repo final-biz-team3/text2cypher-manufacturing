@@ -2,8 +2,18 @@
 
 import psycopg
 
+from agents.sql.schema.models import SqlSchema
 from orchestrator.subgraphs.sql_agent import make_sql_agent_subgraph
 from tests.mocks.openai import MockOpenAIClient, make_content_response
+
+_TEST_SQL_SCHEMA = SqlSchema.model_validate(
+    {
+        "tables": {
+            "production.product": {"columns": {"productid": {"type": "INTEGER"}}}
+        },
+        "joins": [],
+    }
+)
 
 
 def _initial_state(query: str = "제품 수를 알려줘.") -> dict:
@@ -26,7 +36,9 @@ async def test_sql_agent_returns_result_when_execution_succeeds() -> None:
     async def execute_sql(sql: str) -> list[dict]:
         return [{"count": 10}]
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
@@ -47,7 +59,9 @@ async def test_sql_agent_returns_error_when_execution_fails() -> None:
     async def execute_sql(sql: str) -> None:
         raise ValueError("column bad_column does not exist")
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
@@ -70,7 +84,9 @@ async def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
             raise psycopg.errors.UndefinedColumn("column bad_column does not exist")
         return [{"count": 10}]
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
@@ -98,7 +114,9 @@ async def test_sql_agent_retries_after_query_canceled_then_succeeds() -> None:
             raise psycopg.errors.QueryCanceled("canceling statement due to timeout")
         return [{"count": 10}]
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
@@ -116,27 +134,31 @@ async def test_sql_agent_does_not_retry_on_connection_error() -> None:
     async def execute_sql(sql: str) -> None:
         raise psycopg.OperationalError("connection refused")
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "connection refused"
+    assert result["error"] == "접속 오류가 발생했습니다."
     assert len(openai_client.calls) == 1
 
 
 async def test_sql_agent_stops_after_max_attempts_exceeded() -> None:
     """실행 오류가 계속되면 원본 1회 + 재시도 2회(총 3회)까지만 시도하고 종료한다."""
     openai_client = MockOpenAIClient(
-        make_content_response("SELECT a FROM t"),
-        make_content_response("SELECT b FROM t"),
-        make_content_response("SELECT c FROM t"),
+        make_content_response("SELECT a FROM production.product"),
+        make_content_response("SELECT b FROM production.product"),
+        make_content_response("SELECT c FROM production.product"),
     )
 
     async def execute_sql(sql: str) -> None:
         raise psycopg.errors.UndefinedColumn("column does not exist")
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
@@ -157,7 +179,9 @@ async def test_sql_agent_retries_once_on_empty_result_then_accepts() -> None:
     async def execute_sql(sql: str) -> list:
         return []
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
@@ -186,7 +210,9 @@ async def test_sql_agent_marks_empty_result_inconclusive_after_budget_exhausted(
             raise psycopg.errors.UndefinedColumn("bad column")
         return []
 
-    subgraph = make_sql_agent_subgraph(openai_client, execute_sql=execute_sql)
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
 
     result = await subgraph.ainvoke(_initial_state())
 
@@ -195,3 +221,52 @@ async def test_sql_agent_marks_empty_result_inconclusive_after_budget_exhausted(
     assert result["empty_reason"] == "INCONCLUSIVE"
     assert result["attempt_count"] == 3
     assert len(result["attempts"]) == 3
+
+
+async def test_sql_agent_blocks_write_query_before_execution() -> None:
+    """가드가 쓰기 절을 감지하면 execute_sql을 호출하지 않고 재시도 피드백을 준다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("DELETE FROM production.product"),
+        make_content_response("SELECT COUNT(*) FROM production.product"),
+    )
+    execute_calls = []
+
+    async def execute_sql(sql: str) -> list[dict]:
+        execute_calls.append(sql)
+        return [{"count": 10}]
+
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert execute_calls == ["SELECT COUNT(*) FROM production.product"]
+    assert result["result"] == [{"count": 10}]
+    assert len(result["attempts"]) == 2
+    assert "WRITE_KEYWORD_DETECTED" in result["attempts"][0]["error"]
+
+
+async def test_sql_agent_does_not_retry_unknown_table_guard_block() -> None:
+    """화이트리스트에 없는 테이블 참조는 재생성해도 같은 결론에 도달하므로
+    재시도 예산을 낭비하지 않고 1회만에 종료한다(스키마명은 응답에 노출 안 됨)."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT * FROM production.unknown_table")
+    )
+    execute_calls = []
+
+    async def execute_sql(sql: str) -> list[dict]:
+        execute_calls.append(sql)
+        return [{"count": 10}]
+
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert execute_calls == []
+    assert result["result"] is None
+    assert len(openai_client.calls) == 1
+    assert "UNKNOWN_TABLE" in result["error"]
+    assert "unknown_table" not in result["error"]

@@ -2,11 +2,23 @@
 
 from neo4j.exceptions import ClientError, CypherSyntaxError, ServiceUnavailable
 
-from agents.cypher.schema.models import GraphQueryPolicy
+from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 QUERY_POLICY = GraphQueryPolicy(bomAsOfDate="2014-08-08", bomMaxDepth=4)
+
+_TEST_GRAPH_SCHEMA = GraphSchema.model_validate(
+    {
+        "nodes": {
+            "Product": {"properties": {"productId": {"type": "INTEGER"}}},
+            "Supplier": {"properties": {"supplierId": {"type": "INTEGER"}}},
+        },
+        "relationships": {
+            "SUPPLIES": {"from": "Supplier", "to": "Product", "properties": {}},
+        },
+    }
+)
 
 
 def _initial_state(query: str = "부품 사용처를 알려줘.") -> dict:
@@ -33,6 +45,7 @@ async def test_cypher_agent_returns_result_when_execution_succeeds() -> None:
         openai_client,
         execute_cypher=execute_cypher,
         query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
@@ -46,27 +59,30 @@ async def test_cypher_agent_returns_result_when_execution_succeeds() -> None:
 async def test_cypher_agent_returns_error_when_execution_fails() -> None:
     """실행이 실패하면 예외를 전파하지 않고 error 필드에 담아 정상 종료한다."""
     openai_client = MockOpenAIClient(
-        make_content_response("MATCH (n:Unknown) RETURN n")
+        make_content_response("MATCH (n:Product) RETURN n")
     )
 
     async def execute_cypher(cypher: str) -> None:
-        raise ValueError("unknown label Unknown")
+        raise ValueError("unknown property")
 
     subgraph = make_cypher_agent_subgraph(
-        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "unknown label Unknown"
+    assert result["error"] == "unknown property"
     assert len(openai_client.calls) == 1
 
 
 async def test_cypher_agent_retries_after_retryable_error_then_succeeds() -> None:
     """실행 오류(화이트리스트)가 나면 쿼리를 재생성해 재시도하고, 성공하면 종료한다."""
     openai_client = MockOpenAIClient(
-        make_content_response("MATCH (n:Unknown) RETURN n"),
+        make_content_response("MATCH (n:Product) WHERE n.bad RETURN n"),
         make_content_response("MATCH (n:Product) RETURN n"),
     )
     calls = []
@@ -74,11 +90,14 @@ async def test_cypher_agent_retries_after_retryable_error_then_succeeds() -> Non
     async def execute_cypher(cypher: str) -> list[dict]:
         calls.append(cypher)
         if len(calls) == 1:
-            raise CypherSyntaxError("Invalid input 'Unknown'")
+            raise CypherSyntaxError("Invalid input 'bad'")
         return [{"n": "x"}]
 
     subgraph = make_cypher_agent_subgraph(
-        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
@@ -99,29 +118,35 @@ async def test_cypher_agent_does_not_retry_on_connection_error() -> None:
         raise ServiceUnavailable("could not connect to server")
 
     subgraph = make_cypher_agent_subgraph(
-        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "could not connect to server"
+    assert result["error"] == "접속 오류가 발생했습니다."
     assert len(openai_client.calls) == 1
 
 
 async def test_cypher_agent_stops_after_max_attempts_exceeded() -> None:
     """실행 오류가 계속되면 원본 1회 + 재시도 2회(총 3회)까지만 시도하고 종료한다."""
     openai_client = MockOpenAIClient(
-        make_content_response("MATCH (n:A) RETURN n"),
-        make_content_response("MATCH (n:B) RETURN n"),
-        make_content_response("MATCH (n:C) RETURN n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
     )
 
     async def execute_cypher(cypher: str) -> None:
         raise CypherSyntaxError("invalid syntax")
 
     subgraph = make_cypher_agent_subgraph(
-        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
@@ -144,7 +169,10 @@ async def test_cypher_agent_retries_once_on_empty_result_then_accepts() -> None:
         return []
 
     subgraph = make_cypher_agent_subgraph(
-        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
@@ -162,8 +190,8 @@ async def test_cypher_agent_marks_empty_result_inconclusive_after_budget_exhaust
     재시도해볼 기회조차 없었으므로 정답으로 확신하지 않고 INCONCLUSIVE로
     표시한다(그리고 내부용 EMPTY_RESULT 문자열이 error로 새어나가면 안 된다)."""
     openai_client = MockOpenAIClient(
-        make_content_response("MATCH (n:A) RETURN n"),
-        make_content_response("MATCH (n:B) RETURN n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
         make_content_response("MATCH (n:Product {id: -1}) RETURN n"),
     )
     calls = []
@@ -175,7 +203,10 @@ async def test_cypher_agent_marks_empty_result_inconclusive_after_budget_exhaust
         return []
 
     subgraph = make_cypher_agent_subgraph(
-        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
@@ -209,7 +240,10 @@ async def test_cypher_agent_retries_after_query_timeout_then_succeeds() -> None:
         return [{"n": "x"}]
 
     subgraph = make_cypher_agent_subgraph(
-        openai_client, execute_cypher=execute_cypher, query_policy=QUERY_POLICY
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
     )
 
     result = await subgraph.ainvoke(_initial_state())
@@ -217,3 +251,30 @@ async def test_cypher_agent_retries_after_query_timeout_then_succeeds() -> None:
     assert result["result"] == [{"n": "x"}]
     assert result["error"] is None
     assert len(openai_client.calls) == 2
+
+
+async def test_cypher_agent_blocks_write_query_before_execution() -> None:
+    """가드가 쓰기 절을 감지하면 execute_cypher를 호출하지 않고 재시도 피드백을 준다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:Product) DETACH DELETE n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
+    )
+    execute_calls = []
+
+    async def execute_cypher(cypher: str) -> list[dict]:
+        execute_calls.append(cypher)
+        return [{"n": "x"}]
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert execute_calls == ["MATCH (n:Product) RETURN n"]
+    assert result["result"] == [{"n": "x"}]
+    assert len(result["attempts"]) == 2
+    assert "WRITE_KEYWORD_DETECTED" in result["attempts"][0]["error"]
