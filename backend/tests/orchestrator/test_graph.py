@@ -74,6 +74,16 @@ async def test_graph_resolves_entity_then_runs_sql_agent_once(postgres_pool) -> 
     ]
     assert result["cypher_query"] is None
     assert result["graph_result"] is None
+    assert result["composed_result"] == {
+        "mode": "single",
+        "rows": result["sql_result"]["result"],
+        "sections": {},
+        "error": None,
+        "empty_reason": None,
+        "total_count": 1,
+        "truncated": False,
+    }
+    assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
     assert len(openai_client.calls) == 3
 
 
@@ -108,6 +118,9 @@ async def test_graph_routes_to_graph_and_runs_cypher_agent_once(postgres_pool) -
     graph_rows = result["graph_result"]["result"]
     assert graph_rows
     assert any(row["parent"]["productId"] == 680 for row in graph_rows)
+    assert result["composed_result"]["mode"] == "single"
+    assert result["composed_result"]["rows"] == graph_rows
+    assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
 
 
 async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
@@ -161,6 +174,29 @@ async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
     assert result["graph_result"]["result"]
     assert len(result["graph_result"]["attempts"]) == 1
 
+    assert result["composed_result"] == {
+        "mode": "separate",
+        "rows": [],
+        "sections": {
+            "sql_query": {
+                "tool": "sql",
+                "rows": result["sql_result"]["result"],
+                "empty_reason": None,
+            },
+            "graph_query": {
+                "tool": "graph",
+                "rows": result["graph_result"]["result"],
+                "empty_reason": None,
+            },
+        },
+        "error": None,
+        "empty_reason": None,
+        "total_count": len(result["sql_result"]["result"])
+        + len(result["graph_result"]["result"]),
+        "truncated": False,
+    }
+    assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
+
     assert len(openai_client.calls) == 4
 
 
@@ -184,8 +220,8 @@ async def test_graph_builds_final_answer_from_sql_result(postgres_pool) -> None:
     assert "504" in result["final_answer"]
 
 
-async def test_graph_executes_dependent_graph_then_sql_plan(postgres_pool) -> None:
-    """canonical RQ18 유형에서 GRAPH 결과를 SQL 생성 입력으로 전달한다."""
+async def test_graph_composes_canonical_rq18_many_to_one(postgres_pool) -> None:
+    """RQ18 GRAPH 97행과 SQL 1행을 순서대로 결합해 97행을 만든다."""
     route_plan = """{
       "tool_plan": ["graph", "sql"],
       "subqueries": [
@@ -262,5 +298,203 @@ ORDER BY p.productid"""
     assert result["sql_query"] == sql
     assert result["sql_result"]["error"] is None
     sql_rows = result["sql_result"]["result"]
-    assert sql_rows
+    assert len(graph_rows) == 97
+    assert len(sql_rows) == 1
     assert {row["componentId"] for row in sql_rows} == set(expected_component_ids)
+    assert sql_rows[0]["actualStock"] == 780
+
+    composed = result["composed_result"]
+    assert composed["mode"] == "joined"
+    assert composed["error"] is None
+    assert composed["total_count"] == 97
+    assert composed["truncated"] is False
+    assert len(composed["rows"]) == 97
+    assert all(row["actualStock"] == 780 for row in composed["rows"])
+    assert [
+        {key: value for key, value in row.items() if key != "actualStock"}
+        for row in composed["rows"]
+    ] == graph_rows
+    assert result["final_answer"] == f"COMPOSED: {composed}"
+
+
+async def test_graph_composes_canonical_rq19_path_duplicates(postgres_pool) -> None:
+    """RQ19 GRAPH 25행의 중복 경로에 SQL의 21개 component 사실을 결합한다."""
+    route_plan = """{
+      "tool_plan": ["graph", "sql"],
+      "subqueries": [
+        {
+          "id": "graph_bom_supply",
+          "tool": "graph",
+          "question": "완제품 HL Road Frame - Black, 58의 유효 BOM 경로별 필요 수량 계수와 활성 공급업체를 조회한다.",
+          "dependsOn": [],
+          "requiredOutputs": ["finishedProductId", "finishedProductName", "componentId", "componentName", "depth", "pathProductIds", "quantityPerAssembly", "supplierId", "supplierName"],
+          "joinKeys": ["componentId"]
+        },
+        {
+          "id": "sql_component_stock",
+          "tool": "sql",
+          "question": "앞 단계에서 확인한 componentId별 makeflag와 현재 재고를 조회한다.",
+          "dependsOn": ["graph_bom_supply"],
+          "inputBindings": {"componentIds": "graph_bom_supply.componentId"},
+          "requiredOutputs": ["componentId", "makeFlag", "actualStock"],
+          "joinKeys": ["componentId"]
+        }
+      ]
+    }"""
+    cypher = """MATCH (finished:Product {productId: 680})
+MATCH path = (finished)-[:REQUIRES_COMPONENT*1..4]->(component:Product)
+WHERE all(rel IN relationships(path)
+  WHERE rel.startDate <= date('2014-08-08')
+    AND (rel.endDate IS NULL OR date('2014-08-08') < rel.endDate))
+  AND all(node IN nodes(path)
+    WHERE single(other IN nodes(path) WHERE other.productId = node.productId))
+OPTIONAL MATCH (supplier:Supplier)-[:SUPPLIES]->(component)
+WHERE supplier.active = true
+RETURN finished.productId AS finishedProductId,
+  finished.name AS finishedProductName,
+  component.productId AS componentId,
+  component.name AS componentName,
+  length(path) AS depth,
+  [node IN nodes(path) | node.productId] AS pathProductIds,
+  [rel IN relationships(path) | rel.quantityPerAssembly] AS quantityPerAssembly,
+  supplier.supplierId AS supplierId,
+  supplier.name AS supplierName
+ORDER BY componentId, depth, pathProductIds, supplierId"""
+    sql = """SELECT p.productid AS "componentId",
+  p.makeflag AS "makeFlag",
+  COALESCE(SUM(i.quantity), 0) AS "actualStock"
+FROM production.product AS p
+LEFT JOIN production.productinventory AS i ON i.productid = p.productid
+WHERE p.productid IN (
+  316, 324, 325, 326, 327, 331, 350, 399, 478, 482, 483,
+  484, 485, 486, 487, 492, 531, 532, 533, 534, 804
+)
+GROUP BY p.productid, p.makeflag
+ORDER BY p.productid"""
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {
+                "entityType": "product",
+                "entityName": "HL Road Frame - Black, 58",
+            },
+        ),
+        make_content_response(route_plan),
+        make_content_response(cypher),
+        make_content_response(sql),
+    )
+    graph = build_orchestrator_graph(openai_client, postgres_pool)
+
+    result = await graph.ainvoke(
+        {
+            "query": (
+                "완제품 HL Road Frame - Black, 58을 10개 생산할 때 부족한 부품, "
+                "부족 수량과 공급 가능한 업체를 알려줘."
+            )
+        }
+    )
+
+    graph_rows = result["graph_result"]["result"]
+    sql_rows = result["sql_result"]["result"]
+    assert len(graph_rows) == 25
+    assert len(sql_rows) == 21
+    assert len({row["componentId"] for row in graph_rows}) == 21
+
+    sql_by_component = {row["componentId"]: row for row in sql_rows}
+    composed = result["composed_result"]
+    assert composed["mode"] == "joined"
+    assert composed["error"] is None
+    assert composed["total_count"] == 25
+    assert len(composed["rows"]) == 25
+    assert [row["componentId"] for row in composed["rows"]] == [
+        row["componentId"] for row in graph_rows
+    ]
+    assert all(
+        row["makeFlag"] == sql_by_component[row["componentId"]]["makeFlag"]
+        and row["actualStock"] == sql_by_component[row["componentId"]]["actualStock"]
+        for row in composed["rows"]
+    )
+    assert result["final_answer"] == f"COMPOSED: {composed}"
+
+
+async def test_graph_composes_canonical_rq20_one_to_many(postgres_pool) -> None:
+    """RQ20 SQL 1행에 GRAPH 공정 2행을 sequence 순서로 결합한다."""
+    route_plan = """{
+      "tool_plan": ["sql", "graph"],
+      "subqueries": [
+        {
+          "id": "sql_scrap_facts",
+          "tool": "sql",
+          "question": "작업지시 17747의 제품, 폐기 수량과 폐기사유를 조회한다.",
+          "dependsOn": [],
+          "requiredOutputs": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"],
+          "joinKeys": ["workOrderId"]
+        },
+        {
+          "id": "graph_operations",
+          "tool": "graph",
+          "question": "작업지시 17747의 공정, 작업장과 공정 순서를 조회한다.",
+          "dependsOn": [],
+          "requiredOutputs": ["workOrderId", "routingOperationKey", "sequence", "locationId", "locationName"],
+          "joinKeys": ["workOrderId"]
+        }
+      ]
+    }"""
+    sql = """SELECT w.workorderid AS "workOrderId",
+  w.productid AS "productId",
+  p.name AS "productName",
+  w.scrappedqty AS "scrappedQty",
+  r.scrapreasonid AS "scrapReasonId",
+  r.name AS "scrapReasonName"
+FROM production.workorder AS w
+JOIN production.product AS p ON p.productid = w.productid
+LEFT JOIN production.scrapreason AS r ON r.scrapreasonid = w.scrapreasonid
+WHERE w.workorderid = 17747
+ORDER BY w.workorderid"""
+    cypher = """MATCH (workOrder:WorkOrder {workOrderId: 17747})
+  -[:HAS_OPERATION]->(operation:RoutingOperation)
+  -[:PERFORMED_AT]->(location:Location)
+RETURN workOrder.workOrderId AS workOrderId,
+  operation.routingOperationKey AS routingOperationKey,
+  operation.sequence AS sequence,
+  location.locationId AS locationId,
+  location.name AS locationName
+ORDER BY sequence, routingOperationKey"""
+    openai_client = MockOpenAIClient(
+        make_content_response("[]"),
+        make_content_response(route_plan),
+        make_content_response(sql),
+        make_content_response(cypher),
+    )
+    graph = build_orchestrator_graph(openai_client, postgres_pool)
+
+    result = await graph.ainvoke(
+        {
+            "query": (
+                "작업지시 17747의 생산 제품, 폐기 수량과 폐기사유, "
+                "거친 공정과 작업장을 알려줘."
+            )
+        }
+    )
+
+    sql_rows = result["sql_result"]["result"]
+    graph_rows = result["graph_result"]["result"]
+    assert len(sql_rows) == 1
+    assert len(graph_rows) == 2
+
+    composed = result["composed_result"]
+    assert composed["mode"] == "joined"
+    assert composed["error"] is None
+    assert composed["total_count"] == 2
+    assert len(composed["rows"]) == 2
+    assert [row["sequence"] for row in composed["rows"]] == [
+        row["sequence"] for row in graph_rows
+    ]
+    sql_fact = {
+        key: value for key, value in sql_rows[0].items() if key != "workOrderId"
+    }
+    assert all(
+        all(row[key] == value for key, value in sql_fact.items())
+        for row in composed["rows"]
+    )
+    assert result["final_answer"] == f"COMPOSED: {composed}"
