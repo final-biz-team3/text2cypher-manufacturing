@@ -89,21 +89,43 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], A
         entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
         user_content = f"Q: {state['query']}\nentity: {entity_json}\nA:"
 
-        response = await openai_client.chat.completions.create(
-            model=os.environ["OPENAI_MODEL"],
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-            response_format={"type": "json_object"},
-        )
-        content = response.choices[0].message.content
-        if not isinstance(content, str):
-            raise ValueError("route_query가 빈 응답을 반환했습니다.")
-        try:
-            plan = parse_execution_plan(content, state["query"])
-        except ValueError as exc:
-            raise RoutePlanError(str(exc), content) from exc
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+        last_content = ""
+        last_error: ValueError | None = None
+        for attempt in range(2):
+            response = await openai_client.chat.completions.create(
+                model=os.environ["OPENAI_MODEL"],
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+            last_content = content if isinstance(content, str) else ""
+            try:
+                if not isinstance(content, str):
+                    raise ValueError("route_query가 빈 응답을 반환했습니다.")
+                plan = parse_execution_plan(content, state["query"])
+                break
+            except ValueError as exc:
+                last_error = exc
+                if attempt == 1:
+                    raise RoutePlanError(str(exc), last_content) from exc
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": last_content},
+                    {
+                        "role": "user",
+                        "content": (
+                            "위 실행 계획이 다음 검증을 통과하지 못했습니다: "
+                            f"{exc}\n규칙에 맞는 JSON 객체 전체를 다시 생성하세요."
+                        ),
+                    },
+                ]
+        else:  # pragma: no cover - 두 번의 반복은 성공 또는 예외로만 끝난다.
+            assert last_error is not None
+            raise RoutePlanError(str(last_error), last_content)
         logger.info(
             "route_query: query=%r -> tool_plan=%s subqueries=%s",
             state["query"],

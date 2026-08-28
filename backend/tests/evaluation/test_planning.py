@@ -34,8 +34,17 @@ def _step(
         ([_step("sql", depends_on=["missing"])], "존재하지 않는"),
         (
             [
-                _step("a", depends_on=["b"]),
-                _step("b", tool="sql", depends_on=["a"]),
+                _step(
+                    "a",
+                    depends_on=["b"],
+                    bindings={"ids": "b.componentId"},
+                ),
+                _step(
+                    "b",
+                    tool="sql",
+                    depends_on=["a"],
+                    bindings={"ids": "a.componentId"},
+                ),
             ],
             "순환",
         ),
@@ -51,6 +60,13 @@ def _step(
                 ),
             ],
             "dependsOn",
+        ),
+        (
+            [
+                _step("graph"),
+                _step("sql", tool="sql", depends_on=["graph"]),
+            ],
+            "inputBindings",
         ),
     ],
 )
@@ -95,3 +111,30 @@ def test_parse_execution_plan_rejects_tool_order_before_its_dependency() -> None
 
     with pytest.raises(ValueError, match="의존 실행 순서"):
         parse_execution_plan(content, "복합 질문")
+
+
+def test_parse_execution_plan_rejects_more_than_one_subquery_for_same_tool() -> None:
+    content = """{
+      "tool_plan": ["sql"],
+      "subqueries": [
+        {
+          "id": "sql_price",
+          "tool": "sql",
+          "question": "가격을 찾는다.",
+          "dependsOn": [],
+          "requiredOutputs": [],
+          "joinKeys": []
+        },
+        {
+          "id": "sql_stock",
+          "tool": "sql",
+          "question": "재고를 찾는다.",
+          "dependsOn": [],
+          "requiredOutputs": [],
+          "joinKeys": []
+        }
+      ]
+    }"""
+
+    with pytest.raises(ValueError, match="도구 하나당 subquery"):
+        parse_execution_plan(content, "가격과 재고")

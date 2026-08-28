@@ -101,8 +101,10 @@ async def test_route_query_requires_openai_model(
     ["[]", '["unknown"]', '"sql"'],
 )
 async def test_route_query_rejects_invalid_plan(tool_plan_json: str) -> None:
-    """빈 계획, 지원하지 않는 도구, 리스트가 아닌 값은 거부한다."""
-    openai_client = MockOpenAIClient(make_content_response(tool_plan_json))
+    """재생성한 계획도 잘못되면 마지막 응답을 담아 거부한다."""
+    openai_client = MockOpenAIClient(
+        make_content_response(tool_plan_json), make_content_response(tool_plan_json)
+    )
     node = make_route_query_node(openai_client)
 
     with pytest.raises(RoutePlanError) as exc_info:
@@ -110,6 +112,7 @@ async def test_route_query_rejects_invalid_plan(tool_plan_json: str) -> None:
 
     assert exc_info.value.raw_response == tool_plan_json
     assert exc_info.value.tool_plan is None
+    assert len(openai_client.calls) == 2
 
 
 async def test_route_query_preserves_valid_route_when_subquery_plan_is_invalid() -> (
@@ -126,7 +129,9 @@ async def test_route_query_preserves_valid_route_when_subquery_plan_is_invalid()
         '"inputBindings":{"componentIds":"graph_step.componentId"},'
         '"requiredOutputs":[],"joinKeys":["componentId"]}]}'
     )
-    openai_client = MockOpenAIClient(make_content_response(raw_response))
+    openai_client = MockOpenAIClient(
+        make_content_response(raw_response), make_content_response(raw_response)
+    )
     node = make_route_query_node(openai_client)
 
     with pytest.raises(RoutePlanError) as exc_info:
@@ -134,3 +139,24 @@ async def test_route_query_preserves_valid_route_when_subquery_plan_is_invalid()
 
     assert "joinKeys는 requiredOutputs에 포함" in str(exc_info.value)
     assert exc_info.value.tool_plan == ["graph", "sql"]
+
+
+async def test_route_query_retries_invalid_plan_with_validation_feedback() -> None:
+    """첫 계획의 검증 오류를 전달하고 두 번째의 올바른 계획을 사용한다."""
+    invalid = '{"tool_plan":["sql"],"subqueries":[]}'
+    valid = (
+        '{"tool_plan":["sql"],"subqueries":['
+        '{"id":"sql_count","tool":"sql","question":"제품 수를 센다.",'
+        '"dependsOn":[],"requiredOutputs":[],"joinKeys":[]}]}'
+    )
+    openai_client = MockOpenAIClient(
+        make_content_response(invalid), make_content_response(valid)
+    )
+    node = make_route_query_node(openai_client)
+
+    result = await node({"query": "제품 수를 알려줘.", "entity": None})
+
+    assert result["subqueries"][0]["id"] == "sql_count"
+    retry_messages = openai_client.calls[1]["messages"]
+    assert retry_messages[-2] == {"role": "assistant", "content": invalid}
+    assert "비어 있지 않은 배열" in retry_messages[-1]["content"]
