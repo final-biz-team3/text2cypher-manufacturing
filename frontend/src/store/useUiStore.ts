@@ -4,7 +4,7 @@ import type { DisplayResult } from '@/types/query'
 
 // 여러 컴포넌트가 공유하는 전역 UI 상태(테마, 화면 단계, 패널 열림/접힘 등)
 export type Theme = 'light' | 'dark'
-export type ActiveScreen = 'idle' | 'loading' | 'success' | 'error'
+export type ActiveScreen = 'idle' | 'loading' | 'success' | 'error' | 'clarify'
 export type SidebarTab = 'schema' | 'history'
 
 interface UiStore {
@@ -62,8 +62,10 @@ export const useUiStore = create<UiStore>()(
       }),
       // 요청이 날아가던 도중 새로고침했다면 그 요청은 이미 사라진 것이라
       // "답변을 생성하는 중입니다…" 화면이 영원히 멈춰있게 된다 - idle로 되돌린다.
+      // clarify 화면의 후보 목록은 컴포넌트 로컬 상태라 세션에 저장되지 않으므로
+      // 새로고침하면 함께 사라진다 - 화면 단계도 idle로 되돌린다.
       onRehydrateStorage: () => (state) => {
-        if (state?.activeScreen === 'loading') {
+        if (state?.activeScreen === 'loading' || state?.activeScreen === 'clarify') {
           state.activeScreen = 'idle'
         }
       },
