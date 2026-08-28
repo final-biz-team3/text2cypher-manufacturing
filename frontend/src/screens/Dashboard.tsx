@@ -4,6 +4,7 @@ import { TopBar } from '@/components/layout/TopBar'
 import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
 import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnswerBox'
+import { ClarificationPrompt } from '@/components/query/ClarificationPrompt'
 import { ResultsTable } from '@/components/result/ResultsTable'
 import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
 import { EvidencePanel } from '@/components/result/EvidencePanel'
@@ -12,10 +13,19 @@ import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useHealthStore } from '@/store/useHealthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
-import { sendChatQuery, ChatError } from '@/lib/chat'
+import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
-import type { ChatResponse, HistoryEntry } from '@/lib/schemas'
+import type { AmbiguousCandidate, ChatResponse, HistoryEntry } from '@/lib/schemas'
 import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
+
+// 모호한 이름이 여러 개면 한 번에 하나씩 확정되므로, 지금까지 확정한 후보들과
+// 원래 질문, 그리고 방금 받은 새 후보 목록을 함께 들고 있어야 한다
+interface PendingClarification {
+  query: string
+  confirmedSoFar: AmbiguousCandidate['entity'][]
+  message: string
+  candidates: AmbiguousCandidate[]
+}
 
 const EXAMPLE_QUESTIONS: string[] = [
   '재고가 부족한 제품을 알려줘',
@@ -87,6 +97,11 @@ export function Dashboard() {
   const toggleQueryPanelCollapsed = useUiStore((s) => s.toggleQueryPanelCollapsed)
   const evidencePanelOpen = useUiStore((s) => s.evidencePanelOpen)
   const toggleEvidencePanel = useUiStore((s) => s.toggleEvidencePanel)
+  // 새로고침하면 사라져도 되는 휘발성 상태라 store(sessionStorage)가 아닌
+  // 로컬 상태로 둔다 - useUiStore.ts의 clarify 리셋 참고.
+  const [pendingClarification, setPendingClarification] = useState<PendingClarification | null>(
+    null,
+  )
 
   // 화면이 열릴 때 대화기록을 불러온다
   useEffect(() => {
@@ -95,22 +110,63 @@ export function Dashboard() {
       .catch((err: unknown) => console.error('fetchHistory failed:', err))
   }, [])
 
-  // 질문 제출: /chat을 호출하고 결과·이력을 갱신한다
-  const handleSubmit = async () => {
-    const question = queryText.trim()
-    if (!question) return
+  // /chat을 호출하고 성공·모호함·에러 세 갈래로 화면 상태를 갱신하는 공통 로직.
+  // confirmedSoFar는 직전 라운드까지 사용자가 확정한 후보들(모호한 이름이
+  // 여러 개면 한 번에 하나씩 확정되므로 누적해서 다시 보낸다).
+  const runChatQuery = async (question: string, confirmedSoFar: AmbiguousCandidate['entity'][]) => {
     setActiveScreen('loading')
     try {
-      const response = await sendChatQuery(question)
+      const confirmedEntity =
+        confirmedSoFar.length === 0
+          ? undefined
+          : confirmedSoFar.length === 1
+            ? confirmedSoFar[0]
+            : confirmedSoFar
+      const response = await sendChatQuery(question, confirmedEntity)
+      setPendingClarification(null)
       setResult(toDisplayResult(response))
       setActiveScreen('success')
       fetchHistory()
         .then(setHistory)
         .catch((err: unknown) => console.error('fetchHistory failed:', err))
     } catch (err) {
+      if (err instanceof ClarificationNeededError) {
+        setPendingClarification({
+          query: question,
+          confirmedSoFar,
+          message: err.message,
+          candidates: err.candidates,
+        })
+        setActiveScreen('clarify')
+        return
+      }
+      setPendingClarification(null)
       setErrorMessage(err instanceof ChatError ? err.message : '질의 처리 중 오류가 발생했습니다')
       setActiveScreen('error')
     }
+  }
+
+  // 질문 제출: /chat을 호출하고 결과·이력을 갱신한다
+  const handleSubmit = async () => {
+    const question = queryText.trim()
+    if (!question) return
+    await runChatQuery(question, [])
+  }
+
+  // 모호한 이름 후보 중 하나를 선택하면 확정 목록에 더해 같은 질문을 재요청한다.
+  // 입력창에는 방금 고른 후보 이름을 반영해 선택이 실제로 적용됐음을 보여준다.
+  const handleSelectCandidate = async (candidate: AmbiguousCandidate) => {
+    if (!pendingClarification) return
+    setQueryText(candidate.name)
+    await runChatQuery(pendingClarification.query, [
+      ...pendingClarification.confirmedSoFar,
+      candidate.entity,
+    ])
+  }
+
+  const handleCancelClarification = () => {
+    setPendingClarification(null)
+    setActiveScreen('idle')
   }
 
   // 대화기록 목록에서 항목을 클릭하면 재호출 없이 저장된 내용을 그대로 다시 보여준다
@@ -126,6 +182,7 @@ export function Dashboard() {
     setActiveScreen('idle')
     setQueryText('')
     setResult(null)
+    setPendingClarification(null)
     if (queryPanelCollapsed) toggleQueryPanelCollapsed()
   }
 
@@ -194,6 +251,17 @@ export function Dashboard() {
             <div className="flex flex-1 flex-col items-center justify-center gap-4">
               <p className="text-sm text-fail">{errorMessage}</p>
               <div className="w-full max-w-2xl">{queryInputBar}</div>
+            </div>
+          )}
+          {activeScreen === 'clarify' && pendingClarification && (
+            <div className="flex flex-col gap-4">
+              {queryInputBar}
+              <ClarificationPrompt
+                message={pendingClarification.message}
+                candidates={pendingClarification.candidates}
+                onSelect={handleSelectCandidate}
+                onCancel={handleCancelClarification}
+              />
             </div>
           )}
           {activeScreen === 'success' && result && (

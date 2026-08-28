@@ -45,6 +45,21 @@ export const ApiErrorSchema = z.object({
   message: z.string(),
 })
 
+export const AmbiguousCandidateSchema = z.object({
+  id: z.union([z.string(), z.number()]),
+  name: z.string(),
+  entityType: z.string(),
+  score: z.number(),
+  entity: z.record(z.string(), z.unknown()),
+})
+export type AmbiguousCandidate = z.infer<typeof AmbiguousCandidateSchema>
+
+export const ClarificationNeededSchema = z.object({
+  code: z.literal('ENTITY_AMBIGUOUS'),
+  message: z.string(),
+  candidates: z.array(AmbiguousCandidateSchema),
+})
+
 export const HealthSchema = z.object({
   status: z.string(),
   env: z.string(),
