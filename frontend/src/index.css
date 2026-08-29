@@ -152,3 +152,31 @@
     @apply font-sans;
   }
 }
+
+/* react-syntax-highlighter는 showLineNumbers+wrapLongLines를 함께 쓰면 테마의
+   code[class*="language-"] 기본 스타일(white-space: pre)이 wrapLongLines가 주려는
+   pre-wrap을 인라인 스타일 병합 순서상 다시 덮어써 줄바꿈이 안 먹는다 - 강제로 덮어쓴다. */
+.query-code-block code[class*='language-'] {
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+
+/* 같은 조합에서 줄마다 생기는 래퍼 span에 display:flex를 강제로 붙이는데,
+   그 안의 토큰 span들이 각각 개별 flex item이 되어 자간마다 쪼개져 보인다
+   (자연스러운 텍스트 줄바꿈이 아니라 각 토큰이 따로 축소됨) - block으로 되돌린다. */
+.query-code-block code[class*='language-'] > span {
+  display: block !important;
+  padding-left: 2.5em;
+}
+
+/* block으로 되돌리면 줄바꿈된 두 번째 줄부터가 줄번호 자리(맨 왼쪽)부터 시작해서
+   코드 내용과 줄번호가 뒤섞여 보인다 - 줄번호를 띄워 고정폭 거터에 넣고, 줄바꿈된
+   내용은 항상 거터 오른쪽(코드 시작 위치)에서 이어지는 옛날 방식 "행잉 인덴트"로 맞춘다. */
+.query-code-block code[class*='language-'] > span > span.linenumber {
+  box-sizing: border-box !important;
+  width: 2.5em !important;
+  min-width: 2.5em !important;
+  margin-left: -2.5em;
+  float: left;
+}

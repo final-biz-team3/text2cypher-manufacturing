@@ -10,14 +10,12 @@ export type SidebarTab = 'schema' | 'history'
 interface UiStore {
   theme: Theme
   activeScreen: ActiveScreen
-  evidencePanelOpen: boolean
   queryPanelCollapsed: boolean
   historyTab: SidebarTab
   result: DisplayResult | null
   errorMessage: string
   setTheme: (theme: Theme) => void
   setActiveScreen: (screen: ActiveScreen) => void
-  toggleEvidencePanel: () => void
   toggleQueryPanelCollapsed: () => void
   setHistoryTab: (tab: SidebarTab) => void
   setResult: (result: DisplayResult | null) => void
@@ -34,14 +32,12 @@ export const useUiStore = create<UiStore>()(
     (set) => ({
       theme: 'light',
       activeScreen: 'idle',
-      evidencePanelOpen: false,
       queryPanelCollapsed: false,
       historyTab: 'schema',
       result: null,
       errorMessage: '',
       setTheme: (theme) => set({ theme }),
       setActiveScreen: (activeScreen) => set({ activeScreen }),
-      toggleEvidencePanel: () => set((s) => ({ evidencePanelOpen: !s.evidencePanelOpen })),
       toggleQueryPanelCollapsed: () =>
         set((s) => ({ queryPanelCollapsed: !s.queryPanelCollapsed })),
       setHistoryTab: (historyTab) => set({ historyTab }),
