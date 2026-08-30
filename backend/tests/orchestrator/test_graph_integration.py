@@ -126,11 +126,7 @@ def _assert_bom_path_contract(query: str | None) -> None:
         )
     )
     assert uses_path_relationships or uses_bound_relationships
-    assert re.search(
-        r"(?:length\([^)]+\)|size\([a-z_]\w*path\)-1|"
-        r"size\(nodes\([^)]+\)\)-1)asdepth",
-        compact,
-    )
+    assert re.search(r"length\([^)]+\)asdepth", compact)
 
 
 def _assert_no_repeated_product_in_path(query: str | None) -> None:

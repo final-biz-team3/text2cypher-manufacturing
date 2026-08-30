@@ -369,10 +369,12 @@ def build_summary(
     commit: str,
     validate_gold: bool,
     working_tree_dirty: bool | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     return {
         "generatedAt": datetime.now(UTC).isoformat(),
         "model": model,
+        "reasoningEffort": reasoning_effort,
         "commit": commit,
         "workingTreeDirty": working_tree_dirty,
         "goldValidationOnly": validate_gold,
@@ -506,6 +508,7 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
         "|---|---|",
         f"| 실행 시각 | {generated_at_label} |",
         f"| 모델 | {cell(model_label)} |",
+        f"| reasoning effort | {cell(summary.get('reasoningEffort') or '-')} |",
         f"| 커밋 | {cell(commit_label)} |",
         f"| 작업 상태 | {working_tree_label} |",
         f"| DB snapshot | {cell(snapshot_label)} |",

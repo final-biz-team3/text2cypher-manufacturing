@@ -20,6 +20,7 @@ from openai import OpenAIError
 from agents.cypher.generator import generate_cypher
 from agents.cypher.schema.loader import load_graph_schema
 from agents.cypher.schema.serializer import serialize_graph_schema
+from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
 from agents.sql.generator import generate_sql
 from agents.sql.schema.loader import load_sql_schema
 from agents.sql.schema.serializer import serialize_sql_schema
@@ -76,6 +77,7 @@ class EvaluationRunner:
         project_root: Path,
         loop: asyncio.AbstractEventLoop | None = None,
         execution_mode: str = "orchestrator",
+        reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
     ) -> None:
         if execution_mode not in {"orchestrator", "source"}:
             raise ValueError(
@@ -84,6 +86,7 @@ class EvaluationRunner:
         self.manifest = manifest
         self.database = database
         self.execution_mode = execution_mode
+        self.reasoning_effort = reasoning_effort
         self.openai_client: Any = (
             CountingOpenAIClient(openai_client) if openai_client is not None else None
         )
@@ -116,7 +119,9 @@ class EvaluationRunner:
             resolve_entity_node = make_resolve_entity_node(
                 self.openai_client, get_pool(), graph_schema
             )
-            route_query_node = make_route_query_node(self.openai_client)
+            route_query_node = make_route_query_node(
+                self.openai_client, reasoning_effort=reasoning_effort
+            )
             self.resolve_entity = lambda state: loop.run_until_complete(
                 resolve_entity_node(state)
             )
@@ -125,7 +130,9 @@ class EvaluationRunner:
             )
             if execution_mode == "orchestrator":
                 self.orchestrator_graph = build_orchestrator_graph(
-                    self.openai_client, get_pool()
+                    self.openai_client,
+                    get_pool(),
+                    reasoning_effort=reasoning_effort,
                 )
         else:
             self.resolve_entity = None
@@ -462,6 +469,9 @@ class EvaluationRunner:
                     query=actual["question"],
                     entity=context,
                     schema_text=self.sql_schema_text,
+                    reasoning_effort=getattr(
+                        self, "reasoning_effort", DEFAULT_REASONING_EFFORT
+                    ),
                 )
             )
             validate_read_only_sql(query)
@@ -473,6 +483,9 @@ class EvaluationRunner:
                 entity=context,
                 schema_text=self.graph_schema_text,
                 query_policy=self.graph_query_policy,
+                reasoning_effort=getattr(
+                    self, "reasoning_effort", DEFAULT_REASONING_EFFORT
+                ),
             )
         )
         validate_read_only_cypher(query)

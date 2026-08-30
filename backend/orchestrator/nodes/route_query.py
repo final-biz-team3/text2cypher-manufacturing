@@ -4,6 +4,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
 from orchestrator.planning import (
     EXECUTION_PLAN_JSON_SCHEMA,
     SUPPORTED_TOOLS,
@@ -104,7 +105,11 @@ _RESPONSE_FORMAT = {
 
 
 # OpenAI 클라이언트를 주입받은 route_query 노드 함수를 생성
-def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], Any]:
+def make_route_query_node(
+    openai_client: Any,
+    *,
+    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+) -> Callable[[OrchestratorState], Any]:
     async def route_query(state: OrchestratorState) -> dict:
         # 질의 원문 + 확정된 entity를 few-shot 프롬프트의 입력 형식으로 구성
         entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
@@ -121,6 +126,7 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], A
                 model=os.environ["OPENAI_MODEL"],
                 messages=messages,
                 response_format=_RESPONSE_FORMAT,
+                reasoning_effort=reasoning_effort,
             )
             content = response.choices[0].message.content
             last_content = content if isinstance(content, str) else ""

@@ -74,6 +74,7 @@ async def test_route_query_sends_query_and_entity_in_prompt() -> None:
 
     sent_messages = openai_client.calls[0]["messages"]
     response_format = openai_client.calls[0]["response_format"]
+    assert openai_client.calls[0]["reasoning_effort"] == "medium"
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
     schema = response_format["json_schema"]["schema"]
@@ -88,6 +89,15 @@ async def test_route_query_sends_query_and_entity_in_prompt() -> None:
     assert "BOM 경로, 영향 관계" in system_message
     user_message = next(m["content"] for m in sent_messages if m["role"] == "user")
     assert "활성 공급업체 수를 알려줘." in user_message
+
+
+async def test_route_query_accepts_high_reasoning_effort() -> None:
+    openai_client = MockOpenAIClient(make_content_response('["sql"]'))
+    node = make_route_query_node(openai_client, reasoning_effort="high")
+
+    await node({"query": "활성 공급업체 수를 알려줘.", "entity": None})
+
+    assert openai_client.calls[0]["reasoning_effort"] == "high"
 
 
 async def test_route_query_requires_openai_model(

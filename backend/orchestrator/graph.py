@@ -7,6 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 from agents.cypher.schema.loader import load_graph_schema
 from agents.cypher.schema.models import GraphSchema
 from agents.cypher.schema.serializer import serialize_graph_schema
+from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
 from agents.sql.schema.loader import load_sql_schema
 from agents.sql.schema.models import SqlSchema
 from agents.sql.schema.serializer import serialize_sql_schema
@@ -45,6 +46,8 @@ def _load_schema_context() -> tuple[SqlSchema, str, GraphSchema, str]:
 def build_orchestrator_graph(
     openai_client: Any,
     pool: Any,
+    *,
+    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
 ) -> CompiledStateGraph:
     sql_schema, sql_schema_text, cypher_schema, cypher_schema_text = (
         _load_schema_context()
@@ -52,13 +55,17 @@ def build_orchestrator_graph(
     cypher_query_policy = cypher_schema.query_policy
     assert cypher_query_policy is not None
     sql_agent = make_sql_agent_subgraph(
-        openai_client, execute_sql=execute_sql, sql_schema=sql_schema
+        openai_client,
+        execute_sql=execute_sql,
+        sql_schema=sql_schema,
+        reasoning_effort=reasoning_effort,
     )
     cypher_agent = make_cypher_agent_subgraph(
         openai_client,
         execute_cypher=execute_cypher,
         query_policy=cypher_query_policy,
         graph_schema=cypher_schema,
+        reasoning_effort=reasoning_effort,
     )
 
     graph = StateGraph(OrchestratorState)
@@ -68,7 +75,13 @@ def build_orchestrator_graph(
         "resolve_entity",
         cast(Any, make_resolve_entity_node(openai_client, pool, cypher_schema)),
     )
-    graph.add_node("route_query", cast(Any, make_route_query_node(openai_client)))
+    graph.add_node(
+        "route_query",
+        cast(
+            Any,
+            make_route_query_node(openai_client, reasoning_effort=reasoning_effort),
+        ),
+    )
     graph.add_node(
         "execute_plan",
         cast(

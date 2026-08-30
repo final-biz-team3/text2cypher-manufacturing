@@ -3,7 +3,11 @@
 from collections.abc import Sequence
 from typing import Any
 
-from agents.generator import generate_query
+from agents.generator import (
+    DEFAULT_REASONING_EFFORT,
+    ReasoningEffort,
+    generate_query,
+)
 from agents.sql.prompt import build_sql_prompt
 
 
@@ -18,6 +22,7 @@ async def generate_sql(
     input_bindings: dict[str, list[Any]] | None = None,
     previous_query: str | None = None,
     previous_error: str | None = None,
+    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
 ) -> str:
     """SQL 프롬프트를 구성해 LLM이 생성한 PostgreSQL 문을 반환한다.
     previous_query·previous_error는 이전 시도가 실패했을 때 self-correction
@@ -32,4 +37,6 @@ async def generate_sql(
         previous_query=previous_query,
         previous_error=previous_error,
     )
-    return await generate_query(openai_client, messages)
+    return await generate_query(
+        openai_client, messages, reasoning_effort=reasoning_effort
+    )

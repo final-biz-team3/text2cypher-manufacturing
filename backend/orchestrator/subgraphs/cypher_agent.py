@@ -17,6 +17,7 @@ from neo4j.exceptions import (
 
 from agents.cypher.generator import generate_cypher
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
+from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
 from orchestrator.guards.cypher_guard import make_cypher_guard
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
@@ -94,6 +95,7 @@ def make_cypher_agent_subgraph(
     execute_cypher: Callable[[str], Awaitable[Any]],
     query_policy: GraphQueryPolicy,
     graph_schema: GraphSchema,
+    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
 ) -> CompiledStateGraph:
     """Cypher 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_cypher 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
@@ -111,6 +113,7 @@ def make_cypher_agent_subgraph(
             input_bindings=state.get("input_bindings"),
             previous_query=previous_query,
             previous_error=previous_error,
+            reasoning_effort=reasoning_effort,
         )
 
     return make_retry_agent_subgraph(

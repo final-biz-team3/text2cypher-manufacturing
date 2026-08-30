@@ -31,8 +31,17 @@ async def test_generate_query_returns_trimmed_response_content(
         {
             "model": "query-generation-model",
             "messages": messages,
+            "reasoning_effort": "medium",
         }
     ]
+
+
+async def test_generate_query_accepts_high_reasoning_effort() -> None:
+    openai_client = MockOpenAIClient(make_content_response("MATCH (n) RETURN n"))
+
+    await generate_query(openai_client, [], reasoning_effort="high")
+
+    assert openai_client.calls[0]["reasoning_effort"] == "high"
 
 
 async def test_generate_query_rejects_response_without_choices() -> None:

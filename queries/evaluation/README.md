@@ -77,12 +77,16 @@ PYTHONPATH=backend python -m evaluation \
   --ids RQ01-RQ20 \
   --runs 1 \
   --model "$OPENAI_MODEL" \
+  --reasoning-effort medium \
   --output-dir artifacts/t2c-eval-custom
 ```
 
 `--ids`는 쉼표 목록과 같은 prefix 범위를 지원한다. `RQ01-RQ20`,
 `HQ01-HQ10`은 유효하지만 `RQ01-HQ10`은 유효하지 않다. robustness에서
 `--ids RQ01`을 선택하면 RQ01 계약을 공유하는 S/C/R 세 case가 모두 선택된다.
+`--reasoning-effort`는 route와 SQL/Cypher 생성에 `medium`(기본값) 또는 `high`를
+적용하고 artifact에도 기록한다. 단순 구조 추출인 entity resolver는 이 옵션과
+무관하게 `none`을 유지한다.
 
 ## 실행 주기와 비용
 
@@ -95,8 +99,9 @@ holdout은 PR 마감 또는 릴리스 전에 수동 실행한다. 자동 CD gate
 
 현재 단계별 모델 호출 수를 기준으로 canonical 20건은 약 63회, robustness
 60건은 약 189회, holdout 10건은 약 32회로 전체 90건에 약 284회가 필요하다.
-전체를 `--runs 3`으로 실행하면 약 852회이므로 실행하지 않는다. 독립 계약인
-canonical과 holdout만 3회 실행하면 약 285회다. 개별 실패 재현은 canonical에서
+전체를 `--runs 3`으로 실행하면 약 852회이므로 일상 smoke에는 사용하지 않고,
+모델·prompt 승격 직전 동일 snapshot의 최종 gate에서만 실행한다. 개별 실패 재현은
+canonical에서
 `--ids RQ12 --runs 3`, robustness는
 `--suite robustness --ids RQ12 --runs 3`(해당 RQ의 S/C/R 세 case), holdout은
 `--suite holdout --ids HQ07 --runs 3`처럼 suite와 ID를 함께 지정한다.

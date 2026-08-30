@@ -13,6 +13,7 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
+from agents.generator import DEFAULT_REASONING_EFFORT
 from core.event_loop import use_windows_selector_event_loop_policy
 from core.postgres import bootstrap_postgres, close_pool, open_pool
 from evaluation.database import ReadOnlyDatabaseExecutor
@@ -79,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case-file", type=Path)
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL"))
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=("medium", "high"),
+        default=DEFAULT_REASONING_EFFORT,
+        help="route와 SQL/Cypher 생성 reasoning effort",
+    )
     parser.add_argument("--base-url")
     parser.add_argument("--validate-gold", action="store_true")
     parser.add_argument(
@@ -155,6 +162,7 @@ def _error_artifacts(
     model: str | None,
     validate_gold: bool,
     working_tree_dirty: bool | None,
+    reasoning_effort: str | None,
 ) -> None:
     result = EvaluationRun([], {}, True)
     summary = build_summary(
@@ -163,6 +171,7 @@ def _error_artifacts(
         commit=_commit_sha(),
         validate_gold=validate_gold,
         working_tree_dirty=working_tree_dirty,
+        reasoning_effort=None if validate_gold else reasoning_effort,
     )
     summary["error"] = message
     write_artifacts(output_dir, summary, [])
@@ -240,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
                 project_root=PROJECT_ROOT,
                 loop=loop,
                 execution_mode=args.execution_mode,
+                reasoning_effort=args.reasoning_effort,
             )
             result = (
                 runner.validate_gold(cases)
@@ -263,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
             commit=_commit_sha(),
             validate_gold=args.validate_gold,
             working_tree_dirty=working_tree_dirty,
+            reasoning_effort=(None if args.validate_gold else args.reasoning_effort),
         )
         write_artifacts(args.output_dir, summary, result.records)
         print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
@@ -280,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             validate_gold=args.validate_gold,
             working_tree_dirty=working_tree_dirty,
+            reasoning_effort=args.reasoning_effort,
         )
         return 2
     except Exception as exc:
@@ -291,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             validate_gold=args.validate_gold,
             working_tree_dirty=working_tree_dirty,
+            reasoning_effort=args.reasoning_effort,
         )
         return 2
     return 2

@@ -25,21 +25,35 @@ def _build_cypher_domain_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...
     """그래프 스키마의 BOM 정책을 REQUIRES_COMPONENT 생성 규칙으로 변환한다."""
     return (
         "REQUIRES_COMPONENT는 상위 조립품에서 하위 부품 방향이므로, "
-        "부품의 사용처는 역방향으로, 완제품의 하위 부품은 정방향으로 탐색한다.",
+        "부품의 사용처는 역방향으로, 완제품의 하위 부품은 정방향으로 탐색한다. "
+        "경로와 pathProductIds·quantityPerAssembly 같은 결과 배열은 모두 "
+        "질문의 anchor에서 destination 방향으로 반환한다.",
         f"BOM 가변 길이 경로는 최대 {query_policy.bom_max_depth}단계이며, "
         f"질문에 1~{query_policy.bom_max_depth} 범위의 깊이가 명시되면 그 값을 "
-        "사용한다.",
+        "사용한다. Neo4j 5 호환 문법인 "
+        f"[:REQUIRES_COMPONENT*1..{query_policy.bom_max_depth}]를 사용하고 "
+        "상한 없는 가변 경로 또는 Cypher 25 전용 quantified path 문법은 사용하지 않는다.",
         "BOM 경로의 모든 REQUIRES_COMPONENT 관계는 "
         f"{query_policy.bom_as_of_date} 기준으로 startDate <= 기준일이고 "
-        "endDate가 없거나 기준일 < endDate여야 한다.",
+        "endDate가 없거나 기준일 < endDate여야 한다. 이 validity predicate는 "
+        "MATCH 직후 relationships(path)에 적용해 다른 집계·조인보다 먼저 필터링한다.",
+        "경로 길이는 length(path)로 계산한다. size()는 list 또는 string 길이에만 "
+        "사용하며 path 자체에 사용하지 않는다.",
+        "WITH 뒤에서 참조할 변수와 계산 alias는 모두 WITH projection에 포함한다. "
+        "nodes(path)와 relationships(path)는 expression으로만 사용하고 MATCH pattern처럼 "
+        "변수에 할당하지 않는다.",
+        "경로 내 node uniqueness는 Product node 자체가 아니라 productId 값으로 비교하며, "
+        "membership 제외 조건은 NOT expression IN list 형태로 쓴다.",
+        "두 anchor의 공통 부품은 anchor별 min(depth)를 먼저 계산한 다음 공통 component를 "
+        "결합한다.",
+        "공급업체가 선택 사항이면 OPTIONAL MATCH를 사용해 공급업체가 없는 component 행도 "
+        "보존한다.",
+        "ORDER BY에서 사용하는 계산 alias는 최종 RETURN에도 같은 alias로 포함한다.",
         "REQUIRES_COMPONENT 탐색에서 완제품을 반환하면 "
         "sellableFinishedGood = true로 제한한다. 해당 계층·경로 결과에는 "
         "시작·도착 Product의 ID·이름, 깊이와 전체 Product ID·이름 경로를 "
-        "포함하고 서로 다른 경로를 합치지 않는다. 하위 부품 계층에서는 한 "
-        "경로에 같은 productId가 반복되지 않도록 경로 노드의 productId 목록을 "
-        "기준으로 중복을 검사하며, productId 값과 Node 목록을 직접 비교하지 "
-        "않는다. 여러 경로는 깊이, 도착 Product ID, 전체 ID 경로 순으로 "
-        "정렬한다.",
+        "포함하고 서로 다른 경로를 합치지 않는다. 여러 경로는 깊이, 도착 "
+        "Product ID, 전체 ID 경로 순으로 정렬한다.",
     )
 
 
