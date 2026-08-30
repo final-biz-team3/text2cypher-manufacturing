@@ -60,7 +60,7 @@ def test_canonical_rq_contracts_cases_and_gold_are_frozen() -> None:
     ]
 
     assert _digest(contracts) == (
-        "83228cb969449c0eeaf31059e854ab00bb355724985e4b584a86c98fe29e7368"
+        "a11b8920ae6869d7de8b9d418724a808e45f26a4ad2bb8a35a825365bec29c30"
     )
     assert _digest(cases) == (
         "886a90caa937626181f7cf4af8bb498c4cfba16aface24c6aece6e442896dd77"
@@ -88,7 +88,7 @@ def test_holdout_contracts_cases_and_gold_are_frozen() -> None:
     ]
 
     assert _digest(contracts) == (
-        "f9daf433ad35b6f3c1ada6ded8b8d634f1e2914953a59fcf189233157131d32b"
+        "9a380efee9ef5ab1786a7e3abc9070673daf5fd39eadc3f9664c7194726e87d9"
     )
     assert _digest(cases) == (
         "e2877a0411c91ad58e2f1827955e6ec3ed8ed67623e5cb42aa90a7f980f97747"
@@ -137,8 +137,7 @@ def test_holdout_route_and_support_distribution_is_locked() -> None:
         "HYBRID": 2,
     }
     assert Counter(contract.support_status for contract in contracts) == {
-        "FULLY_EVALUATED": 8,
-        "QUERY_EVALUATED_FINAL_JOIN_PENDING": 2,
+        "FULLY_EVALUATED": 10,
     }
     assert manifest.contracts["HQ01"].expected_entities == [
         {"productId": 771, "productName": "Mountain-100 Silver, 38"},
@@ -162,13 +161,18 @@ def test_holdout_route_and_support_distribution_is_locked() -> None:
     }
 
 
-def test_hybrid_contracts_are_partial_query_evaluated() -> None:
+def test_hybrid_contracts_have_frozen_final_results() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
 
-    for contract_id in ("RQ18", "RQ19", "RQ20"):
+    for contract_id in ("RQ18", "RQ19", "RQ20", "HQ09", "HQ10"):
         contract = manifest.contracts[contract_id]
-        assert contract.support_status == "QUERY_EVALUATED_FINAL_JOIN_PENDING"
+        assert contract.support_status == "FULLY_EVALUATED"
         assert {subquery.tool for subquery in contract.subqueries} == {"sql", "graph"}
+        assert contract.final_result is not None
+
+    assert manifest.contracts["RQ18"].final_result.row_count == 97  # type: ignore[union-attr]
+    assert manifest.contracts["RQ19"].final_result.transform == "bom_shortage_v1"  # type: ignore[union-attr]
+    assert manifest.contracts["RQ20"].final_result.row_count == 2  # type: ignore[union-attr]
 
     assert manifest.contracts["RQ18"].subqueries[1].input_bindings == {
         "componentIds": "graph_impact.componentId"
@@ -188,9 +192,7 @@ def test_manifest_routes_support_and_step_counts_match_rq_contract() -> None:
             assert contract.route == "GRAPH"
         else:
             assert contract.route == "HYBRID"
-        assert contract.support_status == (
-            "FULLY_EVALUATED" if number <= 17 else "QUERY_EVALUATED_FINAL_JOIN_PENDING"
-        )
+        assert contract.support_status == "FULLY_EVALUATED"
         assert len(contract.subqueries) == (1 if number <= 17 else 2)
 
 
@@ -290,6 +292,38 @@ def test_hybrid_responsibilities_dependencies_and_join_keys_are_locked() -> None
             for subquery in manifest.contracts[contract_id].subqueries
         ]
         assert actual_steps == expected_steps
+
+
+def test_final_gold_files_are_frozen_and_not_referenced_by_production_code() -> None:
+    manifest_path = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    final_gold = [
+        (
+            f"queries/evaluation/{contract['finalResult']['gold']}",
+            (manifest_path.parent / contract["finalResult"]["gold"]).read_text(
+                encoding="utf-8"
+            ),
+        )
+        for contract in raw["contracts"]
+        if "finalResult" in contract
+    ]
+
+    assert _digest(final_gold) == (
+        "ed621774baa5e6249ca0eb4d26cd134e787e5ef242ad25c1706bda15354a747d"
+    )
+    production_files = [
+        path
+        for directory in (
+            PROJECT_ROOT / "backend/orchestrator",
+            PROJECT_ROOT / "backend/api",
+        )
+        for path in directory.rglob("*.py")
+    ]
+    production_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in production_files
+    )
+    assert "queries/evaluation" not in production_text
+    assert "gold/final" not in production_text
 
 
 def test_evaluation_manifest_stays_aligned_with_query_contracts() -> None:

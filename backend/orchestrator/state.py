@@ -1,6 +1,6 @@
 from typing import Any, Literal, NotRequired, TypedDict
 
-from orchestrator.planning import Subquery
+from orchestrator.planning import BomShortageTransform, Subquery
 
 EmptyReason = Literal["NO_DATA", "INCONCLUSIVE"]
 CompositionMode = Literal["single", "joined", "separate"]
@@ -15,6 +15,7 @@ class ComposedSection(TypedDict):
 
 class ComposedResult(TypedDict):
     mode: CompositionMode
+    transform: NotRequired[str]
     rows: list[dict[str, Any]]
     sections: dict[str, ComposedSection]
     error: str | None
@@ -38,6 +39,8 @@ class OrchestratorState(TypedDict):
     tool_plan: NotRequired[list[str]]
 
     subqueries: NotRequired[list[Subquery]]
+
+    resultTransform: NotRequired[BomShortageTransform | None]
 
     # tool_plan에 따라 생성된 읽기 전용 쿼리 (DB 실행 전 단계)
     sql_query: NotRequired[str | None]

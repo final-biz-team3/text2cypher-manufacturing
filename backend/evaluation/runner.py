@@ -1,6 +1,7 @@
 """프로덕션 오케스트레이터 구성요소를 사용하는 평가 실행기."""
 
 import asyncio
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,14 +35,17 @@ from evaluation.models import (
     EvaluationContract,
     EvaluationManifest,
     ExpectedSubquery,
+    FinalResultContract,
 )
 from evaluation.normalization import normalize_rows, normalized_sha256
 from evaluation.observability import CountingOpenAIClient
 from evaluation.safety import validate_read_only_cypher, validate_read_only_sql
+from orchestrator.composition import compose_results
 from orchestrator.errors import AppError
 from orchestrator.graph import build_orchestrator_graph
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import RoutePlanError, make_route_query_node
+from orchestrator.planning import BomShortageTransform
 
 _CONNECTION_ERRORS = (
     psycopg.OperationalError,
@@ -191,11 +195,11 @@ class EvaluationRunner:
                 f"Gold 쿼리를 읽을 수 없습니다: {expected.gold_file}: {exc}"
             ) from exc
 
-    def _gold_result(
+    def _gold_source_result(
         self,
         expected: ExpectedSubquery,
         parameters: dict[str, Any],
-    ) -> tuple[list[dict[str, Any]], str]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
         query = self._gold_query(expected)
         try:
             rows = self._execute(
@@ -214,7 +218,163 @@ class EvaluationRunner:
             raise InfrastructureError(
                 f"Gold 실행 실패 ({expected.id}, {expected.gold_file.name}): {exc}"
             ) from exc
-        return normalized, normalized_sha256(normalized)
+        return rows, normalized, normalized_sha256(normalized)
+
+    def _gold_result(
+        self,
+        expected: ExpectedSubquery,
+        parameters: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], str]:
+        _, normalized, gold_hash = self._gold_source_result(expected, parameters)
+        return normalized, gold_hash
+
+    @staticmethod
+    def _expected_transform(
+        contract: EvaluationContract, case: EvaluationCase
+    ) -> BomShortageTransform | None:
+        final = contract.final_result
+        if final is None or final.transform is None:
+            return None
+        production_qty = case.parameters.get("productionQty")
+        if isinstance(production_qty, bool) or not isinstance(
+            production_qty, int | float
+        ):
+            raise InfrastructureError(
+                f"{case.case_id} final transform productionQty가 없습니다."
+            )
+        return {"type": "bom_shortage_v1", "productionQty": production_qty}
+
+    @staticmethod
+    def _final_gold_rows(final: FinalResultContract) -> list[dict[str, Any]]:
+        try:
+            raw = json.loads(final.gold_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise InfrastructureError(
+                f"Final Gold를 읽을 수 없습니다: {final.gold_file}: {exc}"
+            ) from exc
+        if not isinstance(raw, list) or any(not isinstance(row, dict) for row in raw):
+            raise InfrastructureError(
+                f"Final Gold는 객체 행 배열이어야 합니다: {final.gold_file}"
+            )
+        try:
+            normalized = normalize_rows(
+                raw,
+                required_outputs=final.required_outputs,
+                aliases={},
+                ordering=final.ordering,
+            )
+        except ResultContractError as exc:
+            raise InfrastructureError(
+                f"Final Gold 결과 계약 오류 ({final.gold_file.name}): {exc}"
+            ) from exc
+        actual_hash = normalized_sha256(normalized)
+        if len(normalized) != final.row_count or actual_hash != final.sha256:
+            raise InfrastructureError(
+                f"Final Gold hash/rowCount 불일치: {final.gold_file.name}"
+            )
+        return normalized
+
+    def _validate_composed_gold(
+        self,
+        contract: EvaluationContract,
+        case: EvaluationCase,
+        source_results: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        final = contract.final_result
+        if final is None:
+            return None
+        composed = compose_results(
+            [item.planning_shape() for item in contract.subqueries],
+            source_results,
+            row_limit=max(final.row_count + 1, 1),
+            result_transform=self._expected_transform(contract, case),
+        )
+        if composed.get("error") is not None:
+            raise InfrastructureError(
+                f"Final Gold production composer 실패 ({case.case_id}): "
+                f"{composed['error']}"
+            )
+        if (
+            composed.get("mode") != final.mode
+            or composed.get("transform") != final.transform
+            or composed.get("truncated") is True
+        ):
+            raise InfrastructureError(
+                f"Final Gold composition 계약 불일치: {case.case_id}"
+            )
+        expected_rows = self._final_gold_rows(final)
+        try:
+            actual_rows = normalize_rows(
+                composed["rows"],
+                required_outputs=final.required_outputs,
+                aliases={},
+                ordering=final.ordering,
+            )
+        except ResultContractError as exc:
+            raise InfrastructureError(
+                f"Final Gold composer 결과 계약 오류 ({case.case_id}): {exc}"
+            ) from exc
+        actual_hash = normalized_sha256(actual_rows)
+        if actual_hash != final.sha256 or actual_rows != expected_rows:
+            raise InfrastructureError(
+                f"Final Gold composer 결과 불일치: {case.case_id}"
+            )
+        return {
+            "mode": final.mode,
+            "transform": final.transform,
+            "goldFile": final.gold_file.name,
+            "goldHash": final.sha256,
+            "rowCount": len(actual_rows),
+            "status": "PASS",
+        }
+
+    @staticmethod
+    def _score_final_result(
+        final: FinalResultContract,
+        composed: Any,
+    ) -> tuple[bool, dict[str, Any]]:
+        comparison: dict[str, Any] = {
+            "modePass": isinstance(composed, dict)
+            and composed.get("mode") == final.mode,
+            "transformPass": isinstance(composed, dict)
+            and composed.get("transform") == final.transform,
+            "rowCountPass": isinstance(composed, dict)
+            and composed.get("total_count") == final.row_count
+            and composed.get("truncated") is False,
+            "resultContractPass": False,
+            "resultPass": False,
+        }
+        if not isinstance(composed, dict) or composed.get("error") is not None:
+            return False, comparison
+        try:
+            normalized = normalize_rows(
+                composed.get("rows", []),
+                required_outputs=final.required_outputs,
+                aliases={},
+                ordering=final.ordering,
+            )
+        except ResultContractError as exc:
+            comparison["error"] = str(exc)
+            return False, comparison
+        comparison["resultContractPass"] = True
+        candidate_hash = normalized_sha256(normalized)
+        comparison["candidateHash"] = candidate_hash
+        comparison["goldHash"] = final.sha256
+        comparison["candidateRowCount"] = len(normalized)
+        comparison["goldRowCount"] = final.row_count
+        comparison["candidateSample"] = normalized[:5]
+        comparison["resultPass"] = candidate_hash == final.sha256
+        passed = all(
+            comparison[key] is True
+            for key in (
+                "modePass",
+                "transformPass",
+                "rowCountPass",
+                "resultContractPass",
+                "resultPass",
+            )
+        )
+        return passed, comparison
 
     def validate_gold(self, cases: list[EvaluationCase]) -> EvaluationRun:
         """모델 호출 없이 모든 Gold와 dependency binding을 실행한다."""
@@ -223,12 +383,21 @@ class EvaluationRunner:
         for case in cases:
             contract = self.manifest.contracts[case.contract_id]
             upstream: dict[str, list[dict[str, Any]]] = {}
+            source_results: dict[str, dict[str, Any]] = {}
             subquery_records: list[dict[str, Any]] = []
             for expected in contract.subqueries:
                 inputs = collect_input_bindings(expected.input_bindings, upstream)
                 parameters = {**case.parameters, **inputs}
-                normalized, gold_hash = self._gold_result(expected, parameters)
+                raw_rows, normalized, gold_hash = self._gold_source_result(
+                    expected, parameters
+                )
                 upstream[expected.id] = normalized
+                source_results[expected.tool] = {
+                    "result": raw_rows,
+                    "error": None,
+                    "attempts": [],
+                    "empty_reason": "NO_DATA" if not normalized else None,
+                }
                 subquery_records.append(
                     {
                         "id": expected.id,
@@ -243,6 +412,7 @@ class EvaluationRunner:
                         "rowCount": len(normalized),
                     }
                 )
+            final_record = self._validate_composed_gold(contract, case, source_results)
             records.append(
                 {
                     "caseId": case.case_id,
@@ -254,6 +424,7 @@ class EvaluationRunner:
                     "supportStatus": contract.support_status,
                     "status": "GOLD_VALIDATED",
                     "subqueries": subquery_records,
+                    "finalResult": final_record,
                 }
             )
         return EvaluationRun(records, snapshot, False)
@@ -543,6 +714,7 @@ class EvaluationRunner:
             case,
             plan.get("tool_plan"),
             plan.get("subqueries"),
+            plan.get("resultTransform"),
         )
         subquery_records = self._evaluate_subqueries(
             contract,
@@ -605,6 +777,10 @@ class EvaluationRunner:
             if item.get("failureCategory") not in {None, "DEPENDENCY_BLOCKED"}
         )
         failure_reasons = list(dict.fromkeys(failure_reasons))
+        source_mode_final_evaluated = (
+            contract.support_status == "FULLY_EVALUATED"
+            and contract.final_result is None
+        )
         record.update(
             {
                 "toolPlan": plan.get("tool_plan"),
@@ -615,11 +791,12 @@ class EvaluationRunner:
                 "failureReasons": failure_reasons,
                 "queryPipelinePass": query_pipeline_pass,
                 "semanticResultPass": semantic_result_pass,
-                "finalResultEvaluated": contract.support_status == "FULLY_EVALUATED",
+                # source mode는 하위 query를 각각 진단할 뿐 composition을 실행하지
+                # 않는다. 명시적인 finalResult 계약이 있는 HYBRID를 source hash가
+                # 맞았다는 이유만으로 최종 결과까지 통과한 것으로 기록하지 않는다.
+                "finalResultEvaluated": source_mode_final_evaluated,
                 "finalResultPass": (
-                    semantic_result_pass
-                    if contract.support_status == "FULLY_EVALUATED"
-                    else None
+                    semantic_result_pass if source_mode_final_evaluated else None
                 ),
                 "status": "PASS" if query_pipeline_pass else "FAIL",
             }
@@ -877,7 +1054,11 @@ class EvaluationRunner:
         plan_tool_plan = state.get("tool_plan")
         actual_subqueries = state.get("subqueries", [])
         comparison = compare_execution_contract(
-            contract, case, plan_tool_plan, actual_subqueries
+            contract,
+            case,
+            plan_tool_plan,
+            actual_subqueries,
+            state.get("resultTransform"),
         )
         required_outputs_pass, binding_pass = self._planning_measurements(
             contract, actual_subqueries, comparison["idMapping"]
@@ -930,11 +1111,24 @@ class EvaluationRunner:
 
         composed = state.get("composed_result")
         composition_pass = isinstance(composed, dict) and composed.get("error") is None
-        final_evaluated = contract.support_status == "FULLY_EVALUATED"
-        composed_result_pass: bool | None = (
-            source_result_pass if final_evaluated and composition_pass else None
+        final_evaluated = (
+            contract.final_result is not None
+            or contract.support_status == "FULLY_EVALUATED"
         )
-        final_result_pass = composed_result_pass if final_evaluated else None
+        final_comparison: dict[str, Any] | None = None
+        final_contract_pass: bool | None = None
+        final_result_pass: bool | None
+        if contract.final_result is not None:
+            final_result_pass, final_comparison = self._score_final_result(
+                contract.final_result, composed
+            )
+            final_contract_pass = final_comparison["resultContractPass"]
+            composed_result_pass: bool | None = final_result_pass
+        else:
+            composed_result_pass = (
+                source_result_pass if final_evaluated and composition_pass else None
+            )
+            final_result_pass = composed_result_pass if final_evaluated else None
         safety_values = [
             item.get("checks", {}).get("safety") for item in subquery_records
         ]
@@ -962,6 +1156,8 @@ class EvaluationRunner:
             failure_stage = "RESULT_CONTRACT"
         elif not composition_pass:
             failure_stage = "COMPOSITION"
+        elif final_contract_pass is False:
+            failure_stage = "RESULT_CONTRACT"
         elif source_result_pass is not True or (
             final_evaluated and final_result_pass is not True
         ):
@@ -1001,6 +1197,7 @@ class EvaluationRunner:
                 "contractComparison": comparison,
                 "subqueries": subquery_records,
                 "composedResult": composed,
+                "finalResultComparison": final_comparison,
                 "checks": checks,
                 "failureReasons": failure_reasons,
                 "entityPass": entity_pass,

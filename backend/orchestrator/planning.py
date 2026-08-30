@@ -1,9 +1,25 @@
 """라우터가 반환하는 실행 계획의 공통 타입과 검증 규칙."""
 
 import json
-from typing import Any, NotRequired, TypedDict
+import math
+from typing import Any, Literal, NotRequired, TypedDict
 
 SUPPORTED_TOOLS = {"sql", "graph"}
+
+BOM_SHORTAGE_GRAPH_OUTPUTS = frozenset(
+    {
+        "finishedProductId",
+        "finishedProductName",
+        "componentId",
+        "componentName",
+        "depth",
+        "pathProductIds",
+        "quantityPerAssembly",
+        "supplierId",
+        "supplierName",
+    }
+)
+BOM_SHORTAGE_SQL_OUTPUTS = frozenset({"componentId", "makeFlag", "actualStock"})
 
 _BINDING_SCHEMA_VARIANTS = [
     {
@@ -67,8 +83,22 @@ EXECUTION_PLAN_JSON_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
             },
         },
+        "resultTransform": {
+            "anyOf": [
+                {"type": "null"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["bom_shortage_v1"]},
+                        "productionQty": {"type": "number"},
+                    },
+                    "required": ["type", "productionQty"],
+                    "additionalProperties": False,
+                },
+            ]
+        },
     },
-    "required": ["tool_plan", "subqueries"],
+    "required": ["tool_plan", "subqueries", "resultTransform"],
     "additionalProperties": False,
 }
 
@@ -85,9 +115,15 @@ class Subquery(TypedDict):
     inputBindings: NotRequired[dict[str, str]]
 
 
+class BomShortageTransform(TypedDict):
+    type: Literal["bom_shortage_v1"]
+    productionQty: int | float
+
+
 class ExecutionPlan(TypedDict):
     tool_plan: list[str]
     subqueries: list[Subquery]
+    resultTransform: NotRequired[BomShortageTransform | None]
 
 
 def _string_list(value: Any, field: str, subquery_id: str) -> list[str]:
@@ -262,6 +298,47 @@ def _legacy_subqueries(tool_plan: list[str], query: str) -> list[Subquery]:
     ]
 
 
+def validate_result_transform(
+    raw_transform: Any, subqueries: list[Subquery]
+) -> BomShortageTransform | None:
+    """allowlist된 최종 계산과 그 source 계약을 함께 검증한다."""
+    if raw_transform is None:
+        return None
+    if not isinstance(raw_transform, dict) or set(raw_transform) != {
+        "type",
+        "productionQty",
+    }:
+        raise ValueError("resultTransform 형식이 잘못됐습니다.")
+    if raw_transform.get("type") != "bom_shortage_v1":
+        raise ValueError("지원하지 않는 resultTransform입니다.")
+    production_qty = raw_transform.get("productionQty")
+    if isinstance(production_qty, bool) or not isinstance(production_qty, int | float):
+        raise ValueError("bom_shortage_v1 productionQty는 유한한 양수여야 합니다.")
+    try:
+        finite_quantity = math.isfinite(production_qty)
+    except OverflowError:
+        finite_quantity = False
+    if not finite_quantity or production_qty <= 0:
+        raise ValueError("bom_shortage_v1 productionQty는 유한한 양수여야 합니다.")
+    if len(subqueries) != 2 or [item["tool"] for item in subqueries] != [
+        "graph",
+        "sql",
+    ]:
+        raise ValueError("bom_shortage_v1은 GRAPH → SQL 2단계 계획만 지원합니다.")
+    graph, sql = subqueries
+    if sql["dependsOn"] != [graph["id"]]:
+        raise ValueError("bom_shortage_v1 SQL은 GRAPH 단계에 의존해야 합니다.")
+    if graph["joinKeys"] != ["componentId"] or sql["joinKeys"] != ["componentId"]:
+        raise ValueError("bom_shortage_v1 join key는 양쪽 모두 componentId여야 합니다.")
+    if set(graph["requiredOutputs"]) != BOM_SHORTAGE_GRAPH_OUTPUTS:
+        raise ValueError("bom_shortage_v1 GRAPH requiredOutputs 계약이 잘못됐습니다.")
+    if set(sql["requiredOutputs"]) != BOM_SHORTAGE_SQL_OUTPUTS:
+        raise ValueError("bom_shortage_v1 SQL requiredOutputs 계약이 잘못됐습니다.")
+    if sql.get("inputBindings") != {"componentIds": f"{graph['id']}.componentId"}:
+        raise ValueError("bom_shortage_v1 componentIds binding 계약이 잘못됐습니다.")
+    return {"type": "bom_shortage_v1", "productionQty": production_qty}
+
+
 def parse_execution_plan(content: str, query: str) -> ExecutionPlan:
     """LLM의 JSON object 또는 array 응답을 검증된 실행 계획으로 바꾼다."""
     raw = json.loads(content)
@@ -305,4 +382,11 @@ def parse_execution_plan(content: str, query: str) -> ExecutionPlan:
                 )
     if planned_tools != tool_plan:
         raise ValueError("tool_plan이 subqueries의 실행 순서와 일치하지 않습니다.")
-    return {"tool_plan": tool_plan, "subqueries": validated}
+    transform = validate_result_transform(
+        raw.get("resultTransform") if isinstance(raw, dict) else None,
+        validated,
+    )
+    result: ExecutionPlan = {"tool_plan": tool_plan, "subqueries": validated}
+    if transform is not None:
+        result["resultTransform"] = transform
+    return result

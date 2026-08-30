@@ -3,7 +3,12 @@
 from collections.abc import Mapping
 from typing import Any, cast
 
-from orchestrator.planning import Subquery
+from orchestrator.bom_shortage import calculate_bom_shortages
+from orchestrator.planning import (
+    BomShortageTransform,
+    Subquery,
+    validate_result_transform,
+)
 from orchestrator.state import (
     ComposedResult,
     ComposedSection,
@@ -15,8 +20,10 @@ from orchestrator.state import (
 _EMPTY_REASONS = {"NO_DATA", "INCONCLUSIVE"}
 
 
-def _failure(mode: CompositionMode, message: str) -> ComposedResult:
-    return {
+def _failure(
+    mode: CompositionMode, message: str, *, transform: str | None = None
+) -> ComposedResult:
+    result: ComposedResult = {
         "mode": mode,
         "rows": [],
         "sections": {},
@@ -25,6 +32,9 @@ def _failure(mode: CompositionMode, message: str) -> ComposedResult:
         "total_count": 0,
         "truncated": False,
     }
+    if transform is not None:
+        result["transform"] = transform
+    return result
 
 
 def _source_rows(
@@ -235,11 +245,59 @@ def _compose_joined(
     }
 
 
+def _compose_bom_shortage(
+    sources: list[tuple[list[dict[str, Any]], EmptyReason | None]],
+    transform: BomShortageTransform,
+    *,
+    row_limit: int,
+) -> ComposedResult:
+    mode: CompositionMode = "joined"
+    graph_rows, graph_reason = sources[0]
+    sql_rows, sql_reason = sources[1]
+    transform_name = transform["type"]
+    if not graph_rows and not sql_rows:
+        empty_reason: EmptyReason = (
+            "INCONCLUSIVE"
+            if "INCONCLUSIVE" in (graph_reason, sql_reason)
+            else "NO_DATA"
+        )
+        return {
+            "mode": mode,
+            "transform": transform_name,
+            "rows": [],
+            "sections": {},
+            "error": None,
+            "empty_reason": empty_reason,
+            "total_count": 0,
+            "truncated": False,
+        }
+    try:
+        final_rows = calculate_bom_shortages(
+            graph_rows,
+            sql_rows,
+            production_qty=transform["productionQty"],
+        )
+    except ValueError as exc:
+        return _failure(mode, str(exc), transform=transform_name)
+    stored_rows = final_rows[:row_limit]
+    return {
+        "mode": mode,
+        "transform": transform_name,
+        "rows": stored_rows,
+        "sections": {},
+        "error": None,
+        "empty_reason": "NO_DATA" if not final_rows else None,
+        "total_count": len(final_rows),
+        "truncated": len(stored_rows) < len(final_rows),
+    }
+
+
 def compose_results(
     subqueries: list[Subquery],
     tool_results: Mapping[str, dict[str, Any] | None],
     *,
     row_limit: int,
+    result_transform: BomShortageTransform | None = None,
 ) -> ComposedResult:
     """실행 계획 순서와 join 계약에 따라 source 결과를 조합한다.
 
@@ -263,15 +321,36 @@ def compose_results(
     else:
         return _failure("joined", "HYBRID joinKeys 계약이 일치하지 않습니다.")
     if row_limit < 0:
-        return _failure(mode, "결과 행 상한은 0 이상이어야 합니다.")
+        transform_name = (
+            result_transform["type"] if result_transform is not None else None
+        )
+        return _failure(
+            mode,
+            "결과 행 상한은 0 이상이어야 합니다.",
+            transform=transform_name,
+        )
+
+    try:
+        validated_transform = validate_result_transform(result_transform, subqueries)
+    except ValueError as exc:
+        return _failure(mode, str(exc), transform="bom_shortage_v1")
 
     sources: list[tuple[list[dict[str, Any]], EmptyReason | None]] = []
     for subquery in subqueries:
         rows, empty_reason, failure = _source_rows(subquery, tool_results, mode)
         if failure is not None:
+            if validated_transform is not None:
+                failure["transform"] = validated_transform["type"]
             return failure
         assert rows is not None
         sources.append((rows, empty_reason))
+
+    if validated_transform is not None:
+        return _compose_bom_shortage(
+            sources,
+            validated_transform,
+            row_limit=row_limit,
+        )
 
     if mode == "single":
         rows, empty_reason = sources[0]

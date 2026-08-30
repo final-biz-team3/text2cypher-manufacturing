@@ -1,0 +1,22 @@
+[
+  {
+    "finishedProductId": 680,
+    "finishedProductName": "HL Road Frame - Black, 58",
+    "productionQty": "10.000000",
+    "componentId": 492,
+    "componentName": "Paint - Black",
+    "requiredQty": "80.000000",
+    "actualStock": "47.000000",
+    "shortageQty": "33.000000",
+    "suppliers": [
+      {
+        "supplierId": 1584,
+        "supplierName": "Trey Research"
+      },
+      {
+        "supplierId": 1692,
+        "supplierName": "Carlson Specialties"
+      }
+    ]
+  }
+]

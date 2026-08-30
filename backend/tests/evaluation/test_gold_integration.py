@@ -1,3 +1,4 @@
+from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 from typing import Any
 
@@ -7,11 +8,87 @@ from dotenv import load_dotenv
 from evaluation.contracts import collect_input_bindings
 from evaluation.database import ReadOnlyDatabaseExecutor
 from evaluation.models import EvaluationManifest, load_manifest
+from evaluation.normalization import normalize_rows, normalized_sha256
 from evaluation.runner import EvaluationRunner
 
 pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_QUANTUM = Decimal("0.000001")
+
+
+def _reference_rq19_shortages(
+    graph_rows: list[dict[str, Any]],
+    sql_rows: list[dict[str, Any]],
+    production_qty: int | float,
+) -> list[dict[str, Any]]:
+    """production transform와 코드를 공유하지 않는 RQ19 교차 검증 계산."""
+    production = Decimal(str(production_qty))
+    paths: dict[int, dict[tuple[Any, ...], Decimal]] = {}
+    component_names: dict[int, str] = {}
+    finished_products: dict[int, str] = {}
+    suppliers: dict[int, set[tuple[int, str]]] = {}
+    for row in graph_rows:
+        component_id = row["componentId"]
+        quantities = tuple(Decimal(str(value)) for value in row["quantityPerAssembly"])
+        path_key = (
+            tuple(row["pathProductIds"]),
+            quantities,
+        )
+        path_required = production
+        for quantity in quantities:
+            path_required *= quantity
+        paths.setdefault(component_id, {}).setdefault(path_key, path_required)
+        component_names.setdefault(component_id, row["componentName"])
+        finished_products.setdefault(
+            row["finishedProductId"], row["finishedProductName"]
+        )
+        if row["supplierId"] is not None:
+            suppliers.setdefault(component_id, set()).add(
+                (row["supplierId"], row["supplierName"])
+            )
+
+    assert len(finished_products) == 1
+    finished_product_id, finished_product_name = next(iter(finished_products.items()))
+    sql_by_component = {
+        row["componentId"]: (row["makeFlag"], Decimal(str(row["actualStock"])))
+        for row in sql_rows
+    }
+    assert len(sql_by_component) == len(sql_rows)
+    assert set(paths) == set(sql_by_component)
+
+    result: list[dict[str, Any]] = []
+    for component_id, component_paths in paths.items():
+        make_flag, actual_stock = sql_by_component[component_id]
+        if make_flag is not False:
+            continue
+        required = sum(component_paths.values(), Decimal(0))
+        shortage = max(required - actual_stock, Decimal(0))
+        if shortage <= 0:
+            continue
+        normalize = lambda value: value.quantize(  # noqa: E731
+            _QUANTUM, rounding=ROUND_HALF_EVEN
+        )
+        result.append(
+            {
+                "finishedProductId": finished_product_id,
+                "finishedProductName": finished_product_name,
+                "productionQty": normalize(production),
+                "componentId": component_id,
+                "componentName": component_names[component_id],
+                "requiredQty": normalize(required),
+                "actualStock": normalize(actual_stock),
+                "shortageQty": normalize(shortage),
+                "suppliers": [
+                    {"supplierId": supplier_id, "supplierName": supplier_name}
+                    for supplier_id, supplier_name in sorted(
+                        suppliers.get(component_id, set())
+                    )
+                ],
+            }
+        )
+    result.sort(key=lambda row: (-row["shortageQty"], row["componentId"]))
+    return result
 
 
 def _holdout_gold_rows(
@@ -56,6 +133,27 @@ def test_all_canonical_gold_queries_match_the_approved_snapshot() -> None:
     }
     assert len(subqueries) == 23
     assert all(subquery["status"] == "PASS" for subquery in subqueries.values())
+    assert {
+        record["caseId"]: (
+            record["finalResult"]["rowCount"],
+            record["finalResult"]["goldHash"],
+        )
+        for record in result.records
+        if record["finalResult"] is not None
+    } == {
+        "RQ18": (
+            97,
+            "1ff19e34197de8c878aee22c8d82480dfcd9de8e17f107d37fdbc83c86b36840",
+        ),
+        "RQ19": (
+            1,
+            "6e9fdfba56efd0926bae0446cb73f87ef8aa272745b2ba88b2b091cc53aa9c84",
+        ),
+        "RQ20": (
+            2,
+            "20a269085f330948801ca6caf85d70c47a58f578a169316fc1308626ae25ccb6",
+        ),
+    }
     assert {
         key: (subquery["rowCount"], subquery["goldHash"])
         for key, subquery in subqueries.items()
@@ -155,6 +253,50 @@ def test_all_canonical_gold_queries_match_the_approved_snapshot() -> None:
     }
 
 
+def test_rq19_final_gold_matches_an_independent_reference_calculation() -> None:
+    """RQ19 static final Gold를 production composer와 독립된 계산으로 검증한다."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    case = next(case for case in manifest.cases if case.case_id == "RQ19")
+    contract = manifest.contracts[case.contract_id]
+    database = ReadOnlyDatabaseExecutor.from_environment()
+    try:
+        runner = EvaluationRunner(
+            manifest,
+            database,
+            None,
+            project_root=PROJECT_ROOT,
+        )
+        upstream: dict[str, list[dict[str, Any]]] = {}
+        sources: dict[str, list[dict[str, Any]]] = {}
+        for expected in contract.subqueries:
+            inputs = collect_input_bindings(expected.input_bindings, upstream)
+            _, normalized, _ = runner._gold_source_result(
+                expected, {**case.parameters, **inputs}
+            )
+            upstream[expected.id] = normalized
+            sources[expected.tool] = normalized
+    finally:
+        database.close()
+
+    final = contract.final_result
+    assert final is not None
+    assert len(sources["graph"]) == 25
+    assert len(sources["sql"]) == 21
+    reference_rows = _reference_rq19_shortages(
+        sources["graph"], sources["sql"], case.parameters["productionQty"]
+    )
+    normalized_reference = normalize_rows(
+        reference_rows,
+        required_outputs=final.required_outputs,
+        aliases={},
+        ordering=final.ordering,
+    )
+    assert normalized_reference == runner._final_gold_rows(final)
+    assert len(normalized_reference) == final.row_count
+    assert normalized_sha256(normalized_reference) == final.sha256
+
+
 def test_all_holdout_gold_queries_match_the_approved_snapshot() -> None:
     load_dotenv(PROJECT_ROOT / ".env")
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
@@ -180,6 +322,23 @@ def test_all_holdout_gold_queries_match_the_approved_snapshot() -> None:
     }
     assert len(subqueries) == 12
     assert all(subquery["status"] == "PASS" for subquery in subqueries.values())
+    assert {
+        record["caseId"]: (
+            record["finalResult"]["rowCount"],
+            record["finalResult"]["goldHash"],
+        )
+        for record in result.records
+        if record["finalResult"] is not None
+    } == {
+        "HQ09": (
+            5,
+            "0a3ebf229e1abef92e2cd61569792da3b3c8e5eb6436acf7005d214ba6190b2e",
+        ),
+        "HQ10": (
+            5,
+            "889130d471c609c22cdce8008f64ecbdd8a3912543f4ff2c445fce8e7bbf9918",
+        ),
+    }
     assert {
         key: (subquery["rowCount"], subquery["goldHash"])
         for key, subquery in subqueries.items()

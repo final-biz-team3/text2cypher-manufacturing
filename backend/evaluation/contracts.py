@@ -9,9 +9,10 @@ from evaluation.models import EvaluationCase, EvaluationContract
 
 def compare_execution_contract(
     contract: EvaluationContract,
-    _case: EvaluationCase,
+    case: EvaluationCase,
     tool_plan: Any,
     subqueries: Any,
+    result_transform: Any = None,
 ) -> dict[str, Any]:
     """route와 HYBRID 전달·결합에 필요한 최소 계약만 판정한다."""
     routing_pass = (
@@ -117,7 +118,19 @@ def compare_execution_contract(
             }
         )
 
-    split_pass = exact_steps and all(item["pass"] for item in step_checks)
+    if (
+        contract.final_result is not None
+        and contract.final_result.transform is not None
+    ):
+        transform_pass = result_transform == {
+            "type": contract.final_result.transform,
+            "productionQty": case.parameters.get("productionQty"),
+        }
+    else:
+        transform_pass = result_transform is None
+    split_pass = (
+        exact_steps and all(item["pass"] for item in step_checks) and transform_pass
+    )
     return {
         "routingPass": routing_pass,
         "splitPass": split_pass,
@@ -126,6 +139,7 @@ def compare_execution_contract(
         "actualIds": ids,
         "idMapping": mapping,
         "steps": step_checks,
+        "transformPass": transform_pass,
     }
 
 

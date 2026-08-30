@@ -2,7 +2,13 @@ from typing import Any
 
 import pytest
 
-from orchestrator.planning import parse_execution_plan, validate_subqueries
+from orchestrator.planning import (
+    BOM_SHORTAGE_GRAPH_OUTPUTS,
+    BOM_SHORTAGE_SQL_OUTPUTS,
+    parse_execution_plan,
+    validate_result_transform,
+    validate_subqueries,
+)
 
 
 def _step(
@@ -247,3 +253,52 @@ def test_object_plan_requires_all_canonical_outputs_but_legacy_can_be_empty() ->
         parse_execution_plan('["sql"]', "재고")["subqueries"][0]["requiredOutputs"]
         == []
     )
+
+
+def _shortage_steps() -> list[dict[str, Any]]:
+    return [
+        _step(
+            "graph_bom",
+            outputs=sorted(BOM_SHORTAGE_GRAPH_OUTPUTS),
+            join_keys=["componentId"],
+        ),
+        _step(
+            "sql_stock",
+            tool="sql",
+            depends_on=["graph_bom"],
+            outputs=sorted(BOM_SHORTAGE_SQL_OUTPUTS),
+            join_keys=["componentId"],
+            bindings={"componentIds": "graph_bom.componentId"},
+        ),
+    ]
+
+
+def test_bom_shortage_transform_requires_exact_allowlisted_plan() -> None:
+    steps = validate_subqueries(_shortage_steps())
+
+    assert validate_result_transform(
+        {"type": "bom_shortage_v1", "productionQty": 10}, steps
+    ) == {"type": "bom_shortage_v1", "productionQty": 10}
+
+
+@pytest.mark.parametrize("production_qty", [True, 0, -1, float("inf"), float("nan")])
+def test_bom_shortage_transform_rejects_invalid_production_quantity(
+    production_qty: Any,
+) -> None:
+    steps = validate_subqueries(_shortage_steps())
+
+    with pytest.raises(ValueError, match="유한한 양수"):
+        validate_result_transform(
+            {"type": "bom_shortage_v1", "productionQty": production_qty}, steps
+        )
+
+
+def test_bom_shortage_transform_rejects_wrong_binding_contract() -> None:
+    steps = _shortage_steps()
+    steps[1]["inputBindings"] = {"componentIds": "graph_bom.componentName"}
+    validated = validate_subqueries(steps)
+
+    with pytest.raises(ValueError, match="componentIds binding"):
+        validate_result_transform(
+            {"type": "bom_shortage_v1", "productionQty": 10}, validated
+        )

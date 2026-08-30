@@ -24,6 +24,7 @@ def make_compose_results_node(
                 "graph": state.get("graph_result"),
             },
             row_limit=configured_limit,
+            result_transform=state.get("resultTransform"),
         )
         return {"composed_result": composed}
 

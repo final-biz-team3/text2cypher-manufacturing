@@ -148,3 +148,24 @@ def test_hybrid_plan_must_keep_handoff_and_join_output() -> None:
         "finishedProductName",
         "pathProductIds",
     ]
+
+
+def test_bom_shortage_contract_requires_the_case_production_quantity() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    contract = manifest.contracts["RQ19"]
+    case = next(case for case in manifest.cases if case.case_id == "RQ19")
+    actual = [item.planning_shape() for item in contract.subqueries]
+
+    missing = compare_execution_contract(contract, case, ["graph", "sql"], actual)
+    valid = compare_execution_contract(
+        contract,
+        case,
+        ["graph", "sql"],
+        actual,
+        {"type": "bom_shortage_v1", "productionQty": 10},
+    )
+
+    assert missing["transformPass"] is False
+    assert missing["splitPass"] is False
+    assert valid["transformPass"] is True
+    assert valid["splitPass"] is True

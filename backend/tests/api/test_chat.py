@@ -84,6 +84,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert result["final_answer"] is not None
     assert result["final_answer"].startswith("COMPOSED: ")
     assert "composed_result" not in result
+    assert "resultTransform" not in result
     assert "subqueries" not in result
     assert "subquery_results" not in result
     assert len(openai_client.calls) == 3
@@ -369,5 +370,6 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
     assert result["final_answer"].startswith("COMPOSED: ")
     assert "바인딩 범위를 벗어났습니다" in result["final_answer"]
     assert "composed_result" not in result
+    assert "resultTransform" not in result
     assert "subqueries" not in result
     assert "subquery_results" not in result

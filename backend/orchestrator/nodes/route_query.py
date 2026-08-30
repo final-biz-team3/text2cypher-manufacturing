@@ -69,17 +69,17 @@ canonical source ownership:
 1. 단일 SQL:
 Q: "완제품 Aurora Frame의 현재 재고와 표준원가를 알려줘."
 entity: {"productId": 7001, "productName": "Aurora Frame"}
-A: {"tool_plan":["sql"],"subqueries":[{"id":"sql_inventory_cost","tool":"sql","question":"완제품 Aurora Frame의 현재 재고와 표준원가를 조회한다.","dependsOn":[],"requiredOutputs":["productId","productName","actualStock","standardCost"],"joinKeys":[],"inputBindings":{}}]}
+A: {"tool_plan":["sql"],"subqueries":[{"id":"sql_inventory_cost","tool":"sql","question":"완제품 Aurora Frame의 현재 재고와 표준원가를 조회한다.","dependsOn":[],"requiredOutputs":["productId","productName","actualStock","standardCost"],"joinKeys":[],"inputBindings":{}}],"resultTransform":null}
 
 2. 독립 SQL + GRAPH:
 Q: "활성 공급업체 수와 완제품 Nova Bike의 BOM 경로를 함께 알려줘."
 entity: {"productId": 7002, "productName": "Nova Bike"}
-A: {"tool_plan":["sql","graph"],"subqueries":[{"id":"sql_active_supplier_count","tool":"sql","question":"현재 활성 공급업체 수를 집계한다.","dependsOn":[],"requiredOutputs":["activeSupplierCount"],"joinKeys":[],"inputBindings":{}},{"id":"graph_bom_paths","tool":"graph","question":"완제품 Nova Bike에서 부품까지의 BOM 경로를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly"],"joinKeys":[],"inputBindings":{}}]}
+A: {"tool_plan":["sql","graph"],"subqueries":[{"id":"sql_active_supplier_count","tool":"sql","question":"현재 활성 공급업체 수를 집계한다.","dependsOn":[],"requiredOutputs":["activeSupplierCount"],"joinKeys":[],"inputBindings":{}},{"id":"graph_bom_paths","tool":"graph","question":"완제품 Nova Bike에서 부품까지의 BOM 경로를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly"],"joinKeys":[],"inputBindings":{}}],"resultTransform":null}
 
 3. GRAPH 결과를 SQL filter로 전달하는 의존 HYBRID:
-Q: "완제품 Summit Bike의 BOM 부품별 현재 재고를 알려줘."
+Q: "완제품 Summit Bike를 12개 만들 때 부족한 외부 구매 부품과 공급업체를 알려줘."
 entity: {"productId": 7003, "productName": "Summit Bike"}
-A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_components","tool":"graph","question":"완제품 Summit Bike의 BOM 부품과 경로를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly"],"joinKeys":["componentId"],"inputBindings":{}},{"id":"sql_stock","tool":"sql","question":"앞 단계의 componentId별 현재 재고를 조회한다.","dependsOn":["graph_components"],"requiredOutputs":["componentId","actualStock"],"joinKeys":["componentId"],"inputBindings":{"componentIds":"graph_components.componentId"}}]}
+A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_bom_supply","tool":"graph","question":"완제품 Summit Bike의 유효 BOM 경로별 수량 계수와 활성 공급업체를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly","supplierId","supplierName"],"joinKeys":["componentId"],"inputBindings":{}},{"id":"sql_component_stock","tool":"sql","question":"앞 단계의 componentId별 makeFlag와 현재 재고를 조회한다.","dependsOn":["graph_bom_supply"],"requiredOutputs":["componentId","makeFlag","actualStock"],"joinKeys":["componentId"],"inputBindings":{"componentIds":"graph_bom_supply.componentId"}}],"resultTransform":{"type":"bom_shortage_v1","productionQty":12}}
 
 규칙:
 - 단일 SQL/GRAPH 질문도 subquery를 정확히 1개 만들고 question에 원래 질문의 의미를 보존한다.
@@ -90,6 +90,7 @@ A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_components","tool":"g
 - id는 sql_stock, graph_impact처럼 책임을 나타내며 질문에 없는 RQ 번호를 사용하지 않는다.
 - inputBindings 값은 반드시 "선행단계ID.출력필드" 형식이다.
 - tool_plan은 실제 의존 실행 순서로 쓰고 각 도구는 한 번만 포함한다.
+- resultTransform은 위 부족량 계산 계약에 정확히 해당할 때만 bom_shortage_v1을 사용하고, 나머지는 null이다.
 """
 
 _RESPONSE_FORMAT = {

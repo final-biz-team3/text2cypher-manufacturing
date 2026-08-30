@@ -5,14 +5,14 @@ snapshot 검증값과 source별 Gold 쿼리를 연결한다. Gold 쿼리와 expe
 `businessRules`·`requiredOutputs`는 채점에만 사용하고 후보 생성에는 넣지 않는다.
 후보와 Gold는 동일한 읽기 전용 snapshot에서 실행해 결과 hash로 비교한다. 각
 subquery의 `question`, `businessRules`, `requiredOutputs`는 Gold가 검증하는 결과
-책임의 기준이다. router 계획에서는 전체 결과 스키마를 반복하게 하지 않고, HYBRID
-단계 사이에 전달하거나 결합하는 필드만 필수로 검사한다. 각 Gold 파일의 첫 줄에는
+책임의 기준이다. router 계획의 `requiredOutputs`는 각 source가 반환해야 하는 전체
+canonical alias이며, HYBRID 전달·결합 필드도 여기에 포함한다. 각 Gold 파일의 첫 줄에는
 query ID와 담당 subquery 질문을 적고, manifest와 달라지면 테스트가 실패한다.
 
-RQ01~RQ17과 HQ01~HQ08은 `FULLY_EVALUATED`다. RQ18~RQ20과 HQ09~HQ10은
-source별 SQL/Cypher까지 채점하는 `QUERY_EVALUATED_FINAL_JOIN_PENDING`이다.
-production 오케스트레이터는 HYBRID 결과를 join key로 결합하지만, 평가 러너는 아직
-애플리케이션의 최종 결합 결과를 채점하지 않으므로 이 상태와 점수 범위는 유지한다.
+모든 RQ/HQ는 `FULLY_EVALUATED`다. HYBRID 5개는 source Gold와 별도로
+`gold/final/*.json`에 최종 결합 결과의 row count와 hash를 고정한다. RQ19는
+allowlist된 `bom_shortage_v1` 계산으로 경로별 BOM 수량, 재고와 외부 구매 여부를
+검증해 부족량과 공급업체를 결정적으로 계산한다.
 
 ## 평가 suite
 
@@ -29,9 +29,10 @@ RQ01 계약과 같은 파라미터·Gold로 채점된다. 단일 턴 평가이�
 
 `subqueries`는 평가기와 production 오케스트레이터가 공유하는 계획 계약이다.
 production `/chat`은 `dependsOn`·`inputBindings`에 따라 source를 실행하고 동일한
-`joinKeys`로 내부 최종 데이터를 조합한다. 다만 평가기는 별도의 읽기 전용 DB 실행
-경로에서 source별 결과까지만 채점하므로, 이 점수는 자연어 최종 답변이나 production
-E2E 정확도가 아니다.
+`joinKeys`로 내부 최종 데이터를 조합한다. 정규 평가 모드는 같은 production graph,
+binding, query retry와 composer를 실행한 뒤에만 source/final Gold를 읽어 채점한다.
+`--execution-mode source`는 기존 직접 생성 경로를 진단할 때만 사용한다. 자연어 최종
+답변 생성은 아직 범위 밖이므로 점수는 데이터 결과 정확도다.
 
 ## 기본 실행
 
@@ -150,7 +151,7 @@ CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경�
 - `semanticResultAccuracy`: 비교 가능한 결과 중 source별 실행 결과가 Gold와
   같은 비율
 - `verifiedSemanticPassRate`: 전체 평가 중 실제 Gold 일치가 확인된 비율
-- `finalResultAccuracy`: 최종 결과 평가가 가능한 RQ01~RQ17과 HQ01~HQ08의 Gold
+- `finalResultAccuracy`: 단일 source와 HYBRID final Gold를 포함한 최종 데이터
   결과 정확도
 - `routingAccuracy`: SQL/GRAPH/HYBRID 선택 자체의 정확도
 - `sqlPartialCoverage`/`sqlPartialAccuracy`,

@@ -179,6 +179,50 @@ def test_entity_mismatch_keeps_result_evaluation_but_fails_pipeline() -> None:
     assert record["failureReasons"] == ["ENTITY_MISMATCH"]
 
 
+def test_source_mode_does_not_claim_an_explicit_final_result_was_evaluated() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    case = next(case for case in manifest.cases if case.case_id == "RQ19")
+    contract = manifest.contracts[case.contract_id]
+
+    runner = object.__new__(EvaluationRunner)
+    runner.manifest = manifest
+    runner.resolve_entity = lambda state: {"entity": contract.expected_entities}
+    runner.route_query = lambda state: {
+        "tool_plan": list(contract.tool_plan),
+        "subqueries": [item.planning_shape() for item in contract.subqueries],
+        "resultTransform": {
+            "type": "bom_shortage_v1",
+            "productionQty": case.parameters["productionQty"],
+        },
+    }
+
+    def evaluate_subqueries(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": item.id,
+                "tool": item.tool,
+                "status": "PASS",
+                "checks": {
+                    "generation": True,
+                    "readOnly": True,
+                    "execution": True,
+                    "resultContract": True,
+                    "result": True,
+                },
+            }
+            for item in contract.subqueries
+        ]
+
+    runner._evaluate_subqueries = evaluate_subqueries  # type: ignore[method-assign]
+
+    record = runner._evaluate_case(case, 1)
+
+    assert record["queryPipelinePass"] is True
+    assert record["semanticResultPass"] is True
+    assert record["finalResultEvaluated"] is False
+    assert record["finalResultPass"] is None
+
+
 def test_query_safety_failure_is_classified_without_execution() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
     case = next(case for case in manifest.cases if case.case_id == "RQ03")
