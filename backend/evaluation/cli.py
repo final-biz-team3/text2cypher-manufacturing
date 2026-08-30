@@ -20,6 +20,7 @@ from evaluation.errors import ConfigurationError, InfrastructureError
 from evaluation.models import EvaluationCase, load_manifest
 from evaluation.reporting import build_summary, write_artifacts
 from evaluation.runner import EvaluationRun, EvaluationRunner
+from orchestrator.execution.cypher_executor import close_reader_driver
 
 # resolve_entity/route_query/generate_sql/generate_cypher가 전부 async라
 # 이 CLI(전체 동기)에서도 이벤트 루프를 감싸 호출한다(runner.py 참고).
@@ -76,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL"))
     parser.add_argument("--base-url")
     parser.add_argument("--validate-gold", action="store_true")
+    parser.add_argument(
+        "--execution-mode",
+        choices=("orchestrator", "source"),
+        default="orchestrator",
+        help="정규 평가는 orchestrator, 기존 직접 생성 경로는 source",
+    )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument(
         "--output-dir", type=Path, default=PROJECT_ROOT / "artifacts" / "t2c-eval"
@@ -206,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
                     client,
                     project_root=PROJECT_ROOT,
                     loop=loop,
+                    execution_mode=args.execution_mode,
                 )
                 result = (
                     runner.validate_gold(cases)
@@ -215,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 database.close()
                 if loop is not None:
+                    loop.run_until_complete(close_reader_driver())
                     loop.run_until_complete(close_pool())
         finally:
             if loop is not None:

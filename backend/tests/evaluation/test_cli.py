@@ -192,4 +192,6 @@ def test_parser_exposes_holdout_without_changing_defaults() -> None:
 
     assert parser.parse_args([]).suite == "canonical"
     assert parser.parse_args([]).ids == "all"
+    assert parser.parse_args([]).execution_mode == "orchestrator"
+    assert parser.parse_args(["--execution-mode", "source"]).execution_mode == "source"
     assert parser.parse_args(["--suite", "holdout"]).suite == "holdout"

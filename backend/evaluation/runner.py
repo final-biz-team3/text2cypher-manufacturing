@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import psycopg
@@ -35,8 +36,10 @@ from evaluation.models import (
     ExpectedSubquery,
 )
 from evaluation.normalization import normalize_rows, normalized_sha256
+from evaluation.observability import CountingOpenAIClient
 from evaluation.safety import validate_read_only_cypher, validate_read_only_sql
 from orchestrator.errors import AppError
+from orchestrator.graph import build_orchestrator_graph
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import RoutePlanError, make_route_query_node
 
@@ -68,10 +71,18 @@ class EvaluationRunner:
         *,
         project_root: Path,
         loop: asyncio.AbstractEventLoop | None = None,
+        execution_mode: str = "orchestrator",
     ) -> None:
+        if execution_mode not in {"orchestrator", "source"}:
+            raise ValueError(
+                f"지원하지 않는 evaluation execution mode: {execution_mode}"
+            )
         self.manifest = manifest
         self.database = database
-        self.openai_client = openai_client
+        self.execution_mode = execution_mode
+        self.openai_client: Any = (
+            CountingOpenAIClient(openai_client) if openai_client is not None else None
+        )
         sql_schema = load_sql_schema(project_root / "schema" / "sql_schema.yaml")
         graph_schema = load_graph_schema(project_root / "schema" / "graph_schema.yaml")
         if graph_schema.query_policy is None:
@@ -95,18 +106,23 @@ class EvaluationRunner:
         self._loop = loop
         self.resolve_entity: Callable[[Any], Any] | None
         self.route_query: Callable[[Any], Any] | None
-        if openai_client is not None:
+        self.orchestrator_graph: Any | None = None
+        if self.openai_client is not None:
             assert loop is not None, "openai_client가 있으면 loop도 필요합니다."
             resolve_entity_node = make_resolve_entity_node(
-                openai_client, get_pool(), graph_schema
+                self.openai_client, get_pool(), graph_schema
             )
-            route_query_node = make_route_query_node(openai_client)
+            route_query_node = make_route_query_node(self.openai_client)
             self.resolve_entity = lambda state: loop.run_until_complete(
                 resolve_entity_node(state)
             )
             self.route_query = lambda state: loop.run_until_complete(
                 route_query_node(state)
             )
+            if execution_mode == "orchestrator":
+                self.orchestrator_graph = build_orchestrator_graph(
+                    self.openai_client, get_pool()
+                )
         else:
             self.resolve_entity = None
             self.route_query = None
@@ -472,7 +488,9 @@ class EvaluationRunner:
                 upstream[expected.id] = candidate_normalized
         return records
 
-    def _evaluate_case(self, case: EvaluationCase, run_number: int) -> dict[str, Any]:
+    def _evaluate_case_source(
+        self, case: EvaluationCase, run_number: int
+    ) -> dict[str, Any]:
         if self.resolve_entity is None or self.route_query is None:
             raise InfrastructureError("모델 평가에는 OpenAI client가 필요합니다.")
         contract = self.manifest.contracts[case.contract_id]
@@ -607,6 +625,415 @@ class EvaluationRunner:
             }
         )
         return record
+
+    def _invoke_orchestrator(self, query: str) -> dict[str, Any]:
+        graph = self.orchestrator_graph
+        if graph is None:
+            raise InfrastructureError("orchestrator evaluation graph가 없습니다.")
+
+        async def collect_updates() -> dict[str, Any]:
+            state: dict[str, Any] = {"query": query}
+            try:
+                async for update in graph.astream(
+                    {"query": query}, stream_mode="updates"
+                ):
+                    if not isinstance(update, dict):
+                        continue
+                    for node_update in update.values():
+                        if isinstance(node_update, dict):
+                            state.update(node_update)
+            except Exception as exc:
+                # 라우팅/엔티티 단계가 실패해도 그 전에 완료된 production state를
+                # 평가 레코드에 남긴다. 예외의 분류와 전파 여부는 호출부가 결정한다.
+                exc.__dict__["evaluation_state"] = state
+                raise
+            return state
+
+        return self._run_async(collect_updates())
+
+    @staticmethod
+    def _planning_measurements(
+        contract: EvaluationContract,
+        actual_subqueries: Any,
+        id_mapping: dict[str, str],
+    ) -> tuple[bool, bool]:
+        actual_by_id = (
+            {
+                item.get("id"): item
+                for item in actual_subqueries
+                if isinstance(item, dict)
+            }
+            if isinstance(actual_subqueries, list)
+            else {}
+        )
+        required_outputs_pass = len(actual_by_id) == len(contract.subqueries)
+        binding_pass = len(actual_by_id) == len(contract.subqueries)
+        for expected in contract.subqueries:
+            actual_id = id_mapping.get(expected.id)
+            actual = actual_by_id.get(actual_id)
+            if not isinstance(actual, dict):
+                required_outputs_pass = False
+                binding_pass = False
+                continue
+            outputs = actual.get("requiredOutputs")
+            required_outputs_pass = required_outputs_pass and (
+                isinstance(outputs, list)
+                and len(outputs) == len(set(outputs))
+                and set(outputs) == set(expected.required_outputs)
+            )
+            translated_bindings = {
+                key: f"{id_mapping.get(source.split('.', 1)[0])}.{source.split('.', 1)[1]}"
+                for key, source in expected.input_bindings.items()
+            }
+            binding_pass = binding_pass and (
+                actual.get("inputBindings", {}) == translated_bindings
+            )
+        return required_outputs_pass, binding_pass
+
+    @staticmethod
+    def _attempt_execution_pass(attempt: dict[str, Any]) -> bool:
+        error = attempt.get("error")
+        return (
+            error in (None, "EMPTY_RESULT")
+            or isinstance(error, str)
+            and "필수 alias" in error
+        )
+
+    def _evaluate_orchestrator_sources(
+        self,
+        contract: EvaluationContract,
+        case: EvaluationCase,
+        state: dict[str, Any],
+        id_mapping: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        """production source 결과를 source Gold와 비교한다.
+
+        candidate는 이미 실제 계획의 binding으로 실행된 뒤다. 여기서 expected
+        계약은 오직 정규화·Gold 실행·채점에만 사용한다.
+        """
+        actual_subqueries = state.get("subqueries", [])
+        actual_by_id = {
+            item.get("id"): item for item in actual_subqueries if isinstance(item, dict)
+        }
+        gold_upstream: dict[str, list[dict[str, Any]]] = {}
+        records: list[dict[str, Any]] = []
+        for expected in contract.subqueries:
+            actual = actual_by_id.get(id_mapping.get(expected.id))
+            source_field = "sql_result" if expected.tool == "sql" else "graph_result"
+            query_field = "sql_query" if expected.tool == "sql" else "cypher_query"
+            source = state.get(source_field)
+            inputs = collect_input_bindings(expected.input_bindings, gold_upstream)
+            parameters = {**case.parameters, **inputs}
+            gold_normalized, gold_hash = self._gold_result(expected, parameters)
+            gold_upstream[expected.id] = gold_normalized
+            record: dict[str, Any] = {
+                "id": expected.id,
+                "actualId": actual.get("id") if isinstance(actual, dict) else None,
+                "tool": expected.tool,
+                "expectedQuestion": expected.question,
+                "requiredOutputs": list(expected.required_outputs),
+                "goldFile": expected.gold_file.name,
+                "generatedQuery": state.get(query_field),
+                "upstreamInputs": inputs,
+                "status": "FAIL",
+                "checks": {
+                    "generation": isinstance(state.get(query_field), str),
+                    "readOnly": None,
+                    "safety": None,
+                    "execution": False,
+                    "resultContract": None,
+                    "result": None,
+                },
+            }
+            if not isinstance(actual, dict):
+                record.update(
+                    {
+                        "failureCategory": "SUBQUERY_INTEGRATION_CONTRACT_MISMATCH",
+                        "error": "실제 계획에 대응하는 subquery가 없습니다.",
+                    }
+                )
+                records.append(record)
+                continue
+            if not isinstance(source, dict):
+                record.update(
+                    {
+                        "failureCategory": "DEPENDENCY_BLOCKED",
+                        "error": "production 실행 결과가 없습니다.",
+                    }
+                )
+                records.append(record)
+                continue
+
+            attempts = source.get("attempts", [])
+            record["attempts"] = attempts if isinstance(attempts, list) else []
+            safety_blocked = any(
+                isinstance(attempt, dict)
+                and isinstance(attempt.get("error"), str)
+                and "안전 정책" in attempt["error"]
+                for attempt in record["attempts"]
+            )
+            record["checks"]["safety"] = not safety_blocked
+            record["checks"]["readOnly"] = not safety_blocked
+            rows = source.get("result")
+            if source.get("error") is not None or not isinstance(rows, list):
+                record.update(
+                    {
+                        "failureCategory": (
+                            "READ_ONLY_VIOLATION"
+                            if safety_blocked
+                            else "QUERY_EXECUTION_ERROR"
+                        ),
+                        "error": source.get("error") or "result가 배열이 아닙니다.",
+                    }
+                )
+                records.append(record)
+                continue
+            record["checks"]["execution"] = True
+            try:
+                candidate_normalized = normalize_rows(
+                    rows,
+                    required_outputs=expected.required_outputs,
+                    aliases=expected.aliases,
+                    ordering=expected.ordering,
+                )
+                record["checks"]["resultContract"] = True
+            except ResultContractError as exc:
+                record.update(
+                    {
+                        "failureCategory": "RESULT_CONTRACT_MISMATCH",
+                        "error": str(exc),
+                    }
+                )
+                record["checks"]["resultContract"] = False
+                records.append(record)
+                continue
+
+            candidate_hash = normalized_sha256(candidate_normalized)
+            result_pass = candidate_hash == gold_hash
+            record.update(
+                {
+                    "status": "PASS" if result_pass else "FAIL",
+                    "candidateHash": candidate_hash,
+                    "goldHash": gold_hash,
+                    "candidateRowCount": len(candidate_normalized),
+                    "goldRowCount": len(gold_normalized),
+                }
+            )
+            record["checks"]["result"] = result_pass
+            if not result_pass:
+                record.update(
+                    {
+                        "failureCategory": "RESULT_VALUE_MISMATCH",
+                        "error": "RESULT_HASH_MISMATCH",
+                        "candidateSample": candidate_normalized[:5],
+                        "goldSample": gold_normalized[:5],
+                    }
+                )
+            records.append(record)
+        return records
+
+    def _evaluate_case_orchestrator(
+        self, case: EvaluationCase, run_number: int
+    ) -> dict[str, Any]:
+        if not isinstance(self.openai_client, CountingOpenAIClient):
+            raise InfrastructureError(
+                "모델 평가에는 counting OpenAI client가 필요합니다."
+            )
+        self.openai_client.reset_case()
+        started = perf_counter()
+        contract = self.manifest.contracts[case.contract_id]
+        record: dict[str, Any] = {
+            "caseId": case.case_id,
+            "contractId": case.contract_id,
+            "suite": case.suite,
+            "run": run_number,
+            "question": case.question,
+            "route": contract.route,
+            "supportStatus": contract.support_status,
+        }
+        state: dict[str, Any] = {"query": case.question}
+        pipeline_exception: Exception | None = None
+        try:
+            state = self._invoke_orchestrator(case.question)
+        except (OpenAIError, *_CONNECTION_ERRORS) as exc:
+            raise InfrastructureError(
+                f"production orchestrator 연결 실패: {exc}"
+            ) from exc
+        except (AppError, RoutePlanError, ValueError) as exc:
+            pipeline_exception = exc
+            state = getattr(exc, "evaluation_state", state)
+            if isinstance(exc, RoutePlanError):
+                state["tool_plan"] = exc.tool_plan
+                state.setdefault("subqueries", [])
+                record["planningResponse"] = exc.raw_response
+            record["planningError"] = str(exc)
+        except Exception as exc:
+            raise InfrastructureError(
+                f"production orchestrator 실행 실패: {exc}"
+            ) from exc
+
+        entity = state.get("entity")
+        entity_pass = entity_matches(contract.expected_entities, entity)
+        plan_tool_plan = state.get("tool_plan")
+        actual_subqueries = state.get("subqueries", [])
+        comparison = compare_execution_contract(
+            contract, case, plan_tool_plan, actual_subqueries
+        )
+        required_outputs_pass, binding_pass = self._planning_measurements(
+            contract, actual_subqueries, comparison["idMapping"]
+        )
+        subquery_records = self._evaluate_orchestrator_sources(
+            contract, case, state, comparison["idMapping"]
+        )
+
+        attempted_sources = [item for item in subquery_records if item.get("attempts")]
+        attempts = [
+            attempt
+            for item in attempted_sources
+            for attempt in item.get("attempts", [])
+            if isinstance(attempt, dict)
+        ]
+        first_attempt_execution_pass = bool(attempted_sources) and all(
+            self._attempt_execution_pass(item["attempts"][0])
+            for item in attempted_sources
+        )
+        final_execution_pass = bool(subquery_records) and all(
+            item.get("checks", {}).get("execution") is True for item in subquery_records
+        )
+        recovered_by_retry = any(
+            len(item.get("attempts", [])) > 1
+            and item.get("checks", {}).get("execution") is True
+            and item["attempts"][0].get("error") is not None
+            for item in subquery_records
+        )
+        result_contract_values = [
+            item.get("checks", {}).get("resultContract") for item in subquery_records
+        ]
+        result_contract_pass: bool | None
+        if any(value is False for value in result_contract_values):
+            result_contract_pass = False
+        elif result_contract_values and all(
+            value is True for value in result_contract_values
+        ):
+            result_contract_pass = True
+        else:
+            result_contract_pass = None
+        result_values = [
+            item.get("checks", {}).get("result") for item in subquery_records
+        ]
+        if any(value is False for value in result_values):
+            source_result_pass: bool | None = False
+        elif result_values and all(value is True for value in result_values):
+            source_result_pass = True
+        else:
+            source_result_pass = None
+
+        composed = state.get("composed_result")
+        composition_pass = isinstance(composed, dict) and composed.get("error") is None
+        final_evaluated = contract.support_status == "FULLY_EVALUATED"
+        composed_result_pass: bool | None = (
+            source_result_pass if final_evaluated and composition_pass else None
+        )
+        final_result_pass = composed_result_pass if final_evaluated else None
+        safety_values = [
+            item.get("checks", {}).get("safety") for item in subquery_records
+        ]
+        safety_pass = not any(value is False for value in safety_values)
+        generation_pass = bool(subquery_records) and all(
+            item.get("checks", {}).get("generation") is True
+            for item in subquery_records
+        )
+
+        if not entity_pass:
+            failure_stage = "ENTITY"
+        elif not comparison["routingPass"]:
+            failure_stage = "ROUTING"
+        elif (
+            not comparison["splitPass"] or not required_outputs_pass or not binding_pass
+        ):
+            failure_stage = "PLANNING"
+        elif not generation_pass:
+            failure_stage = "GENERATION"
+        elif not safety_pass:
+            failure_stage = "SAFETY"
+        elif not final_execution_pass:
+            failure_stage = "EXECUTION"
+        elif result_contract_pass is not True:
+            failure_stage = "RESULT_CONTRACT"
+        elif not composition_pass:
+            failure_stage = "COMPOSITION"
+        elif source_result_pass is not True or (
+            final_evaluated and final_result_pass is not True
+        ):
+            failure_stage = "RESULT_SEMANTIC"
+        else:
+            failure_stage = None
+
+        query_pipeline_pass = failure_stage is None
+        failure_reasons = list(
+            dict.fromkeys(
+                str(item["failureCategory"])
+                for item in subquery_records
+                if item.get("failureCategory") is not None
+            )
+        )
+        if pipeline_exception is not None and not failure_reasons:
+            failure_reasons.append(type(pipeline_exception).__name__)
+        checks = {
+            "entity": entity_pass,
+            "routing": comparison["routingPass"],
+            "split": comparison["splitPass"],
+            "requiredOutputs": required_outputs_pass,
+            "binding": binding_pass,
+            "generation": generation_pass,
+            "safety": safety_pass,
+            "execution": final_execution_pass,
+            "resultContract": result_contract_pass,
+            "composition": composition_pass,
+            "result": source_result_pass,
+            "finalResult": final_result_pass,
+        }
+        record.update(
+            {
+                "entity": entity,
+                "toolPlan": plan_tool_plan,
+                "subqueryPlan": actual_subqueries,
+                "contractComparison": comparison,
+                "subqueries": subquery_records,
+                "composedResult": composed,
+                "checks": checks,
+                "failureReasons": failure_reasons,
+                "entityPass": entity_pass,
+                "routePass": comparison["routingPass"],
+                "splitPass": comparison["splitPass"],
+                "requiredOutputsPass": required_outputs_pass,
+                "bindingPass": binding_pass,
+                "firstAttemptExecutionPass": first_attempt_execution_pass,
+                "recoveredByRetry": recovered_by_retry,
+                "attemptCount": len(attempts),
+                "sourceResultPass": source_result_pass,
+                "composedResultPass": composed_result_pass,
+                "finalResultPass": final_result_pass,
+                "failureStage": failure_stage,
+                "queryPipelinePass": query_pipeline_pass,
+                "semanticResultPass": source_result_pass,
+                "finalResultEvaluated": final_evaluated,
+                "status": "PASS" if query_pipeline_pass else "FAIL",
+                **self.openai_client.snapshot(),
+                "elapsedMs": round((perf_counter() - started) * 1000, 3),
+            }
+        )
+        return record
+
+    def _evaluate_case(self, case: EvaluationCase, run_number: int) -> dict[str, Any]:
+        """선택한 실행 모드로 한 case를 평가한다.
+
+        object.__new__ 기반 기존 단위 테스트는 execution_mode가 없으므로 예전
+        source 경로를 사용한다. 실제 CLI 기본값은 orchestrator다.
+        """
+        if getattr(self, "execution_mode", "source") == "orchestrator":
+            return self._evaluate_case_orchestrator(case, run_number)
+        return self._evaluate_case_source(case, run_number)
 
     def run(self, cases: list[EvaluationCase], runs: int) -> EvaluationRun:
         snapshot = self.validate_snapshot()

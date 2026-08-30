@@ -2,6 +2,7 @@
 
 import json
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,18 @@ from evaluation.runner import EvaluationRun
 
 def _ratio(passed: int, total: int) -> float:
     return round(passed / total, 6) if total else 0.0
+
+
+def _average(values: Sequence[int | float]) -> float:
+    return round(sum(values) / len(values), 3) if values else 0.0
+
+
+def _p95(values: Sequence[int | float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, (95 * len(ordered) + 99) // 100 - 1)
+    return round(float(ordered[index]), 3)
 
 
 def _pipeline_accuracy(records: list[dict[str, Any]]) -> float:
@@ -115,10 +128,15 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "entity",
         "routing",
         "split",
+        "requiredOutputs",
+        "binding",
         "generation",
+        "safety",
         "execution",
         "resultContract",
+        "composition",
         "result",
+        "finalResult",
     ):
         stage_accuracy[stage] = _check_accuracy(records, stage)
 
@@ -238,6 +256,34 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         for record in records
         if record.get("supportStatus") == "FULLY_EVALUATED"
     }
+    first_attempt_applicable = [
+        record
+        for record in non_error
+        if isinstance(record.get("firstAttemptExecutionPass"), bool)
+    ]
+    retried = [
+        record
+        for record in non_error
+        if isinstance(record.get("attemptCount"), int)
+        and record["attemptCount"]
+        > sum(bool(item.get("attempts")) for item in record.get("subqueries", []))
+    ]
+    failure_stage_counts: dict[str, int] = defaultdict(int)
+    for record in non_error:
+        failure_stage = record.get("failureStage")
+        if isinstance(failure_stage, str):
+            failure_stage_counts[failure_stage] += 1
+    latencies = [
+        float(record["elapsedMs"])
+        for record in non_error
+        if isinstance(record.get("elapsedMs"), int | float)
+    ]
+    model_calls = [
+        int(record["modelCallCount"])
+        for record in non_error
+        if isinstance(record.get("modelCallCount"), int)
+        and not isinstance(record.get("modelCallCount"), bool)
+    ]
 
     return {
         "evaluatedRuns": total,
@@ -273,6 +319,25 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "graphPartialAccuracy": _ratio(sum(partials["graph"]), len(partials["graph"])),
         "blockedPartialCount": partial_blocked,
+        "firstAttemptExecutionRate": _ratio(
+            sum(
+                record["firstAttemptExecutionPass"] is True
+                for record in first_attempt_applicable
+            ),
+            len(first_attempt_applicable),
+        ),
+        "retryRecoveryRate": _ratio(
+            sum(record.get("recoveredByRetry") is True for record in retried),
+            len(retried),
+        ),
+        "retryAttemptedRuns": len(retried),
+        "failureStageCounts": dict(sorted(failure_stage_counts.items())),
+        "averageLatencyMs": _average(latencies),
+        "p95LatencyMs": _p95(latencies),
+        "averageModelCallCount": _average(model_calls),
+        "maxModelCallCount": max(model_calls, default=0),
+        "requiredOutputsContractRate": _check_accuracy(records, "requiredOutputs"),
+        "bindingContractRate": _check_accuracy(records, "binding"),
         "stageAccuracy": stage_accuracy,
         "routingAccuracy": stage_accuracy["routing"],
         "routingAccuracyByRoute": routing_accuracy_by_route,
@@ -535,6 +600,31 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                 "> 채점 실행 완료는 정답률이 아니라 인프라 오류 없이 채점된 비율입니다.",
             ]
         )
+        metrics = summary.get("metrics", {})
+        failure_counts = metrics.get("failureStageCounts", {})
+        lines.extend(
+            [
+                "",
+                "## 실행 관측",
+                "",
+                "| 지표 | 값 |",
+                "|---|---:|",
+                f"| 최초 실행 성공률 | {metrics.get('firstAttemptExecutionRate', 0) * 100:.1f}% |",
+                f"| retry 복구율 | {metrics.get('retryRecoveryRate', 0) * 100:.1f}% |",
+                f"| 평균 / p95 지연시간 | {metrics.get('averageLatencyMs', 0):.1f} / {metrics.get('p95LatencyMs', 0):.1f} ms |",
+                f"| 평균 / 최대 모델 호출 수 | {metrics.get('averageModelCallCount', 0):.2f} / {metrics.get('maxModelCallCount', 0)} |",
+                "",
+                "| 최초 실패 단계 | 건수 |",
+                "|---|---:|",
+            ]
+        )
+        if failure_counts:
+            lines.extend(
+                f"| {cell(stage)} | {count} |"
+                for stage, count in failure_counts.items()
+            )
+        else:
+            lines.append("| 없음 | 0 |")
         if runs > 1:
             trial_summary = summary.get("metrics", {}).get("caseTrialSummary", {})
             complete_trials = [
