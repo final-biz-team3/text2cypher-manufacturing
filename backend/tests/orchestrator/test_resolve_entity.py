@@ -103,11 +103,26 @@ async def test_resolve_entity_returns_entity_when_product_found() -> None:
         "entity": {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     }
     assert openai_client.calls[0]["reasoning_effort"] == "none"
-    entity_type = openai_client.calls[0]["tools"][0]["function"]["parameters"][
-        "properties"
-    ]["entityType"]
+    function = openai_client.calls[0]["tools"][0]["function"]
+    assert function["strict"] is True
+    assert function["parameters"]["additionalProperties"] is False
+    entity_type = function["parameters"]["properties"]["entityType"]
     assert "productCategory" in entity_type["enum"]
     assert "productCategory: 제품 분류" in entity_type["description"]
+
+
+async def test_resolve_entity_ignores_malformed_tool_arguments() -> None:
+    response = make_tool_call_response(
+        "extract_entity", {"entityType": "product", "entityName": "ignored"}
+    )
+    assert response.choices[0].message.tool_calls is not None
+    response.choices[0].message.tool_calls[0].function.arguments = "{not-json"
+    openai_client = MockOpenAIClient(response)
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    assert await node({"query": "전체 제품 수를 알려줘."}) == {"entity": None}
 
 
 async def test_resolve_entity_returns_entity_when_product_category_found() -> None:

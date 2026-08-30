@@ -69,15 +69,7 @@ def compare_execution_contract(
         actual_outputs = actual.get("requiredOutputs")
         actual_join_keys = actual.get("joinKeys")
 
-        planning_outputs = (
-            set(expected.join_keys) if contract.route == "HYBRID" else set()
-        )
-        if contract.route == "HYBRID":
-            for downstream in contract.subqueries:
-                for source in downstream.input_bindings.values():
-                    dependency_id, output_field = source.split(".", 1)
-                    if dependency_id == expected.id:
-                        planning_outputs.add(output_field)
+        planning_outputs = set(expected.required_outputs)
 
         def same_string_set(value: Any, expected_values: tuple[str, ...]) -> bool:
             return (
@@ -96,7 +88,7 @@ def compare_execution_contract(
                 actual_dependencies,
                 tuple(value for value in translated_dependencies if value),
             ),
-            "planningOutputs": (
+            "requiredOutputs": (
                 isinstance(actual_outputs, list)
                 and len(actual_outputs) == len(actual_output_set)
                 and planning_outputs.issubset(actual_output_set)

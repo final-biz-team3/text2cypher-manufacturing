@@ -73,11 +73,19 @@ async def test_route_query_sends_query_and_entity_in_prompt() -> None:
     )
 
     sent_messages = openai_client.calls[0]["messages"]
-    assert openai_client.calls[0]["response_format"] == {"type": "json_object"}
+    response_format = openai_client.calls[0]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    schema = response_format["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    subquery_schema = schema["properties"]["subqueries"]["items"]
+    assert subquery_schema["additionalProperties"] is False
     system_message = next(m["content"] for m in sent_messages if m["role"] == "system")
-    assert "다른 단계로 전달하거나 최종 결합에 실제로 필요한 필드만" in system_message
-    assert "전달·결합이 없으면 빈 배열" in system_message
+    assert "전체 canonical output alias" in system_message
+    assert "절대 비워 두지 않는다" in system_message
     assert "requiredOutputs와 joinKeys 둘 다에" in system_message
+    assert "재고, 가격, 비용" in system_message
+    assert "BOM 경로, 영향 관계" in system_message
     user_message = next(m["content"] for m in sent_messages if m["role"] == "user")
     assert "활성 공급업체 수를 알려줘." in user_message
 
@@ -137,7 +145,7 @@ async def test_route_query_preserves_valid_route_when_subquery_plan_is_invalid()
     with pytest.raises(RoutePlanError) as exc_info:
         await node({"query": "영향 경로와 재고를 알려줘.", "entity": None})
 
-    assert "joinKeys는 requiredOutputs에 포함" in str(exc_info.value)
+    assert "requiredOutputs는 비어 있을 수 없습니다" in str(exc_info.value)
     assert exc_info.value.tool_plan == ["graph", "sql"]
 
 
@@ -147,7 +155,8 @@ async def test_route_query_retries_invalid_plan_with_validation_feedback() -> No
     valid = (
         '{"tool_plan":["sql"],"subqueries":['
         '{"id":"sql_count","tool":"sql","question":"제품 수를 센다.",'
-        '"dependsOn":[],"requiredOutputs":[],"joinKeys":[]}]}'
+        '"dependsOn":[],"requiredOutputs":["productCount"],'
+        '"joinKeys":[],"inputBindings":{}}]}'
     )
     openai_client = MockOpenAIClient(
         make_content_response(invalid), make_content_response(valid)

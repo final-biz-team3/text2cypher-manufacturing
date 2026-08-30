@@ -5,6 +5,73 @@ from typing import Any, NotRequired, TypedDict
 
 SUPPORTED_TOOLS = {"sql", "graph"}
 
+_BINDING_SCHEMA_VARIANTS = [
+    {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": False,
+    },
+    *[
+        {
+            "type": "object",
+            "properties": {name: {"type": "string"}},
+            "required": [name],
+            "additionalProperties": False,
+        }
+        for name in ("componentIds", "productIds")
+    ],
+]
+
+# Chat Completions Structured Outputs에 전달하는 production router 계약이다.
+# legacy 배열 계획은 parse_execution_plan에서만 계속 지원하며 모델 schema에는
+# 포함하지 않는다.
+EXECUTION_PLAN_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "tool_plan": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["sql", "graph"]},
+        },
+        "subqueries": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "tool": {"type": "string", "enum": ["sql", "graph"]},
+                    "question": {"type": "string"},
+                    "dependsOn": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "requiredOutputs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "joinKeys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "inputBindings": {"anyOf": _BINDING_SCHEMA_VARIANTS},
+                },
+                "required": [
+                    "id",
+                    "tool",
+                    "question",
+                    "dependsOn",
+                    "requiredOutputs",
+                    "joinKeys",
+                    "inputBindings",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["tool_plan", "subqueries"],
+    "additionalProperties": False,
+}
+
 
 class Subquery(TypedDict):
     """하나의 데이터 소스가 담당하는 독립 실행 단위."""
@@ -35,7 +102,9 @@ def _string_list(value: Any, field: str, subquery_id: str) -> list[str]:
     return value
 
 
-def validate_subqueries(subqueries: Any) -> list[Subquery]:
+def validate_subqueries(
+    subqueries: Any, *, allow_empty_required_outputs: bool = False
+) -> list[Subquery]:
     """shape, 의존성, binding, join key와 순환 의존성을 검증한다."""
     if not isinstance(subqueries, list) or not subqueries:
         raise ValueError("subqueries는 비어 있지 않은 배열이어야 합니다.")
@@ -62,6 +131,10 @@ def validate_subqueries(subqueries: Any) -> list[Subquery]:
         required_outputs = _string_list(
             raw.get("requiredOutputs", []), "requiredOutputs", subquery_id
         )
+        if not required_outputs and not allow_empty_required_outputs:
+            raise ValueError(
+                f"subquery {subquery_id!r}의 requiredOutputs는 비어 있을 수 없습니다."
+            )
         join_keys = _string_list(raw.get("joinKeys", []), "joinKeys", subquery_id)
         if not set(join_keys).issubset(required_outputs):
             raise ValueError(
@@ -215,7 +288,7 @@ def parse_execution_plan(content: str, query: str) -> ExecutionPlan:
         raise ValueError(f"지원하지 않는 tool_plan 값: {names}")
 
     subqueries = _legacy_subqueries(tool_plan, query) if legacy else raw_subqueries
-    validated = validate_subqueries(subqueries)
+    validated = validate_subqueries(subqueries, allow_empty_required_outputs=legacy)
     planned_tools = [item["tool"] for item in validated]
     if len(planned_tools) != len(set(planned_tools)):
         raise ValueError("도구 하나당 subquery를 정확히 하나만 지정할 수 있습니다.")

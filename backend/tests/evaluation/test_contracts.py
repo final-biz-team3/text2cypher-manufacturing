@@ -117,7 +117,7 @@ def test_hybrid_planning_fields_are_compared_as_sets_not_display_order() -> None
     assert result["splitPass"] is True
 
 
-def test_single_query_does_not_require_router_to_repeat_result_schema() -> None:
+def test_single_query_requires_router_to_return_complete_result_schema() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
     contract = manifest.contracts["RQ01"]
     case = next(case for case in manifest.cases if case.case_id == "RQ01")
@@ -126,7 +126,8 @@ def test_single_query_does_not_require_router_to_repeat_result_schema() -> None:
 
     result = compare_execution_contract(contract, case, ["sql"], [actual])
 
-    assert result["splitPass"] is True
+    assert result["splitPass"] is False
+    assert result["steps"][0]["checks"]["requiredOutputs"] is False
 
 
 def test_hybrid_plan_must_keep_handoff_and_join_output() -> None:
@@ -139,4 +140,11 @@ def test_hybrid_plan_must_keep_handoff_and_join_output() -> None:
     result = compare_execution_contract(contract, case, ["graph", "sql"], actual)
 
     assert result["splitPass"] is False
-    assert result["steps"][0]["missingPlanningOutputs"] == ["componentId"]
+    assert result["steps"][0]["missingPlanningOutputs"] == [
+        "componentId",
+        "componentName",
+        "depth",
+        "finishedProductId",
+        "finishedProductName",
+        "pathProductIds",
+    ]

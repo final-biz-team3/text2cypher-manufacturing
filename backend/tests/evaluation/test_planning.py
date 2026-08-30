@@ -122,7 +122,7 @@ def test_parse_execution_plan_rejects_more_than_one_subquery_for_same_tool() -> 
           "tool": "sql",
           "question": "가격을 찾는다.",
           "dependsOn": [],
-          "requiredOutputs": [],
+          "requiredOutputs": ["productId", "listPrice"],
           "joinKeys": []
         },
         {
@@ -130,7 +130,7 @@ def test_parse_execution_plan_rejects_more_than_one_subquery_for_same_tool() -> 
           "tool": "sql",
           "question": "재고를 찾는다.",
           "dependsOn": [],
-          "requiredOutputs": [],
+          "requiredOutputs": ["productId", "actualStock"],
           "joinKeys": []
         }
       ]
@@ -224,3 +224,26 @@ def test_validate_subqueries_keeps_single_and_legacy_hybrid_compatible() -> None
 
     assert single[0]["joinKeys"] == ["componentId"]
     assert [item["joinKeys"] for item in legacy["subqueries"]] == [[], []]
+
+
+def test_object_plan_requires_all_canonical_outputs_but_legacy_can_be_empty() -> None:
+    content = """{
+      "tool_plan": ["sql"],
+      "subqueries": [{
+        "id": "sql_stock",
+        "tool": "sql",
+        "question": "재고를 조회한다.",
+        "dependsOn": [],
+        "requiredOutputs": [],
+        "joinKeys": [],
+        "inputBindings": {}
+      }]
+    }"""
+
+    with pytest.raises(ValueError, match="requiredOutputs는 비어 있을 수 없습니다"):
+        parse_execution_plan(content, "재고")
+
+    assert (
+        parse_execution_plan('["sql"]', "재고")["subqueries"][0]["requiredOutputs"]
+        == []
+    )

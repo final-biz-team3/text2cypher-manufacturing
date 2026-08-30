@@ -4,7 +4,11 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from orchestrator.planning import SUPPORTED_TOOLS, parse_execution_plan
+from orchestrator.planning import (
+    EXECUTION_PLAN_JSON_SCHEMA,
+    SUPPORTED_TOOLS,
+    parse_execution_plan,
+)
 from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -49,37 +53,53 @@ class RoutePlanError(ValueError):
 
 
 _SYSTEM_PROMPT = """당신은 제조 데이터 질의 라우터입니다.
-사용자 질문과 확인된 entity를 보고 어떤 Tool을 실행해야 하는지 결정합니다.
-반드시 아래 Tool 중에서만 선택하고 JSON 객체로 반환합니다.
+사용자 질문과 확인된 entity를 보고 데이터 소스별 책임과 실행 순서를 결정합니다.
 
 Tool 목록:
-- sql: 수치 조회, 집계, 재고 계산, 가격, 수량, 날짜 비교가 필요한 질의
-- graph: 제품-부품-공급업체-공정 간 다단계 관계 탐색이 필요한 질의
+- sql: 재고, 가격, 비용, 수량, 폐기량, scalar 상태와 집계
+- graph: BOM 경로, 영향 관계, 공통 부품, 공급 관계와 공정 경로
+
+canonical source ownership:
+- 관계 데이터가 SQL에 중복돼도 BOM·공급·공정 관계 탐색은 graph가 소유한다.
+- scalar가 graph에 복제돼도 재고·비용·폐기량과 집계는 sql이 소유한다.
+- BOM 경로 edge의 quantityPerAssembly는 graph가 소유한다.
+- 양쪽 사실이 모두 필요하면 HYBRID 계획을 만든다.
 
 예시:
-Q: "LL Road Frame의 정가와 표준원가를 알려줘."
-entity: {"productId": 680}
-A: {"tool_plan":["sql"],"subqueries":[{"id":"sql_product_cost","tool":"sql","question":"LL Road Frame의 정가와 표준원가를 알려줘.","dependsOn":[],"requiredOutputs":[],"joinKeys":[]}]}
+1. 단일 SQL:
+Q: "완제품 Aurora Frame의 현재 재고와 표준원가를 알려줘."
+entity: {"productId": 7001, "productName": "Aurora Frame"}
+A: {"tool_plan":["sql"],"subqueries":[{"id":"sql_inventory_cost","tool":"sql","question":"완제품 Aurora Frame의 현재 재고와 표준원가를 조회한다.","dependsOn":[],"requiredOutputs":["productId","productName","actualStock","standardCost"],"joinKeys":[],"inputBindings":{}}]}
 
-Q: "부품 Blade를 사용하는 완제품을 최대 4단계까지 알려줘."
-entity: {"productId": 316}
-A: {"tool_plan":["graph"],"subqueries":[{"id":"graph_impact","tool":"graph","question":"부품 Blade를 사용하는 완제품 경로를 최대 4단계까지 조회한다.","dependsOn":[],"requiredOutputs":[],"joinKeys":[]}]}
+2. 독립 SQL + GRAPH:
+Q: "활성 공급업체 수와 완제품 Nova Bike의 BOM 경로를 함께 알려줘."
+entity: {"productId": 7002, "productName": "Nova Bike"}
+A: {"tool_plan":["sql","graph"],"subqueries":[{"id":"sql_active_supplier_count","tool":"sql","question":"현재 활성 공급업체 수를 집계한다.","dependsOn":[],"requiredOutputs":["activeSupplierCount"],"joinKeys":[],"inputBindings":{}},{"id":"graph_bom_paths","tool":"graph","question":"완제품 Nova Bike에서 부품까지의 BOM 경로를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly"],"joinKeys":[],"inputBindings":{}}]}
 
-Q: "공급업체 Cycling Master가 공급을 중단하면 영향받는 완제품과 현재 부품 재고를 알려줘."
-entity: {"supplierId": 52}
-A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_impact","tool":"graph","question":"활성 공급업체 Cycling Master의 공급 부품과 영향 완제품 경로를 조회한다.","dependsOn":[],"requiredOutputs":["componentId"],"joinKeys":["componentId"]},{"id":"sql_stock","tool":"sql","question":"앞 단계에서 확인한 부품들의 현재 재고를 조회한다.","dependsOn":["graph_impact"],"inputBindings":{"componentIds":"graph_impact.componentId"},"requiredOutputs":["componentId"],"joinKeys":["componentId"]}]}
+3. GRAPH 결과를 SQL filter로 전달하는 의존 HYBRID:
+Q: "완제품 Summit Bike의 BOM 부품별 현재 재고를 알려줘."
+entity: {"productId": 7003, "productName": "Summit Bike"}
+A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_components","tool":"graph","question":"완제품 Summit Bike의 BOM 부품과 경로를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly"],"joinKeys":["componentId"],"inputBindings":{}},{"id":"sql_stock","tool":"sql","question":"앞 단계의 componentId별 현재 재고를 조회한다.","dependsOn":["graph_components"],"requiredOutputs":["componentId","actualStock"],"joinKeys":["componentId"],"inputBindings":{"componentIds":"graph_components.componentId"}}]}
 
 규칙:
 - 단일 SQL/GRAPH 질문도 subquery를 정확히 1개 만들고 question에 원래 질문의 의미를 보존한다.
 - 복합 질문은 데이터 소스의 책임별로 나누고 dependsOn, inputBindings, requiredOutputs, joinKeys를 명시한다.
-- requiredOutputs에는 다른 단계로 전달하거나 최종 결합에 실제로 필요한 필드만 쓴다. 단일 질의처럼 전달·결합이 없으면 빈 배열로 둔다.
+- requiredOutputs는 해당 subquery가 반환해야 하는 전체 canonical output alias이며 절대 비워 두지 않는다.
 - HYBRID의 전달 필드와 최종 결합 키는 해당 단계의 requiredOutputs와 joinKeys 둘 다에 넣는다.
 - 선행 결과가 필요하지 않은 두 단계는 dependsOn을 빈 배열로 둔다.
 - id는 sql_stock, graph_impact처럼 책임을 나타내며 질문에 없는 RQ 번호를 사용하지 않는다.
 - inputBindings 값은 반드시 "선행단계ID.출력필드" 형식이다.
 - tool_plan은 실제 의존 실행 순서로 쓰고 각 도구는 한 번만 포함한다.
+"""
 
-설명이나 Markdown 없이 JSON 객체만 반환한다."""
+_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "manufacturing_execution_plan",
+        "strict": True,
+        "schema": EXECUTION_PLAN_JSON_SCHEMA,
+    },
+}
 
 
 # OpenAI 클라이언트를 주입받은 route_query 노드 함수를 생성
@@ -99,7 +119,7 @@ def make_route_query_node(openai_client: Any) -> Callable[[OrchestratorState], A
             response = await openai_client.chat.completions.create(
                 model=os.environ["OPENAI_MODEL"],
                 messages=messages,
-                response_format={"type": "json_object"},
+                response_format=_RESPONSE_FORMAT,
             )
             content = response.choices[0].message.content
             last_content = content if isinstance(content, str) else ""

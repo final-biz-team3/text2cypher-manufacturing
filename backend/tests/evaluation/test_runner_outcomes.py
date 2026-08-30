@@ -73,12 +73,14 @@ def test_cypher_generation_does_not_receive_gold_contract_hints(
     assert "required_outputs" not in captured
 
 
-def test_runner_accepts_integral_float_id_and_unused_single_query_output_plan() -> None:
+def test_runner_accepts_integral_float_id_and_complete_single_query_output_plan() -> (
+    None
+):
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
     case = next(case for case in manifest.cases if case.case_id == "RQ02")
     contract = manifest.contracts[case.contract_id]
     plan = contract.subqueries[0].planning_shape()
-    plan["requiredOutputs"] = ["productId", "productName", "quantity"]
+    plan["requiredOutputs"] = list(reversed(plan["requiredOutputs"]))
 
     runner = object.__new__(EvaluationRunner)
     runner.manifest = manifest

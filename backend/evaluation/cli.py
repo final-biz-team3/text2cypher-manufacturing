@@ -20,7 +20,11 @@ from evaluation.errors import ConfigurationError, InfrastructureError
 from evaluation.models import EvaluationCase, load_manifest
 from evaluation.reporting import build_summary, write_artifacts
 from evaluation.runner import EvaluationRun, EvaluationRunner
-from orchestrator.execution.cypher_executor import close_reader_driver
+from orchestrator.execution.cypher_executor import (
+    close_reader_driver,
+    get_reader_driver,
+    verify_reader_is_read_only,
+)
 
 # resolve_entity/route_query/generate_sql/generate_cypher가 전부 async라
 # 이 CLI(전체 동기)에서도 이벤트 루프를 감싸 호출한다(runner.py 참고).
@@ -181,6 +185,25 @@ def main(argv: list[str] | None = None) -> int:
             ids=ids,
             route=args.routes,
         )
+        needs_production_graph = (
+            not args.validate_gold
+            and args.execution_mode == "orchestrator"
+            and any(
+                manifest.contracts[case.contract_id].route in {"GRAPH", "HYBRID"}
+                for case in cases
+            )
+        )
+        if needs_production_graph:
+            missing = [
+                name
+                for name in ("NEO4J_READER_USER", "NEO4J_READER_PASSWORD")
+                if not os.getenv(name)
+            ]
+            if missing:
+                raise ConfigurationError(
+                    "orchestrator GRAPH 평가에 필요한 reader 설정이 없습니다: "
+                    + ", ".join(missing)
+                )
         if args.validate_gold:
             client = None
         else:
@@ -206,28 +229,33 @@ def main(argv: list[str] | None = None) -> int:
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(bootstrap_postgres())
                 loop.run_until_complete(open_pool())
-            try:
-                runner = EvaluationRunner(
-                    manifest,
-                    database,
-                    client,
-                    project_root=PROJECT_ROOT,
-                    loop=loop,
-                    execution_mode=args.execution_mode,
-                )
-                result = (
-                    runner.validate_gold(cases)
-                    if args.validate_gold
-                    else runner.run(cases, args.runs)
-                )
-            finally:
-                database.close()
-                if loop is not None:
-                    loop.run_until_complete(close_reader_driver())
-                    loop.run_until_complete(close_pool())
+                if needs_production_graph:
+                    reader_driver = get_reader_driver()
+                    loop.run_until_complete(reader_driver.verify_connectivity())
+                    loop.run_until_complete(verify_reader_is_read_only(reader_driver))
+            runner = EvaluationRunner(
+                manifest,
+                database,
+                client,
+                project_root=PROJECT_ROOT,
+                loop=loop,
+                execution_mode=args.execution_mode,
+            )
+            result = (
+                runner.validate_gold(cases)
+                if args.validate_gold
+                else runner.run(cases, args.runs)
+            )
         finally:
+            database.close()
             if loop is not None:
-                loop.close()
+                try:
+                    loop.run_until_complete(close_reader_driver())
+                finally:
+                    try:
+                        loop.run_until_complete(close_pool())
+                    finally:
+                        loop.close()
 
         summary = build_summary(
             result,

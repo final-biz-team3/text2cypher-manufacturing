@@ -679,7 +679,7 @@ class EvaluationRunner:
             required_outputs_pass = required_outputs_pass and (
                 isinstance(outputs, list)
                 and len(outputs) == len(set(outputs))
-                and set(outputs) == set(expected.required_outputs)
+                and set(expected.required_outputs).issubset(outputs)
             )
             translated_bindings = {
                 key: f"{id_mapping.get(source.split('.', 1)[0])}.{source.split('.', 1)[1]}"

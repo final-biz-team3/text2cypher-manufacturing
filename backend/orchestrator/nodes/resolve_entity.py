@@ -43,6 +43,7 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
         "type": "function",
         "function": {
             "name": "extract_entity",
+            "strict": True,
             "description": (
                 "자연어 질의에서 특정 대상을 지칭하는 이름과 그 종류를 추출한다. "
                 "질의가 특정 대상을 가리키지 않으면 호출하지 않는다."
@@ -66,6 +67,7 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
                     },
                 },
                 "required": ["entityType", "entityName"],
+                "additionalProperties": False,
             },
         },
     }
@@ -96,7 +98,14 @@ async def _extract_entities(
                 tool_call.function.name,
             )
             continue
-        arguments = json.loads(tool_call.function.arguments)
+        try:
+            arguments = json.loads(tool_call.function.arguments)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                "resolve_entity: extract_entity 인자 JSON 오류 %r",
+                tool_call.function.arguments,
+            )
+            continue
         if not isinstance(arguments, dict):
             logger.warning(
                 "resolve_entity: extract_entity 인자 형식 오류 %r", arguments
