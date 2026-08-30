@@ -231,7 +231,8 @@ async def test_graph_composes_canonical_rq18_many_to_one(postgres_pool) -> None:
           "question": "활성 공급업체 Allenson Cycles의 공급 부품과 영향 완제품 경로를 조회한다.",
           "dependsOn": [],
           "requiredOutputs": ["componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds"],
-          "joinKeys": ["componentId"]
+          "joinKeys": ["componentId"],
+          "inputBindings": {}
         },
         {
           "id": "sql_stock",
@@ -242,7 +243,8 @@ async def test_graph_composes_canonical_rq18_many_to_one(postgres_pool) -> None:
           "requiredOutputs": ["componentId", "actualStock"],
           "joinKeys": ["componentId"]
         }
-      ]
+      ],
+      "resultTransform": null
     }"""
     cypher = """MATCH (supplier:Supplier {supplierId: 1494})-[:SUPPLIES]->(component:Product)
 MATCH path = (component)<-[rels:REQUIRES_COMPONENT*1..4]-(finished:Product)
@@ -317,8 +319,8 @@ ORDER BY p.productid"""
     assert result["final_answer"] == f"COMPOSED: {composed}"
 
 
-async def test_graph_composes_canonical_rq19_path_duplicates(postgres_pool) -> None:
-    """RQ19 GRAPH 25행의 중복 경로에 SQL의 21개 component 사실을 결합한다."""
+async def test_graph_composes_canonical_rq19_bom_shortage(postgres_pool) -> None:
+    """RQ19 source 전체를 검증해 결정적인 외부 구매 부족량 1행을 만든다."""
     route_plan = """{
       "tool_plan": ["graph", "sql"],
       "subqueries": [
@@ -328,7 +330,8 @@ async def test_graph_composes_canonical_rq19_path_duplicates(postgres_pool) -> N
           "question": "완제품 HL Road Frame - Black, 58의 유효 BOM 경로별 필요 수량 계수와 활성 공급업체를 조회한다.",
           "dependsOn": [],
           "requiredOutputs": ["finishedProductId", "finishedProductName", "componentId", "componentName", "depth", "pathProductIds", "quantityPerAssembly", "supplierId", "supplierName"],
-          "joinKeys": ["componentId"]
+          "joinKeys": ["componentId"],
+          "inputBindings": {}
         },
         {
           "id": "sql_component_stock",
@@ -339,7 +342,8 @@ async def test_graph_composes_canonical_rq19_path_duplicates(postgres_pool) -> N
           "requiredOutputs": ["componentId", "makeFlag", "actualStock"],
           "joinKeys": ["componentId"]
         }
-      ]
+      ],
+      "resultTransform": {"type": "bom_shortage_v1", "productionQty": 10}
     }"""
     cypher = """MATCH (finished:Product {productId: 680})
 MATCH path = (finished)-[:REQUIRES_COMPONENT*1..4]->(component:Product)
@@ -400,20 +404,28 @@ ORDER BY p.productid"""
     assert len(sql_rows) == 21
     assert len({row["componentId"] for row in graph_rows}) == 21
 
-    sql_by_component = {row["componentId"]: row for row in sql_rows}
     composed = result["composed_result"]
     assert composed["mode"] == "joined"
+    assert composed["transform"] == "bom_shortage_v1"
     assert composed["error"] is None
-    assert composed["total_count"] == 25
-    assert len(composed["rows"]) == 25
-    assert [row["componentId"] for row in composed["rows"]] == [
-        row["componentId"] for row in graph_rows
+    assert composed["total_count"] == 1
+    assert composed["truncated"] is False
+    assert composed["rows"] == [
+        {
+            "finishedProductId": 680,
+            "finishedProductName": "HL Road Frame - Black, 58",
+            "productionQty": Decimal("10.000000"),
+            "componentId": 492,
+            "componentName": "Paint - Black",
+            "requiredQty": Decimal("80.000000"),
+            "actualStock": Decimal("47.000000"),
+            "shortageQty": Decimal("33.000000"),
+            "suppliers": [
+                {"supplierId": 1584, "supplierName": "Trey Research"},
+                {"supplierId": 1692, "supplierName": "Carlson Specialties"},
+            ],
+        }
     ]
-    assert all(
-        row["makeFlag"] == sql_by_component[row["componentId"]]["makeFlag"]
-        and row["actualStock"] == sql_by_component[row["componentId"]]["actualStock"]
-        for row in composed["rows"]
-    )
     assert result["final_answer"] == f"COMPOSED: {composed}"
 
 
@@ -428,7 +440,8 @@ async def test_graph_composes_canonical_rq20_one_to_many(postgres_pool) -> None:
           "question": "작업지시 17747의 제품, 폐기 수량과 폐기사유를 조회한다.",
           "dependsOn": [],
           "requiredOutputs": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"],
-          "joinKeys": ["workOrderId"]
+          "joinKeys": ["workOrderId"],
+          "inputBindings": {}
         },
         {
           "id": "graph_operations",
@@ -436,9 +449,11 @@ async def test_graph_composes_canonical_rq20_one_to_many(postgres_pool) -> None:
           "question": "작업지시 17747의 공정, 작업장과 공정 순서를 조회한다.",
           "dependsOn": [],
           "requiredOutputs": ["workOrderId", "routingOperationKey", "sequence", "locationId", "locationName"],
-          "joinKeys": ["workOrderId"]
+          "joinKeys": ["workOrderId"],
+          "inputBindings": {}
         }
-      ]
+      ],
+      "resultTransform": null
     }"""
     sql = """SELECT w.workorderid AS "workOrderId",
   w.productid AS "productId",
