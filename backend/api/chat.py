@@ -10,7 +10,16 @@ from core.auth import CurrentUser, get_current_user
 from core.history import save_conversation
 from core.openai_client import get_openai_client
 from core.postgres import get_pool, get_write_pool
+from orchestrator.errors import EntityNotFoundError
 from orchestrator.graph import build_orchestrator_graph
+from orchestrator.nodes.generate_answer import generate_failure_answer
+from orchestrator.nodes.plan_outputs import OutputPlanningError
+from orchestrator.nodes.route_query import RoutePlanError
+from orchestrator.query_failures import (
+    entity_not_found_failure,
+    query_understanding_failure,
+)
+from orchestrator.state import QueryFailure
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +46,21 @@ def _to_json_safe(value: Any) -> Any:
     return jsonable_encoder(value, custom_encoder=_NEO4J_TEMPORAL_ENCODERS)
 
 
+def _safe_failed_result(value: Any) -> Any:
+    """실패 응답·기록에서 원본 오류, 시도 쿼리, 내부 실패 타입을 제거한다."""
+    if not isinstance(value, dict):
+        return value
+    return {
+        "result": value.get("result"),
+        "error": (
+            "질의를 완료하지 못했습니다." if value.get("error") is not None else None
+        ),
+        "attempts": [],
+        "empty_reason": value.get("empty_reason"),
+        "truncated": value.get("truncated", False),
+    }
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,25 +82,70 @@ async def chat(
     graph = getattr(request.app.state, "graph", None)
     if graph is None:
         graph = build_orchestrator_graph(get_openai_client(), get_pool())
-    result = await graph.ainvoke(
-        {
+    try:
+        result = await graph.ainvoke(
+            {
+                "query": chat_request.query,
+                "confirmed_entity": chat_request.confirmed_entity,
+            }
+        )
+    except EntityNotFoundError:
+        final_answer = await generate_failure_answer(
+            get_openai_client(),
+            query=chat_request.query,
+            failure=entity_not_found_failure(),
+        )
+        result = {
             "query": chat_request.query,
-            "confirmed_entity": chat_request.confirmed_entity,
+            "final_answer": final_answer,
+            "query_failure": entity_not_found_failure(),
         }
-    )
+    except RoutePlanError:
+        final_answer = await generate_failure_answer(
+            get_openai_client(),
+            query=chat_request.query,
+            failure=query_understanding_failure("routing"),
+        )
+        result = {
+            "query": chat_request.query,
+            "final_answer": final_answer,
+            "query_failure": query_understanding_failure("routing"),
+        }
+    except OutputPlanningError:
+        final_answer = await generate_failure_answer(
+            get_openai_client(),
+            query=chat_request.query,
+            failure=query_understanding_failure("planning"),
+        )
+        result = {
+            "query": chat_request.query,
+            "final_answer": final_answer,
+            "query_failure": query_understanding_failure("planning"),
+        }
     # entity도 이론상 조회 결과에서 온 값이라(현재는 항상 int id/str name
     # 조합이라 실제로 걸린 적은 없지만) sql_result/graph_result만 따로
     # 변환하면 나중에 다른 필드에서 같은 버그가 재현될 수 있다 - response
     # 전체를 한 번에 감싼다.
+    query_failure: QueryFailure | None = result.get("query_failure")
     response = _to_json_safe(
         {
             "query": result["query"],
             "entity": result.get("entity"),
             "tool_plan": result.get("tool_plan"),
-            "sql_query": result.get("sql_query"),
-            "cypher_query": result.get("cypher_query"),
-            "sql_result": result.get("sql_result"),
-            "graph_result": result.get("graph_result"),
+            "sql_query": None if query_failure is not None else result.get("sql_query"),
+            "cypher_query": (
+                None if query_failure is not None else result.get("cypher_query")
+            ),
+            "sql_result": (
+                _safe_failed_result(result.get("sql_result"))
+                if query_failure is not None
+                else result.get("sql_result")
+            ),
+            "graph_result": (
+                _safe_failed_result(result.get("graph_result"))
+                if query_failure is not None
+                else result.get("graph_result")
+            ),
             "final_answer": result.get("final_answer"),
         }
     )
