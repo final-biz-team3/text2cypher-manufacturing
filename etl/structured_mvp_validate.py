@@ -11,7 +11,10 @@ import sys
 from typing import Any
 
 from dotenv import load_dotenv
-from neo4j import Driver, GraphDatabase
+from neo4j import Driver
+from postgres_restore import ROOT_DIR
+from structured_mvp_config import RELATIONSHIP_TYPES, connect_neo4j_from_env
+from structured_mvp_load import BUSINESS_LABELS
 
 # quantityPerAssembly가 PostgreSQL Decimal -> float 변환 후 Cypher에서 다시 곱셈을
 # 거치므로, 수학적으로 정확히 80이어도 부동소수점 표현 오차로 79.99999999999997
@@ -280,28 +283,10 @@ def main() -> None:
 
     사용법(리포 루트 기준): python etl/structured_mvp_validate.py
     """
-    from postgres_restore import ROOT_DIR
-    from run_structured_mvp_sync import NEO4J_REQUIRED_ENV_VARS, RELATIONSHIP_TYPES
-    from structured_mvp_load import BUSINESS_LABELS
-
     load_dotenv(ROOT_DIR / ".env")
 
-    missing_vars = [
-        name for name in NEO4J_REQUIRED_ENV_VARS if not os.environ.get(name)
-    ]
-    if missing_vars:
-        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_vars)}")
-
+    driver = connect_neo4j_from_env()
     print(f"대상: {os.environ['NEO4J_URI']}")
-
-    driver = GraphDatabase.driver(
-        os.environ["NEO4J_URI"],
-        auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
-    )
-    try:
-        driver.verify_connectivity()
-    except Exception as exc:
-        sys.exit(f"Neo4j 접속 실패 ({os.environ['NEO4J_URI']}): {exc}")
 
     try:
         print("1) 건수 확인")

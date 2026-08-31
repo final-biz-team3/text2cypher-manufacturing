@@ -35,8 +35,8 @@ import uuid
 from datetime import UTC, datetime
 
 import psycopg2
-from neo4j import GraphDatabase
 from postgres_restore import REQUIRED_ENV_VARS, ROOT_DIR, target_database_exists
+from structured_mvp_config import RELATIONSHIP_TYPES, connect_neo4j_from_env
 from structured_mvp_extract import extract_rows, normalize_row
 from structured_mvp_load import (
     BUSINESS_LABELS,
@@ -60,8 +60,6 @@ from structured_mvp_validate import (
 )
 
 CONSTRAINTS_PATH = ROOT_DIR / "schema" / "structured_mvp_constraints.cypher"
-RELATIONSHIP_TYPES = [spec.rel_type for spec in RELATIONSHIP_SPECS]
-NEO4J_REQUIRED_ENV_VARS = ["NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"]
 
 # 관계별 (시작 컬럼, 도착 컬럼, 시작 라벨, 도착 라벨) - 참조 무결성 검사용
 RELATIONSHIP_ENDPOINTS = {
@@ -112,21 +110,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    missing_neo4j_vars = [
-        name for name in NEO4J_REQUIRED_ENV_VARS if not os.environ.get(name)
-    ]
-    if missing_neo4j_vars:
-        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_neo4j_vars)}")
+    driver = connect_neo4j_from_env()
     print(f"Neo4j 대상: {os.environ['NEO4J_URI']}")
-
-    driver = GraphDatabase.driver(
-        os.environ["NEO4J_URI"],
-        auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
-    )
-    try:
-        driver.verify_connectivity()
-    except Exception as exc:
-        sys.exit(f"Neo4j 접속 실패 ({os.environ['NEO4J_URI']}): {exc}")
 
     if args.retry_promote:
         print(f"승격 재시도 전용 모드: '{args.retry_promote}' -> 기본 데이터베이스")
