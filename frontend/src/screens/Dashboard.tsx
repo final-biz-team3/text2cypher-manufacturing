@@ -7,14 +7,13 @@ import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnsw
 import { ClarificationPrompt } from '@/components/query/ClarificationPrompt'
 import { ResultsTable } from '@/components/result/ResultsTable'
 import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
-import { EvidencePanel } from '@/components/result/EvidencePanel'
-import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
 import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useHealthStore } from '@/store/useHealthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
+import { formatCypherError } from '@/lib/formatCypherError'
 import type { AmbiguousCandidate, ChatResponse, HistoryEntry } from '@/lib/schemas'
 import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
@@ -58,19 +57,24 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
   }
 }
 
-// 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다
+// 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다.
+// 실패 다음에 또 다른 시도가 이어졌다면(=실제로 재시도됨) "다시 시도합니다."를 덧붙인다.
 function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrectionStep[] {
-  return attempts.map((attempt, index) => ({
-    id: `${prefix}-${index}`,
-    status: attempt.error === null ? 'success' : 'fail',
-    title: `시도 ${index + 1}`,
-    detail:
+  return attempts.map((attempt, index) => {
+    const retried = attempt.error !== null && index < attempts.length - 1
+    const detail =
       attempt.error === null
         ? '성공'
         : attempt.error === 'EMPTY_RESULT'
           ? '결과 없음'
-          : attempt.error,
-  }))
+          : formatCypherError(attempt.error)
+    return {
+      id: `${prefix}-${index}`,
+      status: attempt.error === null ? 'success' : 'fail',
+      title: `시도 ${index + 1}`,
+      detail: retried ? `${detail} 다시 시도합니다.` : detail,
+    }
+  })
 }
 
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
@@ -95,19 +99,22 @@ export function Dashboard() {
   const setErrorMessage = useUiStore((s) => s.setErrorMessage)
   const queryPanelCollapsed = useUiStore((s) => s.queryPanelCollapsed)
   const toggleQueryPanelCollapsed = useUiStore((s) => s.toggleQueryPanelCollapsed)
-  const evidencePanelOpen = useUiStore((s) => s.evidencePanelOpen)
-  const toggleEvidencePanel = useUiStore((s) => s.toggleEvidencePanel)
   // 새로고침하면 사라져도 되는 휘발성 상태라 store(sessionStorage)가 아닌
   // 로컬 상태로 둔다 - useUiStore.ts의 clarify 리셋 참고.
   const [pendingClarification, setPendingClarification] = useState<PendingClarification | null>(
     null,
   )
 
-  // 화면이 열릴 때 대화기록을 불러온다
-  useEffect(() => {
+  // 대화기록을 다시 불러와 사이드바 목록을 갱신한다
+  const refreshHistory = () => {
     fetchHistory()
       .then(setHistory)
       .catch((err: unknown) => console.error('fetchHistory failed:', err))
+  }
+
+  // 화면이 열릴 때 대화기록을 불러온다
+  useEffect(() => {
+    refreshHistory()
   }, [])
 
   // /chat을 호출하고 성공·모호함·에러 세 갈래로 화면 상태를 갱신하는 공통 로직.
@@ -126,9 +133,7 @@ export function Dashboard() {
       setPendingClarification(null)
       setResult(toDisplayResult(response))
       setActiveScreen('success')
-      fetchHistory()
-        .then(setHistory)
-        .catch((err: unknown) => console.error('fetchHistory failed:', err))
+      refreshHistory()
     } catch (err) {
       if (err instanceof ClarificationNeededError) {
         setPendingClarification({
@@ -271,32 +276,15 @@ export function Dashboard() {
               {result.columns.length > 0 ? (
                 <ResultsTable columns={result.columns} rows={result.rows} />
               ) : null}
-              {result.sqlAttempts.length > 0 || result.cypherAttempts.length > 0 ? (
-                <EvidencePanel open={evidencePanelOpen} onToggle={toggleEvidencePanel}>
-                  {result.sqlAttempts.length > 0 ? (
-                    <div>
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
-                        SQL 시도
-                      </p>
-                      <SelfCorrectionTimeline steps={attemptsToSteps('sql', result.sqlAttempts)} />
-                    </div>
-                  ) : null}
-                  {result.cypherAttempts.length > 0 ? (
-                    <div>
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
-                        Cypher 시도
-                      </p>
-                      <SelfCorrectionTimeline
-                        steps={attemptsToSteps('cypher', result.cypherAttempts)}
-                      />
-                    </div>
-                  ) : null}
-                </EvidencePanel>
-              ) : null}
             </div>
           )}
         </main>
-        {activeScreen === 'success' && result && (result.sql || result.cypher) ? (
+        {activeScreen === 'success' &&
+        result &&
+        (result.sql ||
+          result.cypher ||
+          result.sqlAttempts.length > 0 ||
+          result.cypherAttempts.length > 0) ? (
           <GeneratedQueryPanel
             queries={[
               ...(result.sql
@@ -306,6 +294,8 @@ export function Dashboard() {
                 ? [{ label: '생성된 Cypher', language: 'cypher' as const, query: result.cypher }]
                 : []),
             ]}
+            sqlAttempts={attemptsToSteps('sql', result.sqlAttempts)}
+            cypherAttempts={attemptsToSteps('cypher', result.cypherAttempts)}
             collapsed={queryPanelCollapsed}
             onToggleCollapsed={toggleQueryPanelCollapsed}
           />
