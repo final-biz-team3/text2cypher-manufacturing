@@ -13,7 +13,7 @@ import { useHealthStore } from '@/store/useHealthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
-import { formatQueryError } from '@/lib/formatQueryError'
+import { formatCypherError } from '@/lib/formatCypherError'
 import type { AmbiguousCandidate, ChatResponse, HistoryEntry } from '@/lib/schemas'
 import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
@@ -67,7 +67,7 @@ function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrecti
         ? '성공'
         : attempt.error === 'EMPTY_RESULT'
           ? '결과 없음'
-          : formatQueryError(attempt.error)
+          : formatCypherError(attempt.error)
     return {
       id: `${prefix}-${index}`,
       status: attempt.error === null ? 'success' : 'fail',

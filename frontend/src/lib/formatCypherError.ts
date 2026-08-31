@@ -17,35 +17,30 @@ const FALLBACK_LABEL = '쿼리 실행 오류로'
 // message 본문에서 line/column 위치를 뽑아낸다(offset은 사용자에게 의미 없어 버림).
 const LOCATION_PATTERN = /\(line (\d+), column (\d+)(?:\s*\(offset:\s*\d+\))?\)/
 
-// message 본문 자주 나오는 몇 가지 패턴만 한글로 바꾼다. 순서대로 검사해 먼저 매칭되는 것을 쓴다.
-// 매칭 안 되면 본문 번역은 생략하고(원문 영어는 노출하지 않음) 위치 정보만 남긴다.
-const MESSAGE_PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
-  [
-    /^Invalid input '([^']*)':\s*expected/,
-    (m) =>
-      m[1] === ''
-        ? '입력이 예상보다 일찍 끝났습니다'
-        : `입력값 '${m[1]}'을(를) 여기서 사용할 수 없습니다`,
-  ],
-  [/^Variable `([^`]+)` not defined/, (m) => `변수 '${m[1]}'이(가) 정의되지 않았습니다`],
-]
-
+// message 본문에 자주 나오는 패턴만 한글로 바꾼다. 매칭 안 되면 본문 번역은 생략하고
+// (원문 영어는 노출하지 않음) 위치 정보만 남긴다.
 function translateMessageBody(message: string): string | null {
-  for (const [pattern, translate] of MESSAGE_PATTERNS) {
-    const match = message.match(pattern)
-    if (match) return translate(match)
+  const invalidInput = message.match(/^Invalid input '([^']*)':\s*expected/)
+  if (invalidInput) {
+    return invalidInput[1] === ''
+      ? '입력이 예상보다 일찍 끝났습니다'
+      : `입력값 '${invalidInput[1]}'을(를) 여기서 사용할 수 없습니다`
   }
+
+  const undefinedVariable = message.match(/^Variable `([^`]+)` not defined/)
+  if (undefinedVariable) return `변수 '${undefinedVariable[1]}'이(가) 정의되지 않았습니다`
+
   return null
 }
 
-export function formatQueryError(raw: string): string {
+export function formatCypherError(raw: string): string {
   const match = raw.match(RAW_NEO4J_ERROR_PATTERN)
   if (!match) return raw
 
   const [, rawCode, message] = match
   const code = rawCode.trim()
-  const found = CODE_KEYWORD_LABELS.find(([keyword]) => code.includes(keyword))
-  const label = found ? found[1] : FALLBACK_LABEL
+  const label =
+    CODE_KEYWORD_LABELS.find(([keyword]) => code.includes(keyword))?.[1] ?? FALLBACK_LABEL
 
   const translatedMessage = translateMessageBody(message.trim())
   const location = message.match(LOCATION_PATTERN)
