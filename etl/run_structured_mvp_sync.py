@@ -61,31 +61,6 @@ from structured_mvp_validate import (
 
 CONSTRAINTS_PATH = ROOT_DIR / "schema" / "structured_mvp_constraints.cypher"
 
-# 관계별 (시작 컬럼, 도착 컬럼, 시작 라벨, 도착 라벨) - 참조 무결성 검사용
-RELATIONSHIP_ENDPOINTS = {
-    "SUPPLIES": ("supplierId", "productId", "Supplier", "Product"),
-    "REQUIRES_COMPONENT": (
-        "assemblyProductId",
-        "componentProductId",
-        "Product",
-        "Product",
-    ),
-    "PRODUCES": ("workOrderId", "productId", "WorkOrder", "Product"),
-    "HAS_OPERATION": (
-        "workOrderId",
-        "routingOperationKey",
-        "WorkOrder",
-        "RoutingOperation",
-    ),
-    "PERFORMED_AT": (
-        "routingOperationKey",
-        "locationId",
-        "RoutingOperation",
-        "Location",
-    ),
-    "SCRAPPED_DUE_TO": ("workOrderId", "scrapReasonId", "WorkOrder", "ScrapReason"),
-}
-
 
 def generate_sync_run_id() -> str:
     return f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
@@ -211,15 +186,12 @@ def main() -> None:
                     f"{duplicates[:5]}"
                 )
 
-            from_key, to_key, from_label, to_label = RELATIONSHIP_ENDPOINTS[
-                spec.rel_type
-            ]
             dangling = find_dangling_relationship_rows(
                 rows,
-                from_key=from_key,
-                to_key=to_key,
-                from_ids=node_id_sets[from_label],
-                to_ids=node_id_sets[to_label],
+                from_key=spec.from_key,
+                to_key=spec.to_key,
+                from_ids=node_id_sets[spec.from_label],
+                to_ids=node_id_sets[spec.to_label],
             )
             if dangling:
                 sys.exit(
