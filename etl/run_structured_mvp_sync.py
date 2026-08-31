@@ -35,6 +35,8 @@ import uuid
 from datetime import UTC, datetime
 
 import psycopg2
+import psycopg2.extensions
+from neo4j import Driver
 from postgres_restore import REQUIRED_ENV_VARS, ROOT_DIR, target_database_exists
 from structured_mvp_config import RELATIONSHIP_TYPES, connect_neo4j_from_env
 from structured_mvp_extract import extract_rows, normalize_row
@@ -64,6 +66,179 @@ CONSTRAINTS_PATH = ROOT_DIR / "schema" / "structured_mvp_constraints.cypher"
 
 def generate_sync_run_id() -> str:
     return f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+
+
+def extract_all(
+    pg_conn: psycopg2.extensions.connection,
+) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
+    """1단계: NODE_SPECS/RELATIONSHIP_SPECS를 순회해 추출·정규화. (nodes, rels) 반환.
+
+    Neo4j에는 아직 아무것도 쓰지 않는다 - 여기서 실패해도 라이브 그래프는 그대로다.
+    """
+    extracted_nodes: dict[str, list[dict]] = {}
+    for spec in NODE_SPECS:
+        raw_rows = extract_rows(pg_conn, spec.extract_sql)
+        rows = [
+            normalize_row(r, datetime_columns=spec.datetime_columns) for r in raw_rows
+        ]
+        extracted_nodes[spec.label] = rows
+        print(f"   {spec.label}: {len(rows)}건 추출")
+
+    extracted_rels: dict[str, list[dict]] = {}
+    for spec in RELATIONSHIP_SPECS:
+        raw_rows = extract_rows(pg_conn, spec.extract_sql)
+        rows = [normalize_row(r, date_columns=spec.date_columns) for r in raw_rows]
+        extracted_rels[spec.rel_type] = rows
+        print(f"   {spec.rel_type}: {len(rows)}건 추출")
+
+    return extracted_nodes, extracted_rels
+
+
+def validate_before_write(
+    nodes: dict[str, list[dict]], rels: dict[str, list[dict]]
+) -> list[str]:
+    """2단계: 0건 / 필수 키 NULL / 중복 키 / 참조 무결성. 위반 메시지 리스트 반환(빈 리스트=통과).
+
+    종료(sys.exit) 결정은 호출자(main)만 한다 - structured_mvp_validate.py의
+    fixture 검사(verify_*)가 이미 실패 리스트를 반환하는 규약과 맞춘다. 한 스펙에서
+    위반이 나오면 그 스펙의 나머지 검사는 건너뛰고 다음 스펙으로 간다(원래의
+    "첫 위반에서 중단" 문구를 그대로 유지하기 위함).
+    """
+    failures: list[str] = []
+
+    for spec in NODE_SPECS:
+        rows = nodes.get(spec.label, [])
+        if not rows:
+            failures.append(
+                f"{spec.label} 추출 결과가 0건입니다 - Postgres 연결/쿼리 "
+                "문제일 수 있어 중단합니다(Neo4j는 안 건드림)."
+            )
+            continue
+        null_rows = find_rows_with_null_key(rows, (spec.unique_key,))
+        if null_rows:
+            failures.append(
+                f"{spec.label}: {spec.unique_key}이 NULL인 행 "
+                f"{len(null_rows)}건 -> {null_rows[:5]}"
+            )
+            continue
+        duplicates = find_duplicate_key_rows(rows, (spec.unique_key,))
+        if duplicates:
+            failures.append(
+                f"{spec.label}: 중복된 {spec.unique_key} -> {duplicates[:5]}"
+            )
+
+    node_id_sets = {
+        spec.label: {row[spec.unique_key] for row in nodes.get(spec.label, [])}
+        for spec in NODE_SPECS
+    }
+
+    for spec in RELATIONSHIP_SPECS:
+        rows = rels.get(spec.rel_type, [])
+        if not rows:
+            failures.append(
+                f"{spec.rel_type} 추출 결과가 0건입니다 - Postgres 연결/쿼리 "
+                "문제일 수 있어 중단합니다(Neo4j는 안 건드림)."
+            )
+            continue
+        null_rows = find_rows_with_null_key(rows, spec.merge_key_columns)
+        if null_rows:
+            failures.append(
+                f"{spec.rel_type}: {spec.merge_key_columns}이 NULL인 행 "
+                f"{len(null_rows)}건 -> {null_rows[:5]}"
+            )
+            continue
+        duplicates = find_duplicate_key_rows(rows, spec.merge_key_columns)
+        if duplicates:
+            failures.append(
+                f"{spec.rel_type}: 중복된 {spec.merge_key_columns} -> {duplicates[:5]}"
+            )
+            continue
+        dangling = find_dangling_relationship_rows(
+            rows,
+            from_key=spec.from_key,
+            to_key=spec.to_key,
+            from_ids=node_id_sets[spec.from_label],
+            to_ids=node_id_sets[spec.to_label],
+        )
+        if dangling:
+            failures.append(
+                f"{spec.rel_type}: 참조 누락 {len(dangling)}건 -> {dangling[:5]}"
+            )
+
+    return failures
+
+
+def load_all(
+    driver: Driver,
+    database: str,
+    nodes: dict[str, list[dict]],
+    rels: dict[str, list[dict]],
+    sync_run_id: str,
+) -> tuple[dict[str, int], dict[str, int]]:
+    """4단계: 제약조건 적용 + 배치 적재. (expected_node_counts, expected_rel_counts) 반환.
+
+    항상 격리된 새 데이터베이스를 대상으로 한다 - 라이브 그래프는 승격 전까지
+    건드리지 않는다.
+    """
+    apply_constraints(driver, CONSTRAINTS_PATH, database=database)
+
+    expected_node_counts: dict[str, int] = {}
+    for spec in NODE_SPECS:
+        rows = nodes[spec.label]
+        load_rows(driver, spec, rows, sync_run_id, database=database)
+        expected_node_counts[spec.label] = len(rows)
+        print(f"   {spec.label}: {len(rows)}건 적재")
+
+    expected_rel_counts: dict[str, int] = {}
+    for spec in RELATIONSHIP_SPECS:
+        rows = rels[spec.rel_type]
+        load_rows(driver, spec, rows, sync_run_id, database=database)
+        expected_rel_counts[spec.rel_type] = len(rows)
+        print(f"   {spec.rel_type}: {len(rows)}건 적재")
+
+    return expected_node_counts, expected_rel_counts
+
+
+def validate_after_load(
+    driver: Driver,
+    database: str,
+    expected_node_counts: dict[str, int],
+    expected_rel_counts: dict[str, int],
+) -> list[str]:
+    """5단계: 적재 건수 일치 + fixture 검증. 위반 메시지 리스트 반환(빈 리스트=통과).
+
+    건수가 어긋나면 fixture까지 갈 것 없이 거기서 리스트를 돌려준다(원래 흐름과
+    동일). 통과 시 건수 요약 출력은 여기서 한다.
+    """
+    actual_node_counts = count_nodes_by_label(driver, BUSINESS_LABELS, database=database)
+    actual_rel_counts = count_relationships_by_type(
+        driver, RELATIONSHIP_TYPES, database=database
+    )
+    if actual_node_counts != expected_node_counts:
+        return [
+            f"노드 적재 건수 불일치 (추출 {expected_node_counts} vs 적재 "
+            f"{actual_node_counts}) - 새 데이터베이스 '{database}'는 조사를 위해 "
+            "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
+        ]
+    if actual_rel_counts != expected_rel_counts:
+        return [
+            f"관계 적재 건수 불일치 (추출 {expected_rel_counts} vs 적재 "
+            f"{actual_rel_counts}) - 새 데이터베이스 '{database}'는 조사를 위해 "
+            "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
+        ]
+
+    parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
+    entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+    failures = verify_fixture_entities(driver, entities, database=database)
+    failures += verify_work_order_17747_fixture(driver, database=database)
+    failures += verify_bom_680_to_492_quantity(driver, database=database)
+    if failures:
+        return failures
+
+    print(f"   노드 건수: {actual_node_counts}")
+    print(f"   관계 건수: {actual_rel_counts}")
+    print("   적재 후 검증 전부 통과")
+    return []
 
 
 def main() -> None:
@@ -126,78 +301,14 @@ def main() -> None:
 
     try:
         print("1) PostgreSQL에서 노드·관계 전체 추출 (Neo4j는 아직 안 건드림)")
-        extracted_nodes: dict[str, list[dict]] = {}
-        for spec in NODE_SPECS:
-            raw_rows = extract_rows(pg_conn, spec.extract_sql)
-            rows = [
-                normalize_row(r, datetime_columns=spec.datetime_columns)
-                for r in raw_rows
-            ]
-            extracted_nodes[spec.label] = rows
-            print(f"   {spec.label}: {len(rows)}건 추출")
-
-        extracted_rels: dict[str, list[dict]] = {}
-        for spec in RELATIONSHIP_SPECS:
-            raw_rows = extract_rows(pg_conn, spec.extract_sql)
-            rows = [normalize_row(r, date_columns=spec.date_columns) for r in raw_rows]
-            extracted_rels[spec.rel_type] = rows
-            print(f"   {spec.rel_type}: {len(rows)}건 추출")
+        extracted_nodes, extracted_rels = extract_all(pg_conn)
 
         print("2) 쓰기 전 검증 (0건 / 필수 키 NULL / 중복 키 / 참조 무결성)")
-        for spec in NODE_SPECS:
-            rows = extracted_nodes[spec.label]
-            if not rows:
-                sys.exit(
-                    f"{spec.label} 추출 결과가 0건입니다 - Postgres 연결/쿼리 "
-                    "문제일 수 있어 중단합니다(Neo4j는 안 건드림)."
-                )
-            null_rows = find_rows_with_null_key(rows, (spec.unique_key,))
-            if null_rows:
-                sys.exit(
-                    f"{spec.label}: {spec.unique_key}이 NULL인 행 "
-                    f"{len(null_rows)}건 -> {null_rows[:5]}"
-                )
-            duplicates = find_duplicate_key_rows(rows, (spec.unique_key,))
-            if duplicates:
-                sys.exit(f"{spec.label}: 중복된 {spec.unique_key} -> {duplicates[:5]}")
-
-        node_id_sets = {
-            spec.label: {row[spec.unique_key] for row in extracted_nodes[spec.label]}
-            for spec in NODE_SPECS
-        }
-
-        for spec in RELATIONSHIP_SPECS:
-            rows = extracted_rels[spec.rel_type]
-            if not rows:
-                sys.exit(
-                    f"{spec.rel_type} 추출 결과가 0건입니다 - Postgres 연결/쿼리 "
-                    "문제일 수 있어 중단합니다(Neo4j는 안 건드림)."
-                )
-            null_rows = find_rows_with_null_key(rows, spec.merge_key_columns)
-            if null_rows:
-                sys.exit(
-                    f"{spec.rel_type}: {spec.merge_key_columns}이 NULL인 행 "
-                    f"{len(null_rows)}건 -> {null_rows[:5]}"
-                )
-            duplicates = find_duplicate_key_rows(rows, spec.merge_key_columns)
-            if duplicates:
-                sys.exit(
-                    f"{spec.rel_type}: 중복된 {spec.merge_key_columns} -> "
-                    f"{duplicates[:5]}"
-                )
-
-            dangling = find_dangling_relationship_rows(
-                rows,
-                from_key=spec.from_key,
-                to_key=spec.to_key,
-                from_ids=node_id_sets[spec.from_label],
-                to_ids=node_id_sets[spec.to_label],
-            )
-            if dangling:
-                sys.exit(
-                    f"{spec.rel_type}: 참조 누락 {len(dangling)}건 -> {dangling[:5]}"
-                )
-
+        pre_write_failures = validate_before_write(extracted_nodes, extracted_rels)
+        if pre_write_failures:
+            for failure in pre_write_failures:
+                print(f"   - {failure}")
+            sys.exit("쓰기 전 검증 실패 - Neo4j는 한 번도 안 건드렸습니다.")
         print("   쓰기 전 검증 전부 통과")
 
         print("3) 새 Neo4j 데이터베이스 생성")
@@ -206,57 +317,22 @@ def main() -> None:
         print(f"   '{new_db}' 생성 완료 (기존 기본 데이터베이스는 그대로)")
 
         print("4) 제약조건 적용 + 노드·관계 적재 (새 데이터베이스 대상)")
-        apply_constraints(driver, CONSTRAINTS_PATH, database=new_db)
-        expected_node_counts: dict[str, int] = {}
-        for spec in NODE_SPECS:
-            rows = extracted_nodes[spec.label]
-            load_rows(driver, spec, rows, sync_run_id, database=new_db)
-            expected_node_counts[spec.label] = len(rows)
-            print(f"   {spec.label}: {len(rows)}건 적재")
-
-        expected_rel_counts: dict[str, int] = {}
-        for spec in RELATIONSHIP_SPECS:
-            rows = extracted_rels[spec.rel_type]
-            load_rows(driver, spec, rows, sync_run_id, database=new_db)
-            expected_rel_counts[spec.rel_type] = len(rows)
-            print(f"   {spec.rel_type}: {len(rows)}건 적재")
+        expected_node_counts, expected_rel_counts = load_all(
+            driver, new_db, extracted_nodes, extracted_rels, sync_run_id
+        )
 
         print("5) 적재 후 검증 (새 데이터베이스 대상)")
-        actual_node_counts = count_nodes_by_label(
-            driver, BUSINESS_LABELS, database=new_db
+        post_load_failures = validate_after_load(
+            driver, new_db, expected_node_counts, expected_rel_counts
         )
-        actual_rel_counts = count_relationships_by_type(
-            driver, RELATIONSHIP_TYPES, database=new_db
-        )
-        if actual_node_counts != expected_node_counts:
-            sys.exit(
-                f"노드 적재 건수 불일치 (추출 {expected_node_counts} vs 적재 "
-                f"{actual_node_counts}) - 새 데이터베이스 '{new_db}'는 조사를 위해 "
-                "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
-            )
-        if actual_rel_counts != expected_rel_counts:
-            sys.exit(
-                f"관계 적재 건수 불일치 (추출 {expected_rel_counts} vs 적재 "
-                f"{actual_rel_counts}) - 새 데이터베이스 '{new_db}'는 조사를 위해 "
-                "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
-            )
-
-        parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
-        entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
-        failures = verify_fixture_entities(driver, entities, database=new_db)
-        failures += verify_work_order_17747_fixture(driver, database=new_db)
-        failures += verify_bom_680_to_492_quantity(driver, database=new_db)
-        if failures:
-            print(f"   fixture 검증 실패 {len(failures)}건:")
-            for failure in failures:
+        if post_load_failures:
+            print(f"   적재 후 검증 실패 {len(post_load_failures)}건:")
+            for failure in post_load_failures:
                 print(f"     - {failure}")
             sys.exit(
                 f"검증 실패 - 새 데이터베이스 '{new_db}'는 조사를 위해 남겨뒀습니다. "
                 "기존 기본 데이터베이스는 승격하지 않아 안전합니다."
             )
-        print(f"   노드 건수: {actual_node_counts}")
-        print(f"   관계 건수: {actual_rel_counts}")
-        print("   적재 후 검증 전부 통과")
 
         print("6) 기본 데이터베이스로 승격")
         retry_promote(driver, new_db, expected_previous_default=expected_default)
