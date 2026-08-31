@@ -1,6 +1,6 @@
 from typing import Any, Literal, NotRequired, TypedDict
 
-from orchestrator.planning import BomShortageTransform, Subquery
+from orchestrator.planning import BomShortageTransform, RouteDraft, Subquery
 
 EmptyReason = Literal["NO_DATA", "INCONCLUSIVE"]
 CompositionMode = Literal["single", "joined", "separate"]
@@ -38,6 +38,8 @@ class OrchestratorState(TypedDict):
     # route_query가 결정한 실행 계획 (["sql"] / ["graph"] / ["sql", "graph"])
     tool_plan: NotRequired[list[str]]
 
+    routeDraft: NotRequired[RouteDraft]
+    rawRouteDraft: NotRequired[dict[str, Any]]
     subqueries: NotRequired[list[Subquery]]
 
     resultTransform: NotRequired[BomShortageTransform | None]

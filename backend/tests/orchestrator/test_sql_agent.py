@@ -50,6 +50,27 @@ async def test_sql_agent_returns_result_when_execution_succeeds() -> None:
     assert len(openai_client.calls) == 1
 
 
+async def test_sql_agent_preserves_executor_truncation_metadata() -> None:
+    """production executor의 행 초과 신호를 실행 계획까지 보존한다."""
+    openai_client = MockOpenAIClient(
+        make_content_response("SELECT productid FROM production.product")
+    )
+
+    async def execute_sql(sql: str) -> dict:
+        return {"rows": [{"productId": 10}], "truncated": True}
+
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
+    state = _initial_state()
+    state["required_outputs"] = ["productId"]
+
+    result = await subgraph.ainvoke(state)
+
+    assert result["result"] == [{"productId": 10}]
+    assert result["truncated"] is True
+
+
 async def test_sql_agent_returns_error_when_execution_fails() -> None:
     """실행이 실패하면 예외를 전파하지 않고 error 필드에 담아 정상 종료한다."""
     openai_client = MockOpenAIClient(

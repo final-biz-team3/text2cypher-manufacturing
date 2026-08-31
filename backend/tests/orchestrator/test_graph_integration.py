@@ -139,8 +139,12 @@ def _assert_start_and_destination_fields(query: str | None) -> None:
     """질문별 alias 이름과 무관하게 시작·도착 Product 필드를 확인한다."""
     assert query is not None
     compact = _compact(query)
-    product_id_aliases = set(re.findall(r"as([a-z_]*productid)\b", compact))
-    product_name_aliases = set(re.findall(r"as([a-z_]*productname)\b", compact))
+    product_id_aliases = set(
+        re.findall(r"as([a-z_]*(?:productid|componentid))\b", compact)
+    )
+    product_name_aliases = set(
+        re.findall(r"as([a-z_]*(?:productname|componentname))\b", compact)
+    )
     product_id_aliases.discard("productidpath")
     product_name_aliases.discard("productnamepath")
     assert len(product_id_aliases) >= 2

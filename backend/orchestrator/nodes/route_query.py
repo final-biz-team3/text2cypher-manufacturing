@@ -6,9 +6,10 @@ from typing import Any
 
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
 from orchestrator.planning import (
-    EXECUTION_PLAN_JSON_SCHEMA,
+    DEFAULT_SHARED_JOIN_ALIASES,
     SUPPORTED_TOOLS,
-    parse_execution_plan,
+    parse_route_draft,
+    route_draft_json_schema,
 )
 from orchestrator.state import OrchestratorState
 
@@ -65,53 +66,79 @@ canonical source ownership:
 - scalar가 graph에 복제돼도 재고·비용·폐기량과 집계는 sql이 소유한다.
 - BOM 경로 edge의 quantityPerAssembly는 graph가 소유한다.
 - 양쪽 사실이 모두 필요하면 HYBRID 계획을 만든다.
+- 공급업체별 서로 다른 공급 제품 수와 작업장별 서로 다른 작업지시 수처럼
+  관계를 펼치지 않는 순위·집계는 sql이 소유한다.
+- 공급업체 쌍·공동 공급 부품은 공급 관계 집계이므로 graph만 사용한다.
+- 특정 작업장을 거친 제품은 graph에서 DISTINCT 제품을 찾고, 그 제품의 모든 작업지시 재고·폐기 집계가 필요하면 productId를 SQL로 전달한다. 이 경우 workOrderId를 전달하지 않는다.
+- 작업지시의 폐기 scalar와 공정·작업장이 함께 필요하면 workOrderId로 결합하는
+  독립 SQL + GRAPH 계획을 만든다.
+- 공급 중단 영향 부품의 재고는 componentId를 SQL componentIds로 전달한다.
+- 제품명에 포함된 숫자는 크기·모델명의 일부이며 생산 수량이 아니다. 생산 수량은
+  "개", "대" 같은 단위와 연결된 숫자 또는 수사에서만 읽는다. 예를 들어
+  "..., 58 열 개"의 생산 수량은 58이 아니라 10이다.
+- 최하위 BOM 부품 subquery에는 부품별 최소 깊이 조회 의미를 보존한다.
 
 예시:
 1. 단일 SQL:
 Q: "완제품 Aurora Frame의 현재 재고와 표준원가를 알려줘."
 entity: {"productId": 7001, "productName": "Aurora Frame"}
-A: {"tool_plan":["sql"],"subqueries":[{"id":"sql_inventory_cost","tool":"sql","question":"완제품 Aurora Frame의 현재 재고와 표준원가를 조회한다.","dependsOn":[],"requiredOutputs":["productId","productName","actualStock","standardCost"],"joinKeys":[],"inputBindings":{}}],"resultTransform":null}
+A: {"tool_plan":["sql"],"subqueries":[{"id":"sql_inventory_cost","tool":"sql","question":"완제품 Aurora Frame의 현재 재고와 표준원가를 조회한다.","dependsOn":[],"joinKeys":[],"inputBindings":{}}],"resultTransform":null}
 
 2. 독립 SQL + GRAPH:
 Q: "활성 공급업체 수와 완제품 Nova Bike의 BOM 경로를 함께 알려줘."
 entity: {"productId": 7002, "productName": "Nova Bike"}
-A: {"tool_plan":["sql","graph"],"subqueries":[{"id":"sql_active_supplier_count","tool":"sql","question":"현재 활성 공급업체 수를 집계한다.","dependsOn":[],"requiredOutputs":["activeSupplierCount"],"joinKeys":[],"inputBindings":{}},{"id":"graph_bom_paths","tool":"graph","question":"완제품 Nova Bike에서 부품까지의 BOM 경로를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly"],"joinKeys":[],"inputBindings":{}}],"resultTransform":null}
+A: {"tool_plan":["sql","graph"],"subqueries":[{"id":"sql_active_supplier_count","tool":"sql","question":"현재 활성 공급업체 수를 집계한다.","dependsOn":[],"joinKeys":[],"inputBindings":{}},{"id":"graph_bom_paths","tool":"graph","question":"완제품 Nova Bike에서 부품까지의 BOM 경로를 조회한다.","dependsOn":[],"joinKeys":[],"inputBindings":{}}],"resultTransform":null}
 
 3. GRAPH 결과를 SQL filter로 전달하는 의존 HYBRID:
 Q: "완제품 Summit Bike를 12개 만들 때 부족한 외부 구매 부품과 공급업체를 알려줘."
 entity: {"productId": 7003, "productName": "Summit Bike"}
-A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_bom_supply","tool":"graph","question":"완제품 Summit Bike의 유효 BOM 경로별 수량 계수와 활성 공급업체를 조회한다.","dependsOn":[],"requiredOutputs":["finishedProductId","finishedProductName","componentId","componentName","depth","pathProductIds","quantityPerAssembly","supplierId","supplierName"],"joinKeys":["componentId"],"inputBindings":{}},{"id":"sql_component_stock","tool":"sql","question":"앞 단계의 componentId별 makeFlag와 현재 재고를 조회한다.","dependsOn":["graph_bom_supply"],"requiredOutputs":["componentId","makeFlag","actualStock"],"joinKeys":["componentId"],"inputBindings":{"componentIds":"graph_bom_supply.componentId"}}],"resultTransform":{"type":"bom_shortage_v1","productionQty":12}}
+A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_bom_supply","tool":"graph","question":"완제품 Summit Bike의 유효 BOM 경로별 수량 계수와 활성 공급업체를 조회한다.","dependsOn":[],"joinKeys":["componentId"],"inputBindings":{}},{"id":"sql_component_stock","tool":"sql","question":"앞 단계의 componentId별 makeFlag와 현재 재고를 조회한다.","dependsOn":["graph_bom_supply"],"joinKeys":["componentId"],"inputBindings":{"componentIds":"graph_bom_supply.componentId"}}],"resultTransform":{"type":"bom_shortage_v1","productionQty":12}}
+
+4. 공급 중단 영향과 재고:
+Q: "Cobalt Works 공급 중단 시 영향 부품·완제품과 재고를 알려줘."
+A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_supplier_impact","tool":"graph","question":"Cobalt Works 공급 부품과 그 부품이 쓰이는 완제품 경로를 조회한다.","dependsOn":[],"joinKeys":["componentId"],"inputBindings":{}},{"id":"sql_component_stock","tool":"sql","question":"앞 단계 componentId별 현재 재고를 조회한다.","dependsOn":["graph_supplier_impact"],"joinKeys":["componentId"],"inputBindings":{"componentIds":"graph_supplier_impact.componentId"}}],"resultTransform":null}
 
 규칙:
 - 단일 SQL/GRAPH 질문도 subquery를 정확히 1개 만들고 question에 원래 질문의 의미를 보존한다.
-- 복합 질문은 데이터 소스의 책임별로 나누고 dependsOn, inputBindings, requiredOutputs, joinKeys를 명시한다.
-- requiredOutputs는 해당 subquery가 반환해야 하는 전체 canonical output alias이며 절대 비워 두지 않는다.
-- HYBRID의 전달 필드와 최종 결합 키는 해당 단계의 requiredOutputs와 joinKeys 둘 다에 넣는다.
+- 복합 질문은 데이터 소스의 책임별로 나누고 dependsOn, inputBindings, joinKeys를 명시한다.
+- 원문에 명시된 최대 깊이, 상위 개수, 생산 수량 같은 수치 제약은 담당 subquery의
+  question 또는 resultTransform에 빠짐없이 보존한다. 원문에 없는 수치 제약은 만들지 않는다.
+- tool_plan에 포함된 도구마다 subquery를 정확히 하나만 만들고 같은 도구를 나누지 않는다.
+- requiredOutputs는 이후 schema-aware planner가 결정하므로 생성하거나 추측하지 않는다.
+- joinKeys와 inputBindings source는 제공된 schema identity alias만 사용한다.
 - 선행 결과가 필요하지 않은 두 단계는 dependsOn을 빈 배열로 둔다.
+- 단일 source의 joinKeys는 빈 배열이다. 질문의 filter ID를 join key로 쓰지 않는다.
+- 독립 HYBRID도 실제로 두 결과의 같은 entity 행을 결합할 때만 양쪽 joinKeys를
+  지정한다.
+- 작업지시별 폐기량은 작업지시 행의 scalar 조회이므로 여러 작업지시를 합치는
+  집계로 표현하지 않는다.
 - id는 sql_stock, graph_impact처럼 책임을 나타내며 질문에 없는 RQ 번호를 사용하지 않는다.
 - inputBindings 값은 반드시 "선행단계ID.출력필드" 형식이다.
+- inputBindings에서 참조한 출력필드는 producer와 consumer 양쪽 joinKeys에 모두
+  같은 alias로 명시한다. JSON을 반환하기 전에 양쪽 배열을 확인한다.
+- 한 binding 문자열에 여러 source를 합치지 않는다. 공급 중단 재고 조회는 영향
+  완제품이 아니라 직접 공급 부품의 componentId 하나만 전달한다.
 - tool_plan은 실제 의존 실행 순서로 쓰고 각 도구는 한 번만 포함한다.
 - resultTransform은 위 부족량 계산 계약에 정확히 해당할 때만 bom_shortage_v1을 사용하고, 나머지는 null이다.
 """
 
-_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "manufacturing_execution_plan",
-        "strict": True,
-        "schema": EXECUTION_PLAN_JSON_SCHEMA,
-    },
-}
 
-
-# OpenAI 클라이언트를 주입받은 route_query 노드 함수를 생성
 def make_route_query_node(
     openai_client: Any,
     *,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+    shared_join_aliases: frozenset[str] = DEFAULT_SHARED_JOIN_ALIASES,
 ) -> Callable[[OrchestratorState], Any]:
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "manufacturing_route_draft",
+            "strict": True,
+            "schema": route_draft_json_schema(shared_join_aliases),
+        },
+    }
+
     async def route_query(state: OrchestratorState) -> dict:
-        # 질의 원문 + 확정된 entity를 few-shot 프롬프트의 입력 형식으로 구성
         entity_json = json.dumps(state.get("entity"), ensure_ascii=False)
         user_content = f"Q: {state['query']}\nentity: {entity_json}\nA:"
 
@@ -121,11 +148,12 @@ def make_route_query_node(
         ]
         last_content = ""
         last_error: ValueError | None = None
+        raw_route_draft: dict[str, Any] | None = None
         for attempt in range(2):
             response = await openai_client.chat.completions.create(
                 model=os.environ["OPENAI_MODEL"],
                 messages=messages,
-                response_format=_RESPONSE_FORMAT,
+                response_format=response_format,
                 reasoning_effort=reasoning_effort,
             )
             content = response.choices[0].message.content
@@ -133,7 +161,19 @@ def make_route_query_node(
             try:
                 if not isinstance(content, str):
                     raise ValueError("route_query가 빈 응답을 반환했습니다.")
-                plan = parse_execution_plan(content, state["query"])
+                raw_document = json.loads(content)
+                plan = parse_route_draft(
+                    content,
+                    state["query"],
+                    shared_join_aliases=shared_join_aliases,
+                    # 첫 응답은 원본 계약 자체가 완전해야 한다. 재시도에서도
+                    # 누락되면 production 가용성을 위해 기존 deterministic
+                    # recovery를 적용하되 rawRouteDraft에는 원문을 남긴다.
+                    recover_missing_binding_join_keys=attempt > 0,
+                )
+                raw_route_draft = (
+                    raw_document if isinstance(raw_document, dict) else None
+                )
                 break
             except ValueError as exc:
                 last_error = exc
@@ -159,6 +199,13 @@ def make_route_query_node(
             plan["tool_plan"],
             [item["id"] for item in plan["subqueries"]],
         )
-        return dict(plan)
+        result: dict[str, Any] = {
+            "tool_plan": plan["tool_plan"],
+            "routeDraft": dict(plan),
+            "resultTransform": plan.get("resultTransform"),
+        }
+        if raw_route_draft is not None:
+            result["rawRouteDraft"] = raw_route_draft
+        return result
 
     return route_query

@@ -26,10 +26,23 @@ def test_build_sql_prompt_adds_postgresql_policy_and_dynamic_context() -> None:
     assert '"외부 구매 부품"은 production.product.makeflag = false' in system_content
     assert "COALESCE(SUM(quantity), 0)" in system_content
     assert "GREATEST(safetystocklevel - 실제 재고, 0)" in system_content
+    assert "totalRejectedQty는 SUM(rejectedqty)" in system_content
+    assert "구매주문 건수가 아니다" in system_content
+    assert "purchaseorderid 건수를 별도로 계산하거나 정렬 기준으로 쓰지 않는다" in (
+        system_content
+    )
+    assert "실제 재고가 safetystocklevel보다 작은 행만" in system_content
+    assert "ID 배열이 이 subquery의 전체 대상" in system_content
     assert "shelf·bin별 원본 quantity" in system_content
     assert "locationid, shelf, bin 순" in system_content
     assert "LEFT JOIN" in system_content
     assert "lowerCamelCase" in system_content
+    assert '"totalRejectedQty"처럼 SELECT와 같은' in system_content
+    assert "double quote로 감쌉니다" in system_content
+    assert 'i."actualStock"' in system_content
+    assert "quoted lowerCamelCase" in system_content
+    assert "내부 alias는 actual_stock 같은 unquoted snake_case" in system_content
+    assert '최종 SELECT에서만 "actualStock"' in system_content
     assert "사용자가 순위 번호를 요구한 경우에만" in system_content
     assert "- 확정된 제품 ID로 조회한다." in system_content
     assert "Required output aliases:" in system_content

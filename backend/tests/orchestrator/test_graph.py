@@ -48,8 +48,11 @@ async def test_graph_resolves_entity_then_runs_sql_agent_once(postgres_pool) -> 
             {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
         ),
         make_content_response('["sql"]'),
+        make_content_response('{"requiredOutputs":["listPrice","standardCost"]}'),
         make_content_response(
-            "SELECT listprice, standardcost FROM production.product "
+            'SELECT productid AS "productId", name AS "productName", '
+            'listprice AS "listPrice", standardcost AS "standardCost" '
+            "FROM production.product "
             "WHERE productid = 956"
         ),
     )
@@ -65,12 +68,19 @@ async def test_graph_resolves_entity_then_runs_sql_agent_once(postgres_pool) -> 
     }
     assert result["tool_plan"] == ["sql"]
     assert result["sql_query"] == (
-        "SELECT listprice, standardcost FROM production.product "
+        'SELECT productid AS "productId", name AS "productName", '
+        'listprice AS "listPrice", standardcost AS "standardCost" '
+        "FROM production.product "
         "WHERE productid = 956"
     )
     assert result["sql_result"]["error"] is None
     assert result["sql_result"]["result"] == [
-        {"listprice": Decimal("2384.07"), "standardcost": Decimal("1481.9379")}
+        {
+            "productId": 956,
+            "productName": "Touring-1000 Yellow, 54",
+            "listPrice": Decimal("2384.07"),
+            "standardCost": Decimal("1481.9379"),
+        }
     ]
     assert result["cypher_query"] is None
     assert result["graph_result"] is None
@@ -84,7 +94,7 @@ async def test_graph_resolves_entity_then_runs_sql_agent_once(postgres_pool) -> 
         "truncated": False,
     }
     assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
-    assert len(openai_client.calls) == 3
+    assert len(openai_client.calls) == 4
 
 
 async def test_graph_routes_to_graph_and_runs_cypher_agent_once(postgres_pool) -> None:
@@ -96,8 +106,13 @@ async def test_graph_routes_to_graph_and_runs_cypher_agent_once(postgres_pool) -
         ),
         make_content_response('["graph"]'),
         make_content_response(
+            '{"requiredOutputs":["finishedProductId","finishedProductName"]}'
+        ),
+        make_content_response(
             "MATCH (part:Product)<-[:REQUIRES_COMPONENT*1..4]-(parent:Product) "
-            "WHERE part.productId = 492 RETURN parent"
+            "WHERE part.productId = 492 "
+            "RETURN parent.productId AS finishedProductId, "
+            "parent.name AS finishedProductName"
         ),
     )
     graph = build_orchestrator_graph(openai_client, postgres_pool)
@@ -112,12 +127,14 @@ async def test_graph_routes_to_graph_and_runs_cypher_agent_once(postgres_pool) -
     assert result["sql_result"] is None
     assert result["cypher_query"] == (
         "MATCH (part:Product)<-[:REQUIRES_COMPONENT*1..4]-(parent:Product) "
-        "WHERE part.productId = 492 RETURN parent"
+        "WHERE part.productId = 492 "
+        "RETURN parent.productId AS finishedProductId, "
+        "parent.name AS finishedProductName"
     )
     assert result["graph_result"]["error"] is None
     graph_rows = result["graph_result"]["result"]
     assert graph_rows
-    assert any(row["parent"]["productId"] == 680 for row in graph_rows)
+    assert any(row["finishedProductId"] == 680 for row in graph_rows)
     assert result["composed_result"]["mode"] == "single"
     assert result["composed_result"]["rows"] == graph_rows
     assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
@@ -134,13 +151,19 @@ async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
             {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
         ),
         make_content_response('["sql", "graph"]'),
+        make_content_response('{"requiredOutputs":["listPrice","standardCost"]}'),
+        make_content_response('{"requiredOutputs":["componentId","componentName"]}'),
         make_content_response(
-            "SELECT listprice, standardcost FROM production.product "
+            'SELECT productid AS "productId", name AS "productName", '
+            'listprice AS "listPrice", standardcost AS "standardCost" '
+            "FROM production.product "
             "WHERE productid = 956"
         ),
         make_content_response(
             "MATCH (finished:Product {productId: 956})-[:REQUIRES_COMPONENT]->"
-            "(component:Product) RETURN component"
+            "(component:Product) "
+            "RETURN component.productId AS componentId, "
+            "component.name AS componentName"
         ),
     )
     graph = build_orchestrator_graph(openai_client, postgres_pool)
@@ -157,18 +180,27 @@ async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
     assert result["tool_plan"] == ["sql", "graph"]
 
     assert result["sql_query"] == (
-        "SELECT listprice, standardcost FROM production.product "
+        'SELECT productid AS "productId", name AS "productName", '
+        'listprice AS "listPrice", standardcost AS "standardCost" '
+        "FROM production.product "
         "WHERE productid = 956"
     )
     assert result["sql_result"]["error"] is None
     assert result["sql_result"]["result"] == [
-        {"listprice": Decimal("2384.07"), "standardcost": Decimal("1481.9379")}
+        {
+            "productId": 956,
+            "productName": "Touring-1000 Yellow, 54",
+            "listPrice": Decimal("2384.07"),
+            "standardCost": Decimal("1481.9379"),
+        }
     ]
     assert len(result["sql_result"]["attempts"]) == 1
 
     assert result["cypher_query"] == (
         "MATCH (finished:Product {productId: 956})-[:REQUIRES_COMPONENT]->"
-        "(component:Product) RETURN component"
+        "(component:Product) "
+        "RETURN component.productId AS componentId, "
+        "component.name AS componentName"
     )
     assert result["graph_result"]["error"] is None
     assert result["graph_result"]["result"]
@@ -197,7 +229,7 @@ async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
     }
     assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
 
-    assert len(openai_client.calls) == 4
+    assert len(openai_client.calls) == 6
 
 
 async def test_graph_builds_final_answer_from_sql_result(postgres_pool) -> None:
@@ -205,7 +237,10 @@ async def test_graph_builds_final_answer_from_sql_result(postgres_pool) -> None:
     openai_client = MockOpenAIClient(
         make_content_response("[]"),
         make_content_response('["sql"]'),
-        make_content_response("SELECT COUNT(*) FROM production.product"),
+        make_content_response('{"requiredOutputs":["productCount"]}'),
+        make_content_response(
+            'SELECT COUNT(*) AS "productCount" FROM production.product'
+        ),
     )
     graph = build_orchestrator_graph(openai_client, postgres_pool)
 
@@ -213,9 +248,11 @@ async def test_graph_builds_final_answer_from_sql_result(postgres_pool) -> None:
 
     assert result["entity"] is None
     assert result["tool_plan"] == ["sql"]
-    assert result["sql_query"] == "SELECT COUNT(*) FROM production.product"
+    assert result["sql_query"] == (
+        'SELECT COUNT(*) AS "productCount" FROM production.product'
+    )
     assert result["sql_result"]["error"] is None
-    assert result["sql_result"]["result"] == [{"count": 504}]
+    assert result["sql_result"]["result"] == [{"productCount": 504}]
     assert result["final_answer"] is not None
     assert "504" in result["final_answer"]
 
@@ -230,7 +267,6 @@ async def test_graph_composes_canonical_rq18_many_to_one(postgres_pool) -> None:
           "tool": "graph",
           "question": "활성 공급업체 Allenson Cycles의 공급 부품과 영향 완제품 경로를 조회한다.",
           "dependsOn": [],
-          "requiredOutputs": ["componentId", "componentName", "finishedProductId", "finishedProductName", "depth", "pathProductIds"],
           "joinKeys": ["componentId"],
           "inputBindings": {}
         },
@@ -240,7 +276,6 @@ async def test_graph_composes_canonical_rq18_many_to_one(postgres_pool) -> None:
           "question": "앞 단계에서 확인한 componentId별 현재 재고를 조회한다.",
           "dependsOn": ["graph_components"],
           "inputBindings": {"componentIds": "graph_components.componentId"},
-          "requiredOutputs": ["componentId", "actualStock"],
           "joinKeys": ["componentId"]
         }
       ],
@@ -257,7 +292,10 @@ RETURN component.productId AS componentId,
   finished.productId AS finishedProductId,
   finished.name AS finishedProductName,
   length(path) AS depth,
-  [node IN nodes(path) | node.productId] AS pathProductIds
+  [node IN nodes(path) | node.productId] AS pathProductIds,
+  [node IN nodes(path) | node.name] AS pathProductNames,
+  supplier.supplierId AS supplierId,
+  supplier.name AS supplierName
 ORDER BY componentId, depth, finishedProductId, pathProductIds"""
     sql = """SELECT p.productid AS "componentId",
   COALESCE(SUM(i.quantity), 0) AS "actualStock"
@@ -272,6 +310,12 @@ ORDER BY p.productid"""
             {"entityType": "supplier", "entityName": "Allenson Cycles"},
         ),
         make_content_response(route_plan),
+        make_content_response(
+            '{"requiredOutputs":["componentId","componentName",'
+            '"finishedProductId","finishedProductName","depth",'
+            '"pathProductIds"]}'
+        ),
+        make_content_response('{"requiredOutputs":["componentId","actualStock"]}'),
         make_content_response(cypher),
         make_content_response(sql),
     )
@@ -291,7 +335,7 @@ ORDER BY p.productid"""
     expected_component_ids = [row["componentId"] for row in graph_rows]
     sql_user_message = next(
         message["content"]
-        for message in openai_client.calls[3]["messages"]
+        for message in openai_client.calls[5]["messages"]
         if message["role"] == "user"
     )
     assert json.loads(sql_user_message)["inputBindings"] == {
@@ -329,7 +373,6 @@ async def test_graph_composes_canonical_rq19_bom_shortage(postgres_pool) -> None
           "tool": "graph",
           "question": "완제품 HL Road Frame - Black, 58의 유효 BOM 경로별 필요 수량 계수와 활성 공급업체를 조회한다.",
           "dependsOn": [],
-          "requiredOutputs": ["finishedProductId", "finishedProductName", "componentId", "componentName", "depth", "pathProductIds", "quantityPerAssembly", "supplierId", "supplierName"],
           "joinKeys": ["componentId"],
           "inputBindings": {}
         },
@@ -339,7 +382,6 @@ async def test_graph_composes_canonical_rq19_bom_shortage(postgres_pool) -> None
           "question": "앞 단계에서 확인한 componentId별 makeflag와 현재 재고를 조회한다.",
           "dependsOn": ["graph_bom_supply"],
           "inputBindings": {"componentIds": "graph_bom_supply.componentId"},
-          "requiredOutputs": ["componentId", "makeFlag", "actualStock"],
           "joinKeys": ["componentId"]
         }
       ],
@@ -439,7 +481,6 @@ async def test_graph_composes_canonical_rq20_one_to_many(postgres_pool) -> None:
           "tool": "sql",
           "question": "작업지시 17747의 제품, 폐기 수량과 폐기사유를 조회한다.",
           "dependsOn": [],
-          "requiredOutputs": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"],
           "joinKeys": ["workOrderId"],
           "inputBindings": {}
         },
@@ -448,7 +489,6 @@ async def test_graph_composes_canonical_rq20_one_to_many(postgres_pool) -> None:
           "tool": "graph",
           "question": "작업지시 17747의 공정, 작업장과 공정 순서를 조회한다.",
           "dependsOn": [],
-          "requiredOutputs": ["workOrderId", "routingOperationKey", "sequence", "locationId", "locationName"],
           "joinKeys": ["workOrderId"],
           "inputBindings": {}
         }
@@ -478,6 +518,14 @@ ORDER BY sequence, routingOperationKey"""
     openai_client = MockOpenAIClient(
         make_content_response("[]"),
         make_content_response(route_plan),
+        make_content_response(
+            '{"requiredOutputs":["workOrderId","productId","productName",'
+            '"scrappedQty","scrapReasonId","scrapReasonName"]}'
+        ),
+        make_content_response(
+            '{"requiredOutputs":["workOrderId","routingOperationKey",'
+            '"sequence","locationId","locationName"]}'
+        ),
         make_content_response(sql),
         make_content_response(cypher),
     )

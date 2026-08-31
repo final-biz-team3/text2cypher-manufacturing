@@ -41,3 +41,27 @@ async def test_generate_answer_returns_none_when_no_results() -> None:
     )
 
     assert result == {"final_answer": None}
+
+
+async def test_generate_answer_hides_internal_composition_error() -> None:
+    node = make_generate_answer_node()
+    internal_error = "sql_followup의 join key가 바인딩 범위를 벗어났습니다."
+
+    result = await node(
+        {
+            "query": "질의",
+            "composed_result": {
+                "mode": "joined",
+                "rows": [],
+                "sections": {},
+                "error": internal_error,
+                "empty_reason": None,
+                "total_count": 0,
+                "truncated": False,
+            },
+        }
+    )
+
+    assert result["final_answer"] is not None
+    assert internal_error not in result["final_answer"]
+    assert "다시 시도" in result["final_answer"]

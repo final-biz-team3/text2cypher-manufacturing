@@ -39,12 +39,14 @@ def _source(
     *,
     error: str | None = None,
     empty_reason: Any = None,
+    truncated: Any = False,
 ) -> dict[str, Any]:
     return {
         "result": rows,
         "error": error,
         "attempts": [],
         "empty_reason": empty_reason,
+        "truncated": truncated,
     }
 
 
@@ -105,6 +107,36 @@ def test_single_result_is_normalized_without_changing_rows(tool: str) -> None:
         "total_count": 2,
         "truncated": False,
     }
+
+
+def test_single_result_preserves_source_truncation() -> None:
+    result = compose_results(
+        [_step("only", "sql")],
+        {"sql": _source([{"value": 1}], truncated=True)},
+        row_limit=200,
+    )
+
+    assert result["rows"] == [{"value": 1}]
+    assert result["total_count"] == 1
+    assert result["truncated"] is True
+
+
+def test_join_rejects_truncated_source_instead_of_returning_partial_answer() -> None:
+    result = compose_results(
+        [
+            _step("graph_base", "graph", join_keys=["id"]),
+            _step("sql_followup", "sql", join_keys=["id"]),
+        ],
+        {
+            "graph": _source([{"id": 1}], truncated=True),
+            "sql": _source([{"id": 1}]),
+        },
+        row_limit=200,
+    )
+
+    assert result["rows"] == []
+    assert result["truncated"] is True
+    assert "완전한 join" in str(result["error"])
 
 
 @pytest.mark.parametrize("tool", ["sql", "graph"])

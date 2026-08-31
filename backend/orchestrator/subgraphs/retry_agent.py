@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from starlette.concurrency import run_in_threadpool
 
+from orchestrator.execution.result import QueryResultBatch
 from orchestrator.guards.audit import log_guard_decision
 from orchestrator.guards.result import GuardResult
 
@@ -53,6 +54,7 @@ class RetryAgentState(TypedDict):
     empty_retried: bool
     retryable: bool
     empty_reason: str | None
+    truncated: NotRequired[bool]
     required_outputs: NotRequired[list[str]]
     input_bindings: NotRequired[dict[str, list[Any]]]
 
@@ -77,6 +79,7 @@ def make_retry_agent_subgraph(
     retryable_exceptions: tuple[type[Exception], ...],
     empty_result_feedback: str,
     guard: Callable[[str], GuardResult] | None = None,
+    query_contract_error: Callable[[str, list[str]], str | None] | None = None,
 ) -> CompiledStateGraph:
     """query/entity/schema를 state에서 읽어 쿼리 문자열을 생성하는 generate와,
     쿼리 문자열을 실행하는 execute를 주입받아 재시도 SubGraph를 만든다.
@@ -173,8 +176,15 @@ def make_retry_agent_subgraph(
                     not in _NON_RETRYABLE_GUARD_REASONS,
                 )
 
+        if query_contract_error is not None:
+            contract_error = query_contract_error(
+                query_text, state.get("required_outputs", [])
+            )
+            if contract_error is not None:
+                return failure(contract_error, retryable=True)
+
         try:
-            result = await execute(query_text)
+            executed = await execute(query_text)
         except retryable_exceptions as exc:
             logger.warning("%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True)
             return failure(str(exc), retryable=True)
@@ -193,6 +203,23 @@ def make_retry_agent_subgraph(
             )
             return failure(str(exc), retryable=False)
 
+        if (
+            isinstance(executed, dict)
+            and isinstance(executed.get("rows"), list)
+            and isinstance(executed.get("truncated"), bool)
+        ):
+            batch = QueryResultBatch(
+                rows=executed["rows"],
+                truncated=executed["truncated"],
+            )
+            result = batch["rows"]
+            truncated = batch["truncated"]
+        else:
+            # 주입형 테스트 executor와 기존 사용자 정의 executor는 list 반환도
+            # 계속 지원한다. production executor는 위 QueryResultBatch를 사용한다.
+            result = executed
+            truncated = False
+
         if not result:
             new_attempts = [
                 *attempts,
@@ -210,6 +237,7 @@ def make_retry_agent_subgraph(
                     "attempts": new_attempts,
                     "retryable": True,
                     "empty_retried": True,
+                    "truncated": truncated,
                 }
             reason = _classify_empty_result(attempts)
             logger.info("%s: 결과 없음으로 최종 수용 (%s)", label, reason)
@@ -219,6 +247,7 @@ def make_retry_agent_subgraph(
                 "empty_reason": reason,
                 "attempts": new_attempts,
                 "retryable": False,
+                "truncated": truncated,
             }
 
         required_outputs = state.get("required_outputs", [])
@@ -241,6 +270,7 @@ def make_retry_agent_subgraph(
             "empty_reason": None,
             "attempts": [*attempts, {"query": query_text, "error": None}],
             "retryable": False,
+            "truncated": truncated,
         }
 
     def should_retry(state: RetryAgentState) -> str:

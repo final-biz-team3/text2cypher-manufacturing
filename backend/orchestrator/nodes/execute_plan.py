@@ -1,8 +1,10 @@
-"""검증된 하위 질의 계획을 순서대로 실행한다."""
+"""검증된 하위 질의를 의존성 wave 순서로 실행한다."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from orchestrator.bindings import collect_input_bindings
 from orchestrator.planning import Subquery
 from orchestrator.state import OrchestratorState
 from orchestrator.subgraphs.retry_agent import INCONCLUSIVE, NO_DATA
@@ -20,6 +22,7 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         "error": result["error"],
         "attempts": result.get("attempts", []),
         "empty_reason": result.get("empty_reason"),
+        "truncated": result.get("truncated", False),
     }
 
 
@@ -30,6 +33,7 @@ def _dependency_failure(dependency_ids: list[str]) -> dict[str, Any]:
         "error": f"선행 하위 질의가 실패하여 실행하지 않았습니다: {names}",
         "attempts": [],
         "empty_reason": None,
+        "truncated": False,
     }
 
 
@@ -40,19 +44,21 @@ def _dependency_empty(empty_reasons: list[str | None]) -> dict[str, Any]:
         "error": None,
         "attempts": [],
         "empty_reason": empty_reason,
+        "truncated": False,
     }
 
 
 def _extract_input_bindings(
     subquery: Subquery, outcomes: dict[str, dict[str, Any]]
 ) -> dict[str, list[Any]]:
-    """선행 결과의 행 순서와 중복을 보존해 binding 배열을 만든다."""
-    bindings: dict[str, list[Any]] = {}
-    for binding_name, source in subquery.get("inputBindings", {}).items():
-        dependency_id, output_alias = source.split(".", 1)
-        rows = outcomes[dependency_id]["result"]
-        bindings[binding_name] = [row[output_alias] for row in rows]
-    return bindings
+    """선행 결과에서 최초 등장 순서로 고유 binding 배열을 만든다."""
+    return collect_input_bindings(
+        subquery.get("inputBindings", {}),
+        {
+            dependency_id: outcome["result"]
+            for dependency_id, outcome in outcomes.items()
+        },
+    )
 
 
 def _initial_state(
@@ -75,6 +81,7 @@ def _initial_state(
         "attempts": [],
         "empty_retried": False,
         "empty_reason": None,
+        "truncated": False,
     }
 
 
@@ -98,7 +105,9 @@ def make_execute_plan_node(
         }
         outcomes: dict[str, dict[str, Any]] = {}
 
-        for subquery in state.get("subqueries", []):
+        async def execute_subquery(
+            subquery: Subquery,
+        ) -> tuple[str, str, str | None, dict[str, Any]]:
             dependency_ids = subquery["dependsOn"]
             failed_dependencies = [
                 dependency_id
@@ -115,9 +124,7 @@ def make_execute_plan_node(
 
             if failed_dependencies:
                 summary = _dependency_failure(failed_dependencies)
-                outcomes[subquery["id"]] = summary
-                output[result_field] = summary
-                continue
+                return query_field, result_field, None, summary
             if empty_dependencies:
                 summary = _dependency_empty(
                     [
@@ -125,23 +132,48 @@ def make_execute_plan_node(
                         for dependency_id in empty_dependencies
                     ]
                 )
-                outcomes[subquery["id"]] = summary
-                output[result_field] = summary
-                continue
+                return query_field, result_field, None, summary
 
             input_bindings = _extract_input_bindings(subquery, outcomes)
             result = await agents[subquery["tool"]].ainvoke(
                 _initial_state(
                     subquery=subquery,
-                    entity=state.get("entity"),
+                    entity=None if input_bindings else state.get("entity"),
                     schema_text=schemas[subquery["tool"]],
                     input_bindings=input_bindings,
                 )
             )
             summary = _result_summary(result)
-            outcomes[subquery["id"]] = summary
-            output[query_field] = result["messages"][-1]["content"]
-            output[result_field] = summary
+            return query_field, result_field, result["messages"][-1]["content"], summary
+
+        pending = list(state.get("subqueries", []))
+        while pending:
+            ready = [
+                subquery
+                for subquery in pending
+                if all(
+                    dependency_id in outcomes for dependency_id in subquery["dependsOn"]
+                )
+            ]
+            if not ready:  # validate_subqueries가 순환을 차단하지만 fail-closed로 둔다.
+                raise ValueError(
+                    "실행 가능한 subquery가 없어 의존 계획을 진행할 수 없습니다."
+                )
+
+            results = await asyncio.gather(
+                *(execute_subquery(subquery) for subquery in ready)
+            )
+            for subquery, (query_field, result_field, query_text, summary) in zip(
+                ready, results, strict=True
+            ):
+                outcomes[subquery["id"]] = summary
+                if query_text is not None:
+                    output[query_field] = query_text
+                output[result_field] = summary
+            ready_ids = {subquery["id"] for subquery in ready}
+            pending = [
+                subquery for subquery in pending if subquery["id"] not in ready_ids
+            ]
 
         return output
 

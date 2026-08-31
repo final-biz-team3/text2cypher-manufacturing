@@ -3,7 +3,10 @@
 from neo4j.exceptions import ClientError, CypherSyntaxError, ServiceUnavailable
 
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
-from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
+from orchestrator.subgraphs.cypher_agent import (
+    _required_output_error,
+    make_cypher_agent_subgraph,
+)
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 QUERY_POLICY = GraphQueryPolicy(bomAsOfDate="2014-08-08", bomMaxDepth=4)
@@ -19,6 +22,15 @@ _TEST_GRAPH_SCHEMA = GraphSchema.model_validate(
         },
     }
 )
+
+
+def test_required_output_preflight_treats_alias_keys_as_case_sensitive() -> None:
+    assert (
+        _required_output_error(
+            "MATCH (p:Product) RETURN p.productId AS productid", ["productId"]
+        )
+        == "RETURN에 필수 alias가 없습니다: productId"
+    )
 
 
 def _initial_state(query: str = "부품 사용처를 알려줘.") -> dict:
@@ -278,3 +290,44 @@ async def test_cypher_agent_blocks_write_query_before_execution() -> None:
     assert result["result"] == [{"n": "x"}]
     assert len(result["attempts"]) == 2
     assert "WRITE_KEYWORD_DETECTED" in result["attempts"][0]["error"]
+
+
+async def test_cypher_agent_repairs_missing_required_return_alias_before_execution() -> (
+    None
+):
+    openai_client = MockOpenAIClient(
+        make_content_response(
+            "MATCH (root:Product), (component:Product) "
+            "RETURN root.productId AS rootProductId"
+        ),
+        make_content_response(
+            "MATCH (root:Product), (component:Product) "
+            "RETURN root.productId AS rootProductId, "
+            "component.productId AS componentId"
+        ),
+    )
+    execute_calls = []
+
+    async def execute_cypher(cypher: str) -> list[dict]:
+        execute_calls.append(cypher)
+        return [{"rootProductId": 8101, "componentId": 8102}]
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
+    )
+    state = {
+        **_initial_state(),
+        "required_outputs": ["rootProductId", "componentId"],
+    }
+
+    result = await subgraph.ainvoke(state)
+
+    assert result["error"] is None
+    assert execute_calls == [result["messages"][-1]["content"]]
+    assert len(openai_client.calls) == 2
+    assert result["attempts"][0]["error"] == (
+        "RETURN에 필수 alias가 없습니다: componentId"
+    )

@@ -30,6 +30,7 @@ class PropertySchema(_SchemaModel):
     """노드 또는 관계 속성의 데이터 타입을 표현한다."""
 
     data_type: PropertyDataType = Field(alias="type")
+    required: bool = Field(default=True, exclude=True)
     aliases: list[str] = Field(default_factory=list)
     source_column: str | None = Field(default=None, alias="sourceColumn", exclude=True)
 
@@ -48,6 +49,24 @@ class NodeSchema(_SchemaModel):
     properties: dict[str, PropertySchema]
     unique_key: str | None = Field(default=None, alias="uniqueKey", exclude=True)
     source: NodeSource | None = Field(default=None, exclude=True)
+    output_aliases: dict[str, list[str]] = Field(
+        default_factory=dict,
+        alias="outputAliases",
+        exclude=True,
+    )
+
+    @model_validator(mode="after")
+    def validate_output_aliases(self) -> Self:
+        unknown_properties = set(self.output_aliases) - set(self.properties)
+        if unknown_properties:
+            names = ", ".join(sorted(unknown_properties))
+            raise ValueError(f"Output aliases reference unknown properties: {names}")
+        aliases = [alias for values in self.output_aliases.values() for alias in values]
+        if any(not alias.strip() for alias in aliases) or len(aliases) != len(
+            set(aliases)
+        ):
+            raise ValueError("Output aliases must be non-empty and unique per node.")
+        return self
 
 
 class RelationshipSchema(_SchemaModel):
@@ -57,6 +76,26 @@ class RelationshipSchema(_SchemaModel):
     to_node: str = Field(alias="to")
     aliases: list[str] = Field(default_factory=list)
     properties: dict[str, PropertySchema]
+    output_aliases: dict[str, list[str]] = Field(
+        default_factory=dict,
+        alias="outputAliases",
+        exclude=True,
+    )
+
+    @model_validator(mode="after")
+    def validate_output_aliases(self) -> Self:
+        unknown_properties = set(self.output_aliases) - set(self.properties)
+        if unknown_properties:
+            names = ", ".join(sorted(unknown_properties))
+            raise ValueError(f"Output aliases reference unknown properties: {names}")
+        aliases = [alias for values in self.output_aliases.values() for alias in values]
+        if any(not alias.strip() for alias in aliases) or len(aliases) != len(
+            set(aliases)
+        ):
+            raise ValueError(
+                "Output aliases must be non-empty and unique per relationship."
+            )
+        return self
 
 
 class GraphQueryPolicy(_SchemaModel):

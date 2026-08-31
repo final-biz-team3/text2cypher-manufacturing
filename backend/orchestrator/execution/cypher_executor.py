@@ -8,6 +8,7 @@ from neo4j import AsyncDriver
 from neo4j.exceptions import Forbidden
 
 from core.neo4j import build_driver
+from orchestrator.execution.result import QueryResultBatch
 
 _reader_driver: AsyncDriver | None = None
 
@@ -69,7 +70,7 @@ async def verify_reader_is_read_only(driver: Any) -> None:
 
 async def execute_cypher_with_driver(
     driver: Any, cypher: str, *, timeout_sec: float, row_limit: int
-) -> list[dict[str, Any]]:
+) -> QueryResultBatch:
     """세션을 열고 읽기 트랜잭션으로 cypher를 실행한 뒤 dict 리스트를 반환한다.
     타임아웃은 tx.run(neo4j.Query(...))으로 걸 수 없다 - 실제로 돌려보면
     "Query object is only supported for session.run"으로 즉시 실패한다(관리형
@@ -84,10 +85,13 @@ async def execute_cypher_with_driver(
 
     예외는 여기서 감싸지 않고 원본 타입 그대로 전파한다."""
 
-    async def _run(tx: Any) -> list[dict[str, Any]]:
+    async def _run(tx: Any) -> QueryResultBatch:
         result = await tx.run(cypher)
         records = await result.fetch(row_limit + 1)
-        return [record.data() for record in records[:row_limit]]
+        return {
+            "rows": [record.data() for record in records[:row_limit]],
+            "truncated": len(records) > row_limit,
+        }
 
     run_with_timeout = neo4j.unit_of_work(timeout=timeout_sec)(_run)
 
@@ -95,7 +99,7 @@ async def execute_cypher_with_driver(
         return await session.execute_read(run_with_timeout)
 
 
-async def execute_cypher(cypher: str) -> list[dict[str, Any]]:
+async def execute_cypher(cypher: str) -> QueryResultBatch:
     """graph.py가 주입하는 기본 execute_cypher - reader 드라이버,
     NEO4J_QUERY_TIMEOUT_SEC, SQL_ROW_LIMIT을 사용한다. 행 상한은 SQL과
     같은 값을 공유한다 - "결과 행 폭주를 막는다"는 목적이 DB 종류와

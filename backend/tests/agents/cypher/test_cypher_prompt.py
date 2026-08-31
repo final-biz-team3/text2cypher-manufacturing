@@ -34,11 +34,14 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
     assert "부품의 사용처는 역방향" in system_content
     assert "완제품의 하위 부품" in system_content
     assert "anchor에서 destination 방향" in system_content
+    assert "reverse(nodes(path))로 부품→완제품 순서" in system_content
     assert "BOM 가변 길이 경로는 최대 4단계" in system_content
     assert "[:REQUIRES_COMPONENT*1..4]" in system_content
     assert "상한 없는 가변 경로" in system_content
     assert "Cypher 25 전용 quantified path" in system_content
     assert "2014-08-08 기준" in system_content
+    assert "date('2014-08-08') 형태만" in system_content
+    assert "DATE '2014-08-08' 형태는 사용하지" in system_content
     assert "startDate <= 기준일" in system_content
     assert "기준일 < endDate" in system_content
     assert "MATCH 직후 relationships(path)" in system_content
@@ -46,12 +49,18 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
     assert "size()는 list 또는 string" in system_content
     assert "WITH projection" in system_content
     assert "nodes(path)와 relationships(path)는 expression" in system_content
+    assert "전체 pattern에 path를 할당" in system_content
+    assert "quantityPerAssembly 결과는 경로 순서대로" in system_content
+    assert "부족량 계산은 composer" in system_content
     assert "sellableFinishedGood = true" in system_content
     assert "시작·도착 Product의 ID·이름" in system_content
     assert "전체 Product ID·이름 경로" in system_content
     assert "Product node 자체가 아니라 productId 값으로 비교" in system_content
     assert "NOT expression IN list" in system_content
-    assert "anchor별 min(depth)" in system_content
+    assert "min(length(pathA)) AS minDepthA" in system_content
+    assert "min(length(pathB)) AS minDepthB" in system_content
+    assert "pathA와 pathB를 같은 MATCH 절에 두지 않고" in system_content
+    assert "계산하지 않은 depth alias" in system_content
     assert "OPTIONAL MATCH" in system_content
     assert "ORDER BY에서 사용하는 계산 alias" in system_content
     assert "깊이, 도착 Product ID, 전체 ID 경로 순" in system_content
@@ -60,6 +69,25 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
     assert "- componentId" in system_content
     assert "- minDepth" in system_content
     assert "Cypher만 반환" in system_content
+    assert "CALL과 APOC" in system_content
+    assert "MATCH, OPTIONAL MATCH 또는 UNWIND" in system_content
+    assert "추가 alias를 반환하지" in system_content
+    assert (
+        "ALL(node IN nodes(path) WHERE single(other IN nodes(path) WHERE "
+        "other.productId = node.productId))" in system_content
+    )
+    assert "endpoint와 anchor를 모든 WITH" in system_content
+    assert "min(length(path)) AS minDepth" in system_content
+    assert "가변 관계 대괄호 안에는 변수명을 두지 않는다" in system_content
+    assert "finishedProductId는 finished/root anchor" in system_content
+    assert "[node IN reverse(nodes(path)) | node.productId]" in system_content
+    assert "nodes(reverse(path))는 사용하지 않는다" in system_content
+    assert "지정된 공급업체는 supplier.active = true" in system_content
+    assert "작업지시·라우팅 공정 질문의 숫자는 WorkOrder.workOrderId" in system_content
+    assert "ORDER BY에는 RETURN의 alias를 철자 그대로" in system_content
+    assert "집계값 정렬 뒤에 반환된 identity ID alias를 ASC" in system_content
+    assert "deterministic tie-break를 적용한 다음 LIMIT" in system_content
+    assert "전각 또는 CJK 문장부호" in system_content
     assert json.loads(messages[1]["content"]) == {
         "query": "이 부품을 사용하는 완제품을 알려줘.",
         "entity": {"productId": 492},

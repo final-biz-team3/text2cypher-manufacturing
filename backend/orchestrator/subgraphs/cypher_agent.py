@@ -1,6 +1,7 @@
 """Cypher를 생성·실행하고, 실패 시 self-correction(재시도)을 수행하는 SubGraph를 만든다."""
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -90,6 +91,34 @@ _EMPTY_RESULT_FEEDBACK = (
 )
 
 
+def _required_output_error(cypher: str, required_outputs: list[str]) -> str | None:
+    if not required_outputs:
+        return None
+    returns = list(re.finditer(r"(?i)\bRETURN\b", cypher))
+    if not returns:
+        return "필수 alias를 검증할 RETURN 절이 없습니다."
+    projection = cypher[returns[-1].end() :]
+    projection = re.split(
+        r"(?i)\bORDER\s+BY\b|\bSKIP\b|\bLIMIT\b", projection, maxsplit=1
+    )[0]
+    missing: list[str] = []
+    for alias in required_outputs:
+        escaped = re.escape(alias)
+        explicit = re.search(
+            rf'(?i:\bAS\s+)(?:`{escaped}`|"{escaped}"|{escaped}\b)', projection
+        )
+        bare = re.search(
+            rf'(?i:(?:^|,)\s*(?:DISTINCT\s+)?)(?:`{escaped}`|"{escaped}"|'
+            rf"{escaped})\s*(?=,|$)",
+            projection,
+        )
+        if explicit is None and bare is None:
+            missing.append(alias)
+    if not missing:
+        return None
+    return "RETURN에 필수 alias가 없습니다: " + ", ".join(missing)
+
+
 def make_cypher_agent_subgraph(
     openai_client: Any,
     execute_cypher: Callable[[str], Awaitable[Any]],
@@ -125,4 +154,5 @@ def make_cypher_agent_subgraph(
         retryable_exceptions=_RETRYABLE_EXCEPTIONS,
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
         guard=make_cypher_guard(graph_schema),
+        query_contract_error=_required_output_error,
     )
