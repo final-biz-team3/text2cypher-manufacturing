@@ -5,6 +5,29 @@ from orchestrator.planning import BomShortageTransform, RouteDraft, Subquery
 EmptyReason = Literal["NO_DATA", "INCONCLUSIVE"]
 CompositionMode = Literal["single", "joined", "separate"]
 ToolName = Literal["sql", "graph"]
+FailureKind = Literal["user_correctable", "infrastructure", "internal"]
+FailureStage = Literal[
+    "entity_resolution",
+    "routing",
+    "planning",
+    "validation",
+    "execution",
+    "dependency",
+]
+
+
+class QueryFailure(TypedDict):
+    """LLM과 API 흐름에서 사용해도 되는 사용자 안전 실패 정보."""
+
+    code: str
+    stage: FailureStage
+    category: str
+    kind: FailureKind
+    retryable: bool
+    user_safe_reason: str
+    suggested_action: str
+    failed_tool: ToolName | None
+    dependent_failure: bool
 
 
 class ComposedSection(TypedDict):
@@ -57,6 +80,9 @@ class OrchestratorState(TypedDict):
     # SQL·GRAPH 실행 결과를 계획의 join 계약에 따라 조합한 내부 결과
     # (/chat 응답에는 노출하지 않는다.)
     composed_result: NotRequired[ComposedResult]
+
+    # 원본 예외·쿼리를 포함하지 않는 사용자 안전 실패 컨텍스트
+    query_failure: NotRequired[QueryFailure | None]
 
     # 최종 자연어 응답
     final_answer: NotRequired[str | None]
