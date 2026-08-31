@@ -9,6 +9,11 @@ from typing import Any
 
 from orchestrator.errors import AnswerGenerationError, QueryInfrastructureError
 from orchestrator.nodes.answer_limits import build_answer_context
+from orchestrator.numeric_literals import (
+    NUMERIC_LITERAL_SOURCE,
+    normalize_numeric_literal,
+    normalized_numeric_literals,
+)
 from orchestrator.state import ComposedResult, OrchestratorState, QueryFailure
 
 logger = logging.getLogger(__name__)
@@ -16,9 +21,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_OUTPUT_TOKENS = 1500
 DEFAULT_FAILURE_MAX_OUTPUT_TOKENS = 600
 
-_NUMBER_LITERAL = re.compile(r"(?<![A-Za-z0-9])\d+(?:[.,]\d+)*(?![A-Za-z0-9])")
 _NUMBER_WITH_UNIT = re.compile(
-    r"(?P<number>\d+(?:[.,]\d+)*)\s*(?P<unit>개|원|곳|건|명|대|일|시간|분|초|%|퍼센트)"
+    rf"(?P<number>{NUMERIC_LITERAL_SOURCE})\s*"
+    r"(?P<unit>개|원|곳|건|명|대|일|시간|분|초|%|퍼센트)"
 )
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
 _FORBIDDEN_OUTPUT_TERMS = (
@@ -75,10 +80,7 @@ def _has_answer_rows(composed_result: ComposedResult) -> bool:
 
 def _normalized_numbers(value: str) -> set[str]:
     without_list_markers = re.sub(r"(?m)^\s*\d+[.)]\s+", "", value)
-    return {
-        match.group(0).replace(",", "")
-        for match in _NUMBER_LITERAL.finditer(without_list_markers)
-    }
+    return set(normalized_numeric_literals(without_list_markers))
 
 
 def _strip_ungrounded_units(answer: str, source_text: str) -> str:
@@ -87,9 +89,9 @@ def _strip_ungrounded_units(answer: str, source_text: str) -> str:
     def replace(match: re.Match[str]) -> str:
         number = match.group("number")
         unit = match.group("unit")
-        normalized = number.replace(",", "")
+        normalized = normalize_numeric_literal(number)
         source_pairs = {
-            (item.group("number").replace(",", ""), item.group("unit"))
+            (normalize_numeric_literal(item.group("number")), item.group("unit"))
             for item in _NUMBER_WITH_UNIT.finditer(source_text)
         }
         return match.group(0) if (normalized, unit) in source_pairs else number

@@ -306,6 +306,24 @@ async def test_route_query_keeps_filter_equal_to_entity_numeric_value() -> None:
     assert "0원인" in result["routeDraft"]["subqueries"][0]["question"]
 
 
+async def test_route_query_accepts_korean_scaled_number_as_equivalent_value() -> None:
+    content = (
+        '{"tool_plan":["sql"],"subqueries":['
+        '{"id":"sql_price","tool":"sql",'
+        '"question":"가격이 10000원 이상인 제품을 조회한다.",'
+        '"dependsOn":[],"joinKeys":[],"inputBindings":{}}],'
+        '"resultTransform":null}'
+    )
+    client = MockOpenAIClient(make_content_response(content))
+
+    result = await make_route_query_node(client)(
+        {"query": "가격이 1만 원 이상인 제품을 알려줘", "entity": None}
+    )
+
+    assert result["tool_plan"] == ["sql"]
+    assert len(client.calls) == 1
+
+
 @pytest.mark.parametrize(
     ("query", "content", "expected_tools"),
     [

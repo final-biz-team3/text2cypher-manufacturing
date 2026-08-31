@@ -1,12 +1,12 @@
 import json
 import logging
 import os
-import re
 from collections import Counter
 from collections.abc import Callable, Mapping
 from typing import Any
 
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
+from orchestrator.numeric_literals import normalized_numeric_literals
 from orchestrator.planning import (
     DEFAULT_SHARED_JOIN_ALIASES,
     SUPPORTED_TOOLS,
@@ -17,14 +17,9 @@ from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
-_NUMBER_LITERAL = re.compile(r"(?<![A-Za-z0-9])[-+]?\d+(?:[.,]\d+)*(?![A-Za-z0-9])")
-
 
 def _numeric_literal_counts(value: str) -> Counter[str]:
-    return Counter(
-        match.group(0).replace(",", "").removeprefix("+")
-        for match in _NUMBER_LITERAL.finditer(value)
-    )
+    return Counter(normalized_numeric_literals(value))
 
 
 def _entity_numbers_mentioned_in_query(

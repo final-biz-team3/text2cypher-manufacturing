@@ -14,6 +14,8 @@ from orchestrator.query_conditions import missing_numeric_filter_literals
         ("판매량 상위 5개", "SELECT * FROM product ORDER BY sales DESC LIMIT 5"),
         ("2025년 주문", "SELECT * FROM orders WHERE created_at >= '2025-01-01'"),
         ("수량이 0개인 제품", "SELECT * FROM product WHERE quantity = 0"),
+        ("가격이 1만 원 이상인 제품", "SELECT * FROM product WHERE price >= 10000"),
+        ("예산이 2억 원 이하", "SELECT * FROM budget WHERE amount <= 200000000"),
     ],
 )
 def test_numeric_constraint_accepts_matching_query(question: str, query: str) -> None:
@@ -29,6 +31,8 @@ def test_numeric_constraint_accepts_matching_query(question: str, query: str) ->
         ("판매량 상위 5개", "SELECT * FROM product WHERE category_id = 5"),
         ("수량이 0개인 제품", "SELECT * FROM product"),
         ("2025년 주문", "SELECT * FROM orders"),
+        ("가격이 1만 원 이상인 제품", "SELECT * FROM product WHERE price >= 1"),
+        ("예산이 2억 원 이하", "SELECT * FROM budget WHERE amount <= 2"),
     ],
 )
 def test_numeric_constraint_rejects_dropped_or_reversed_meaning(

@@ -383,3 +383,16 @@ async def test_generate_answer_allows_markdown_ordered_list_numbers() -> None:
     )
 
     assert result["final_answer"].startswith("1. 재고는 10")
+
+
+async def test_generate_answer_accepts_grounded_korean_scaled_number() -> None:
+    client = MockOpenAIClient(make_content_response("재고는 1만입니다."))
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "재고를 알려줘",
+            "composed_result": _composed_result(rows=[{"stock": 10000}]),
+        }
+    )
+
+    assert result["final_answer"] == "재고는 1만입니다."
