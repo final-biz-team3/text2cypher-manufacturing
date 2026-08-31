@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -710,6 +711,293 @@ async def test_output_planner_keeps_common_component_summary_without_paths() -> 
     )
 
 
+async def test_output_planner_drops_filter_only_property_from_common_summary() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["componentId","componentName","endDate"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    original_query = "Cedar Bike와 Quartz Bike의 현재 공통 부품을 보여줘"
+
+    result = await node(
+        {
+            "query": original_query,
+            "entity": [
+                {"productId": 8301, "productName": "Cedar Bike"},
+                {"productId": 8302, "productName": "Quartz Bike"},
+            ],
+            "tool_plan": ["graph"],
+            "routeDraft": {
+                "tool_plan": ["graph"],
+                "subqueries": [
+                    {
+                        "id": "graph_common_components",
+                        "tool": "graph",
+                        "question": (
+                            "BOM endDate를 현재 날짜로 필터하고 두 제품의 "
+                            "공통 부품을 조회한다"
+                        ),
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "finishedProductIdA",
+        "finishedProductIdB",
+        "componentId",
+        "componentName",
+        "minDepthA",
+        "minDepthB",
+    ]
+
+
+async def test_output_planner_drops_explicit_filter_only_common_property() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["componentId","componentName","endDate"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = "Cedar Bike와 Quartz Bike의 BOM 유효 종료일이 2020년 이후인 공통 부품"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": [
+                {"productId": 8301, "productName": "Cedar Bike"},
+                {"productId": 8302, "productName": "Quartz Bike"},
+            ],
+            "tool_plan": ["graph"],
+            "routeDraft": {
+                "tool_plan": ["graph"],
+                "subqueries": [
+                    {
+                        "id": "graph_common_components",
+                        "tool": "graph",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "finishedProductIdA",
+        "finishedProductIdB",
+        "componentId",
+        "componentName",
+        "minDepthA",
+        "minDepthB",
+    ]
+
+
+async def test_output_planner_keeps_requested_bom_status_in_common_summary() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["componentId","componentName","startDate",'
+            '"pathProductIds","depth"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": (
+                "Cedar Bike와 Quartz Bike에 모두 들어가는 부품 중 "
+                "BOM 종료일이 미등록된 공통 부품은?"
+            ),
+            "entity": [
+                {"productId": 8301, "productName": "Cedar Bike"},
+                {"productId": 8302, "productName": "Quartz Bike"},
+            ],
+            "tool_plan": ["graph"],
+            "routeDraft": {
+                "tool_plan": ["graph"],
+                "subqueries": [
+                    {
+                        "id": "graph_common_components",
+                        "tool": "graph",
+                        "question": (
+                            "두 완제품의 BOM 종료일이 NULL인 공통 부품과 최소 "
+                            "깊이를 조회한다."
+                        ),
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "finishedProductIdA",
+        "finishedProductIdB",
+        "componentId",
+        "componentName",
+        "minDepthA",
+        "minDepthB",
+        "endDate",
+    ]
+
+
+async def test_output_planner_keeps_explicit_bom_scalar_in_common_summary() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["componentId","componentName",'
+            '"quantityPerAssembly","finishedProductName"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": (
+                "Cedar Bike와 Quartz Bike의 공통 부품과 " "단위당 필요 수량을 보여줘"
+            ),
+            "entity": [
+                {"productId": 8301, "productName": "Cedar Bike"},
+                {"productId": 8302, "productName": "Quartz Bike"},
+            ],
+            "tool_plan": ["graph"],
+            "routeDraft": {
+                "tool_plan": ["graph"],
+                "subqueries": [
+                    {
+                        "id": "graph_common_components",
+                        "tool": "graph",
+                        "question": "두 완제품의 공통 부품과 BOM 수량을 조회한다.",
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "finishedProductIdA",
+        "finishedProductIdB",
+        "componentId",
+        "componentName",
+        "minDepthA",
+        "minDepthB",
+        "quantityPerAssembly",
+    ]
+
+
+async def test_output_planner_keeps_owner_identity_for_common_component_property() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["componentId","componentName",'
+            '"supplierId","supplierName","active"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = (
+        "Cedar Bike와 Quartz Bike의 공통 부품 중 활성 공급업체와 " "활성 상태를 보여줘"
+    )
+
+    result = await node(
+        {
+            "query": query,
+            "entity": [
+                {"productId": 8301, "productName": "Cedar Bike"},
+                {"productId": 8302, "productName": "Quartz Bike"},
+            ],
+            "tool_plan": ["graph"],
+            "routeDraft": {
+                "tool_plan": ["graph"],
+                "subqueries": [
+                    {
+                        "id": "graph_common_components",
+                        "tool": "graph",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "finishedProductIdA",
+        "finishedProductIdB",
+        "componentId",
+        "componentName",
+        "minDepthA",
+        "minDepthB",
+        "supplierId",
+        "supplierName",
+        "active",
+    ]
+
+
+async def test_output_planner_keeps_scalars_pathless_beside_missing_bom_status() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["componentId","componentName",'
+            '"quantityPerAssembly","endDate"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = (
+        "Cedar Bike와 Quartz Bike의 BOM 종료일이 미등록된 공통 부품과 "
+        "단위당 필요 수량을 보여줘"
+    )
+
+    result = await node(
+        {
+            "query": query,
+            "entity": [
+                {"productId": 8301, "productName": "Cedar Bike"},
+                {"productId": 8302, "productName": "Quartz Bike"},
+            ],
+            "tool_plan": ["graph"],
+            "routeDraft": {
+                "tool_plan": ["graph"],
+                "subqueries": [
+                    {
+                        "id": "graph_common_components",
+                        "tool": "graph",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "finishedProductIdA",
+        "finishedProductIdB",
+        "componentId",
+        "componentName",
+        "minDepthA",
+        "minDepthB",
+        "quantityPerAssembly",
+        "endDate",
+    ]
+
+
 async def test_bom_shortage_output_contract_is_model_free_and_exact() -> None:
     client = MockOpenAIClient()
     node = make_plan_outputs_node(client, _catalog())
@@ -959,6 +1247,1022 @@ async def test_output_planner_normalizes_where_stock_to_location_rows() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "location_word",
+    [
+        "location",
+        "locations",
+        "bins",
+        "wherever",
+        "anywhere",
+        "somewhere",
+        "everywhere",
+        "elsewhere",
+        "whereabouts",
+    ],
+)
+async def test_output_planner_normalizes_english_location_inventory_rows(
+    location_word: str,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response('{"requiredOutputs":["actualStock","productName"]}')
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": f"Show the inventory {location_word} and quantity for product X",
+            "entity": {"productId": 8001, "productName": "X"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": "Show the inventory locations and quantities.",
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+    assert "actualStock" not in result["subqueries"][0]["requiredOutputs"]
+
+
+@pytest.mark.parametrize("product_name", ["Location", "Locations"])
+async def test_output_planner_does_not_treat_resolved_product_name_as_location_intent(
+    product_name: str,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = f"Show total inventory for product {product_name}"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": {"productId": 8001, "productName": product_name},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "actualStock",
+    ]
+
+
+@pytest.mark.parametrize("product_name", ["Location", "location"])
+async def test_output_planner_keeps_location_intent_beside_matching_product_name(
+    product_name: str,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = f"Show inventory by location for product {product_name}"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": {"productId": 8001, "productName": product_name},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+async def test_output_planner_keeps_location_intent_after_preposition_modifier() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = "Show inventory at each location for product Location"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": {"productId": 8001, "productName": "Location"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+async def test_output_planner_removes_whole_entity_name_after_location_substring() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = "Show stock allocation and total inventory for product Location"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": {"productId": 8001, "productName": "Location"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "actualStock",
+    ]
+
+
+async def test_output_planner_keeps_location_intent_after_fuzzy_confirmation() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    confirmed = {"productId": 8001, "productName": "Location"}
+    query = "Show Locatoin inventory by location"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": confirmed,
+            "confirmed_entity": confirmed,
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("query", "entity", "confirmed_entity"),
+    [
+        (
+            "Show total inventory for supplier location",
+            {"supplierId": 91, "supplierName": "location"},
+            None,
+        ),
+        (
+            "Location 제품의 총 재고를 보여줘",
+            {"productId": 8001, "productName": "Location"},
+            {"productId": 8001, "productName": "Location"},
+        ),
+        (
+            "Show Location inventory",
+            {"productId": 8001, "productName": "Location"},
+            {"productId": 8001, "productName": "Location"},
+        ),
+        (
+            "위치 재고 알려줘",
+            {"productId": 8001, "productName": "위치"},
+            {"productId": 8001, "productName": "위치"},
+        ),
+        (
+            "Show total inventory for product Location; is Location in stock?",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show total inventory for product Location; is location in stock?",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show total inventory for product location; is location in stock?",
+            {"productId": 8001, "productName": "location"},
+            None,
+        ),
+        (
+            "Show Location stock for product Location",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show total inventory from Location",
+            {"supplierId": 91, "supplierName": "Location"},
+            None,
+        ),
+        (
+            "Show total inventory in Location",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show total inventory at Shelf",
+            {"productId": 8001, "productName": "Shelf"},
+            None,
+        ),
+        (
+            "Show total inventory for product Locations",
+            {"productId": 8001, "productName": "Location"},
+            {"productId": 8001, "productName": "Location"},
+        ),
+        (
+            "Show location inventory; is location in stock?",
+            {"productId": 8001, "productName": "location"},
+            None,
+        ),
+    ],
+)
+async def test_output_planner_removes_resolved_location_name_in_entity_context(
+    query: str,
+    entity: dict,
+    confirmed_entity: dict | None,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": query,
+            "entity": entity,
+            "confirmed_entity": confirmed_entity,
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    expected = (
+        [
+            "productId",
+            "productName",
+            "actualStock",
+            "supplierId",
+            "supplierName",
+        ]
+        if "supplierId" in entity
+        else [
+            "productId",
+            "productName",
+            "actualStock",
+        ]
+    )
+    assert result["subqueries"][0]["requiredOutputs"] == expected
+
+
+async def test_output_planner_scrubs_overlapping_entity_names_longest_first() -> None:
+    query = "Compare total inventory for Frame and Location Frame"
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": query,
+            "entity": [
+                {"productId": 8001, "productName": "Frame"},
+                {"productId": 8002, "productName": "Location Frame"},
+            ],
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "actualStock",
+    ]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Show inventory at location Forge Bay",
+        "작업장 Forge Bay 재고 수량을 보여줘",
+    ],
+)
+async def test_output_planner_preserves_location_type_for_named_location(
+    query: str,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["locationId","locationName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": query,
+            "entity": {"locationId": 91, "locationName": "Forge Bay"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_location_inventory",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("query", "entity", "confirmed_entity"),
+    [
+        (
+            "제품 위치의 재고를 각 위치에서 보여줘",
+            {"productId": 8001, "productName": "위치"},
+            {"productId": 8001, "productName": "위치"},
+        ),
+        (
+            "Show Location inventory across each location",
+            {"productId": 8001, "productName": "Location"},
+            {"productId": 8001, "productName": "Location"},
+        ),
+        (
+            "Show inventory per warehouse location for product Location",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show Shelf inventory with shelf details",
+            {"productId": 8001, "productName": "Shelf"},
+            {"productId": 8001, "productName": "Shelf"},
+        ),
+        (
+            "Show Location inventory and location breakdown",
+            {"productId": 8001, "productName": "Location"},
+            {"productId": 8001, "productName": "Location"},
+        ),
+        (
+            "Show shelf inventory for product Shelf",
+            {"productId": 8001, "productName": "Shelf"},
+            None,
+        ),
+        (
+            "Show bin stock for product Bin",
+            {"productId": 8001, "productName": "Bin"},
+            None,
+        ),
+        (
+            "Show location inventory for product Location",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show location breakdown and inventory for product location",
+            {"productId": 8001, "productName": "location"},
+            {"productId": 8001, "productName": "location"},
+        ),
+        (
+            "위치 제품의 재고를 위치별로 보여줘",
+            {"productId": 8001, "productName": "위치"},
+            {"productId": 8001, "productName": "위치"},
+        ),
+        (
+            "Show Location inventory according to location",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show Location inventory grouped by location",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "위치 제품의 재고 위치를 보여줘",
+            {"productId": 8001, "productName": "위치"},
+            {"productId": 8001, "productName": "위치"},
+        ),
+        (
+            "위치 제품의 재고 위치가 필요해",
+            {"productId": 8001, "productName": "위치"},
+            {"productId": 8001, "productName": "위치"},
+        ),
+        (
+            "위치 제품의 재고 위치는 어떻게 돼",
+            {"productId": 8001, "productName": "위치"},
+            {"productId": 8001, "productName": "위치"},
+        ),
+        (
+            "위치 제품의 재고를 위치에서 보여줘",
+            {"productId": 8001, "productName": "위치"},
+            {"productId": 8001, "productName": "위치"},
+        ),
+        (
+            "작업 제품의 재고를 작업장별로 보여줘",
+            {"productId": 8001, "productName": "작업"},
+            {"productId": 8001, "productName": "작업"},
+        ),
+        (
+            "What is the location of inventory for product Location?",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "What shelf holds inventory for product Shelf?",
+            {"productId": 8001, "productName": "Shelf"},
+            None,
+        ),
+        (
+            "Show inventory for product Bin and list the bin values",
+            {"productId": 8001, "productName": "Bin"},
+            None,
+        ),
+        (
+            "List the product locations and inventory quantities for product Location",
+            {"productId": 8001, "productName": "Location"},
+            None,
+        ),
+        (
+            "Show inventory location for product location",
+            {"productId": 8001, "productName": "location"},
+            {"productId": 8001, "productName": "location"},
+        ),
+        (
+            "Show inventory location for product Locatoin",
+            {"productId": 8001, "productName": "Location"},
+            {"productId": 8001, "productName": "Location"},
+        ),
+    ],
+)
+async def test_output_planner_preserves_location_grammar_after_name_scrubbing(
+    query: str,
+    entity: dict,
+    confirmed_entity: dict | None,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": query,
+            "entity": entity,
+            "confirmed_entity": confirmed_entity,
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+async def test_output_planner_keeps_location_intent_after_supplier_confirmation() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    confirmed = {"supplierId": 91, "supplierName": "Location"}
+    query = "Show inventory by location for supplier Locatoin"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": confirmed,
+            "confirmed_entity": confirmed,
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+        "supplierId",
+        "supplierName",
+    ]
+
+
+async def test_output_planner_preserves_explicit_scalar_with_location_inventory() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["actualStock","productName","standardCost"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": (
+                "Show the inventory locations, quantities, and standard cost "
+                "for product X"
+            ),
+            "entity": {"productId": 8001, "productName": "X"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": (
+                            "Show inventory locations, quantities, and standard cost."
+                        ),
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+        "standardCost",
+    ]
+    assert "actualStock" not in result["subqueries"][0]["requiredOutputs"]
+
+
+async def test_output_planner_keeps_shortage_inputs_with_location_inventory() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","safetyStockLevel",'
+            '"actualStock","shortageQty"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = "Show inventory by location and safety-stock shortage for product X"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": {"productId": 8001, "productName": "X"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_location_shortage",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    outputs = result["subqueries"][0]["requiredOutputs"]
+    assert {"locationId", "shelf", "bin", "quantity"}.issubset(outputs)
+    assert {"safetyStockLevel", "actualStock", "shortageQty"}.issubset(outputs)
+
+
+async def test_output_planner_preserves_selected_calculation_with_location() -> None:
+    client = MockOpenAIClient(
+        make_content_response('{"requiredOutputs":["productName","averageListPrice"]}')
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": "Show inventory locations and average list price",
+            "entity": None,
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": (
+                            "Show inventory locations and average list price."
+                        ),
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+        "averageListPrice",
+    ]
+    assert "listPrice" not in result["subqueries"][0]["requiredOutputs"]
+
+
+@pytest.mark.parametrize("alias", ["supplierId", "categoryId", "scrapReasonName"])
+async def test_output_planner_preserves_selected_canonical_location_alias(
+    alias: str,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","' + alias + '"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+    query = f"Show inventory locations, quantities, and {alias}"
+
+    result = await node(
+        {
+            "query": query,
+            "entity": None,
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert alias in result["subqueries"][0]["requiredOutputs"]
+
+
+async def test_output_planner_preserves_selected_cost_with_korean_location() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock",'
+            '"standardCost"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": "Nebula Bracket 재고가 어디에 몇 개 있고 원가는 얼마야?",
+            "entity": {"productId": 8001, "productName": "Nebula Bracket"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": "위치별 재고 수량과 원가를 조회한다.",
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert "standardCost" in result["subqueries"][0]["requiredOutputs"]
+    assert "actualStock" not in result["subqueries"][0]["requiredOutputs"]
+
+
+@pytest.mark.parametrize(
+    ("query", "entity"),
+    [
+        ("Show product ID and inventory location", None),
+        (
+            "Show inventory locations for the product named Size",
+            {"productId": 8001, "productName": "Size"},
+        ),
+    ],
+)
+async def test_output_planner_does_not_expand_unselected_location_aliases(
+    query: str,
+    entity: dict | None,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response('{"requiredOutputs":["productId","productName"]}')
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": query,
+            "entity": entity,
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory_locations",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+async def test_output_planner_does_not_treat_allocation_as_location() -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": "Show stock allocation for product X",
+            "entity": {"productId": 8001, "productName": "X"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory",
+                        "tool": "sql",
+                        "question": "Show stock allocation for product X.",
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "actualStock",
+    ]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Show product name and total inventory for product X",
+        "Show total production inventory for product X",
+    ],
+)
+async def test_output_planner_ignores_generic_schema_owner_tokens_for_location(
+    query: str,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(
+            '{"requiredOutputs":["productId","productName","actualStock"]}'
+        )
+    )
+    node = make_plan_outputs_node(client, _catalog())
+
+    result = await node(
+        {
+            "query": query,
+            "entity": {"productId": 8001, "productName": "X"},
+            "tool_plan": ["sql"],
+            "routeDraft": {
+                "tool_plan": ["sql"],
+                "subqueries": [
+                    {
+                        "id": "sql_inventory",
+                        "tool": "sql",
+                        "question": query,
+                        "dependsOn": [],
+                        "joinKeys": [],
+                    }
+                ],
+            },
+            "resultTransform": None,
+        }
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "actualStock",
+    ]
+
+
 async def test_output_planner_completes_work_order_scrap_fact_bundle() -> None:
     client = MockOpenAIClient(
         make_content_response(
@@ -1036,9 +2340,12 @@ async def test_output_planner_preserves_rejected_quantity_ranking_semantics() ->
 
 
 def test_schema_catalog_has_no_evaluation_dependency() -> None:
-    source = (
-        PROJECT_ROOT / "backend" / "orchestrator" / "output_catalog.py"
-    ).read_text(encoding="utf-8")
-    assert "queries/evaluation" not in source
-    assert "manifest" not in source
-    assert "gold/" not in source.casefold()
+    for relative_path in (
+        "backend/orchestrator/output_catalog.py",
+        "backend/orchestrator/nodes/plan_outputs.py",
+    ):
+        source = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+        assert "queries/evaluation" not in source
+        assert "manifest" not in source
+        assert "gold/" not in source.casefold()
+        assert not re.search(r"\b(?:RQ|HQ)\d+\b", source)

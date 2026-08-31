@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from typing import Any
 
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
@@ -147,7 +148,7 @@ _IDENTITY_NAME_PAIRS = (
     ("scrapReasonId", "scrapReasonName"),
 )
 
-_SQL_ENTITY_ALIASES = {
+_SQL_ENTITY_ALIASES: dict[str, str] = {
     "productId": "productId",
     "productName": "productName",
     "productCategoryId": "categoryId",
@@ -250,6 +251,306 @@ def _search_tokens(value: str) -> set[str]:
         for token in re.split(r"[^0-9A-Za-z가-힣]+", expanded)
         if len(token) >= 2
     }
+
+
+def _has_fuzzy_name_in_entity_context(
+    question: str,
+    *,
+    entity_name: str,
+    context_terms: set[str],
+) -> bool:
+    """Detect a typoed confirmed name beside its schema-derived entity owner."""
+    question_tokens = re.findall(r"[0-9A-Za-z가-힣]+", question)
+    name_tokens = re.findall(r"[0-9A-Za-z가-힣]+", entity_name)
+    if not question_tokens or not name_tokens:
+        return False
+    candidate_size = len(name_tokens)
+    normalized_name = _normalized_term(entity_name)
+    for context_term in context_terms:
+        owner_tokens = re.findall(r"[0-9A-Za-z가-힣]+", context_term)
+        if not owner_tokens:
+            continue
+        owner_size = len(owner_tokens)
+        for index in range(len(question_tokens) - owner_size + 1):
+            question_owner = question_tokens[index : index + owner_size]
+            if [token.casefold() for token in question_owner] != [
+                token.casefold() for token in owner_tokens
+            ]:
+                continue
+            for start in (index - candidate_size, index + owner_size):
+                if start < 0 or start + candidate_size > len(question_tokens):
+                    continue
+                candidate = _normalized_term(
+                    " ".join(question_tokens[start : start + candidate_size])
+                )
+                if not candidate or candidate == normalized_name:
+                    continue
+                if SequenceMatcher(None, candidate, normalized_name).ratio() >= 0.75:
+                    return True
+    return False
+
+
+def _remove_non_location_name_mentions(
+    question: str,
+    name_pattern: str,
+    *,
+    entity_name: str | None = None,
+    resolved_location_entity: bool = False,
+    preserve_property_inventory: bool = False,
+) -> str:
+    """Remove repeated entity names while preserving explicit location phrases."""
+
+    def replace(match: re.Match[str]) -> str:
+        prefix = question[max(0, match.start() - 32) : match.start()].casefold()
+        suffix = question[match.end() : match.end() + 32].casefold()
+        korean_name = any("가" <= character <= "힣" for character in match.group(0))
+        if (
+            korean_name
+            and re.match(r"\s*[가-힣]", suffix)
+            and not re.match(
+                r"\s*(?:은|는|이|가|을|를|의|에|에서|에게|으로|로|와|과|도|만|마다|별|재고)",
+                suffix,
+            )
+        ):
+            return match.group(0)
+        matched_name = match.group(0)
+        distinct_schema_spelling = (
+            entity_name is None or matched_name.casefold() != entity_name.casefold()
+        )
+        case_varied_spelling = (
+            entity_name is not None
+            and matched_name != entity_name
+            and matched_name.casefold() == entity_name.casefold()
+        )
+        dimension_prefix = re.search(
+            r"(?:\b(?:by|per|across|throughout|according\s+to|"
+            r"grouped\s+by|broken\s+down\s+by|split\s+by)\s+"
+            r"(?:[0-9a-z-]+\s+){0,2}|"
+            r"\b(?:each|every|all|any|individual)\s+|"
+            r"(?:각|모든|개별)\s*)$",
+            prefix,
+        )
+        contextual_prefix = re.search(
+            r"(?:\b(?:at|in|from)\s+(?:[0-9a-z-]+\s+){0,2}|"
+            r"\b(?:inventory|stock)\s+|재고(?:을|를)?\s*)$",
+            prefix,
+        )
+        location_prefix = bool(dimension_prefix) or (
+            bool(contextual_prefix)
+            and (
+                resolved_location_entity
+                or distinct_schema_spelling
+                or preserve_property_inventory
+            )
+        )
+        dimension_suffix = re.match(
+            r"\s*(?:별|마다|(?:details?|breakdown|rows?)\b|"
+            r"(?:and|,)\s*(?:quantity|quantities|shelf|bin)\b|"
+            r"(?:와|과)?\s*수량)",
+            suffix,
+        )
+        contextual_suffix_pattern = r"\s*(?:에|에서|으로|로)"
+        if (
+            preserve_property_inventory
+            and entity_name is not None
+            and (distinct_schema_spelling or entity_name.islower())
+        ):
+            contextual_suffix_pattern = (
+                r"\s*(?:inventory|stock)\b|" + contextual_suffix_pattern
+            )
+        contextual_suffix = re.match(contextual_suffix_pattern, suffix)
+        preserve_contextual_suffix = bool(contextual_suffix) and (
+            resolved_location_entity
+            or distinct_schema_spelling
+            or bool(dimension_prefix)
+            or preserve_property_inventory
+        )
+        preserve_object_marked_location = bool(re.match(r"\s*(?:을|를)", suffix)) and (
+            preserve_property_inventory
+            and bool(re.search(r"재고(?:을|를)?\s*$", prefix))
+        )
+        preserve_korean_inventory_compound = (
+            preserve_property_inventory
+            and bool(re.search(r"재고(?:을|를)?\s*$", prefix))
+            and korean_name
+        )
+        preserve_distinct_schema_term = (
+            preserve_property_inventory and distinct_schema_spelling
+        )
+        preserve_case_varied_property_phrase = (
+            preserve_property_inventory
+            and case_varied_spelling
+            and bool(
+                re.match(
+                    r"\s+(?:(?:inventory|stock)\b|of\s+inventory\b|"
+                    r"holds?\s+inventory\b|values?\b)",
+                    suffix,
+                )
+            )
+        )
+        return (
+            match.group(0)
+            if location_prefix
+            or dimension_suffix
+            or preserve_contextual_suffix
+            or preserve_object_marked_location
+            or preserve_korean_inventory_compound
+            or preserve_distinct_schema_term
+            or preserve_case_varied_property_phrase
+            else " "
+        )
+
+    return re.sub(name_pattern, replace, question, flags=re.IGNORECASE)
+
+
+def _without_resolved_entity_name_mentions(
+    question: str,
+    entity: object,
+    confirmed_entity: object,
+    catalog: OutputCatalog,
+) -> str:
+    """Remove only entity-name mentions that are evidenced by resolution context."""
+    values = entity if isinstance(entity, list) else [entity]
+    confirmed_values = (
+        confirmed_entity if isinstance(confirmed_entity, list) else [confirmed_entity]
+    )
+    name_entries = [
+        (value, key, item)
+        for value in values
+        if isinstance(value, dict)
+        for key, item in value.items()
+        if key.endswith("Name") and isinstance(item, str) and item
+    ]
+    result = question
+    for value, name_field, name in sorted(
+        name_entries, key=lambda item: len(item[2]), reverse=True
+    ):
+        escaped_name = re.escape(name)
+        name_pattern = (
+            (r"(?<![0-9A-Za-z])" if name[0].isascii() and name[0].isalnum() else "")
+            + escaped_name
+            + (r"(?![0-9A-Za-z])" if name[-1].isascii() and name[-1].isalnum() else "")
+        )
+        contextual_name_pattern = name_pattern
+        if (
+            name[0].isascii()
+            and name[0].isalnum()
+            and name[-1].isascii()
+            and name[-1].isalnum()
+            and not name.casefold().endswith("s")
+        ):
+            contextual_name_pattern = (
+                r"(?<![0-9A-Za-z])" + escaped_name + r"(?:s|['’]s)?(?![0-9A-Za-z])"
+            )
+
+        output_alias = _SQL_ENTITY_ALIASES.get(name_field)
+        if output_alias is None:
+            output_alias = name_field
+        spec = catalog.by_tool["sql"].get(output_alias)
+        context_terms = {
+            re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name_field[: -len("Name")]),
+        }
+        if spec is not None:
+            context_terms.update(
+                term.rsplit(".", 1)[-1] for term in spec.owner_terms if term.strip()
+            )
+        exact_contextual_patterns: list[str] = []
+        fuzzy_contextual_patterns: list[str] = []
+        for term in sorted(context_terms, key=len, reverse=True):
+            escaped_term = re.escape(term).replace(r"\ ", r"\s+")
+            term_pattern = (
+                rf"(?<![0-9A-Za-z]){escaped_term}(?![0-9A-Za-z])"
+                if term[0].isascii() and term[0].isalnum()
+                else escaped_term
+            )
+            separator = r"\s*" if any("가" <= char <= "힣" for char in term) else r"\s+"
+            for patterns, candidate_pattern in (
+                (exact_contextual_patterns, name_pattern),
+                (fuzzy_contextual_patterns, contextual_name_pattern),
+            ):
+                patterns.extend(
+                    (
+                        rf"(?P<context>{term_pattern}){separator}"
+                        rf"(?:named\s+)?{candidate_pattern}",
+                        rf"{candidate_pattern}{separator}"
+                        rf"(?P<context>{term_pattern})",
+                    )
+                )
+
+        case_sensitive_exact = any(
+            re.search(pattern, result) for pattern in exact_contextual_patterns
+        )
+        case_insensitive_exact = any(
+            re.search(pattern, result, flags=re.IGNORECASE)
+            for pattern in exact_contextual_patterns
+        )
+        if case_sensitive_exact:
+            contextual_patterns = exact_contextual_patterns
+            contextual_flags = 0
+        elif case_insensitive_exact:
+            contextual_patterns = exact_contextual_patterns
+            contextual_flags = re.IGNORECASE
+        else:
+            contextual_patterns = fuzzy_contextual_patterns
+            contextual_flags = re.IGNORECASE
+
+        contextual_replacements = 0
+        for pattern in contextual_patterns:
+            result, replacements = re.subn(
+                pattern,
+                (
+                    (lambda match: f' {match.group("context")} ')
+                    if name_field == "locationName"
+                    else " "
+                ),
+                result,
+                flags=contextual_flags,
+            )
+            contextual_replacements += replacements
+
+        if contextual_replacements:
+            result = _remove_non_location_name_mentions(
+                result,
+                name_pattern,
+                entity_name=name,
+                resolved_location_entity=name_field == "locationName",
+                preserve_property_inventory=True,
+            )
+            continue
+        if value in confirmed_values:
+            if _has_fuzzy_name_in_entity_context(
+                result,
+                entity_name=name,
+                context_terms=context_terms,
+            ):
+                continue
+            result = _remove_non_location_name_mentions(
+                result,
+                name_pattern,
+                entity_name=name,
+                resolved_location_entity=name_field == "locationName",
+            )
+            continue
+
+        # Unconfirmed exact lookup has no extracted mention span. Preserve the
+        # previous conservative fallback for uncased names. Title-cased English
+        # canonical names are stronger evidence, so repeated references can be
+        # removed while explicit "by/at/inventory location" phrases stay intact.
+        if any(character.isupper() for character in name):
+            result = _remove_non_location_name_mentions(
+                result,
+                name_pattern,
+                entity_name=name,
+                resolved_location_entity=name_field == "locationName",
+            )
+        else:
+            result = _remove_non_location_name_mentions(
+                result,
+                name_pattern,
+                entity_name=name,
+                resolved_location_entity=name_field == "locationName",
+            )
+    return result
 
 
 def _missing_value_target(
@@ -358,11 +659,129 @@ def _owner_qualified_property_outputs(
     return matches
 
 
+def _explicit_schema_property_outputs(
+    *,
+    tool: str,
+    context: str,
+    catalog: OutputCatalog,
+) -> set[str]:
+    """Find non-identity physical properties named explicitly in the question."""
+    if tool == "sql":
+        source: ToolName = "sql"
+    elif tool == "graph":
+        source = "graph"
+    else:
+        raise ValueError(f"지원하지 않는 output source입니다: {tool!r}")
+    normalized_context = _normalized_term(context)
+    identity_aliases = catalog.identity_aliases_by_tool[source]
+    return {
+        alias
+        for alias, spec in catalog.by_tool[source].items()
+        if spec.calculation_type == "physical"
+        and alias not in identity_aliases
+        and not alias.endswith("Name")
+        and any(
+            (normalized := _normalized_term(term)) and normalized in normalized_context
+            for term in spec.search_terms
+        )
+    }
+
+
+def _property_is_filter_only(
+    *,
+    alias: str,
+    context: str,
+    catalog: OutputCatalog,
+) -> bool:
+    """Return true when every explicit mention is immediately used as a predicate."""
+    spec = catalog.by_tool["graph"].get(alias)
+    if spec is None:
+        return False
+    predicate_suffix = re.compile(
+        r"^\s*(?:(?:이|가|은|는)\s*[^,;?]{0,32}?"
+        r"(?:미등록|등록되지|없는|있(?:는|음)|이후|이전|이상|이하|초과|미만|"
+        r"같은|동일|아닌)|"
+        r"(?:is|are|was|were|after|before|above|below|over|under|between|"
+        r"greater\s+than|less\s+than|equal\s+to|not\s+set|missing|null)\b)",
+        flags=re.IGNORECASE,
+    )
+    mentions: list[bool] = []
+    for term in sorted(spec.search_terms, key=len, reverse=True):
+        if not term.strip():
+            continue
+        pattern = re.escape(term).replace(r"\ ", r"\s+")
+        if term[0].isascii() and term[0].isalnum():
+            pattern = r"(?<![0-9A-Za-z])" + pattern
+        if term[-1].isascii() and term[-1].isalnum():
+            pattern += r"(?![0-9A-Za-z])"
+        for match in re.finditer(pattern, context, flags=re.IGNORECASE):
+            mentions.append(bool(predicate_suffix.match(context[match.end() :])))
+    return bool(mentions) and all(mentions)
+
+
+def _graph_selected_owner_identity_outputs(
+    selected_outputs: list[str],
+    property_outputs: list[str],
+    catalog: OutputCatalog,
+) -> list[str]:
+    """Keep selected node identities that make retained properties attributable."""
+    property_owners = {
+        schema_path.partition(".")[0]
+        for alias in property_outputs
+        if (spec := catalog.by_tool["graph"].get(alias)) is not None
+        for schema_path in spec.schema_paths
+    }
+    identity_or_name_aliases = {
+        alias for pair in _IDENTITY_NAME_PAIRS for alias in pair
+    }
+    return [
+        alias
+        for alias in selected_outputs
+        if alias in identity_or_name_aliases
+        and (spec := catalog.by_tool["graph"].get(alias)) is not None
+        and any(
+            schema_path.partition(".")[0] in property_owners
+            for schema_path in spec.schema_paths
+        )
+    ]
+
+
+def _schema_location_detail_requested(
+    question: str,
+    catalog: OutputCatalog,
+) -> bool:
+    """Match location row terminology derived from the SQL output catalog."""
+    normalized_context = _normalized_term(question)
+    question_tokens = _search_tokens(question)
+    terms: list[str] = []
+    for alias in ("locationName", "shelf", "bin"):
+        spec = catalog.by_tool["sql"].get(alias)
+        if spec is None:
+            continue
+        terms.extend(spec.search_terms)
+        if alias == "locationName":
+            terms.extend(spec.owner_terms)
+
+    for term in terms:
+        normalized = _normalized_term(term)
+        if not normalized or normalized == "name":
+            continue
+        if any("가" <= character <= "힣" for character in term):
+            if normalized in normalized_context:
+                return True
+            continue
+        meaningful_tokens = _search_tokens(term) - {"name", "production"}
+        if meaningful_tokens & question_tokens:
+            return True
+    return False
+
+
 def _complete_outputs(
     outputs: list[str],
     *,
     tool: str,
     entity: object,
+    confirmed_entity: object = None,
     question: str,
     original_question: str,
     join_keys: list[str],
@@ -370,7 +789,6 @@ def _complete_outputs(
 ) -> list[str]:
     allowed = set(catalog.allowed_aliases(tool))
     normalized = list(outputs)
-    original = original_question.casefold()
     context = f"{original_question} {question}".casefold()
 
     if tool == "sql":
@@ -394,15 +812,14 @@ def _complete_outputs(
         ]
         normalized = _ordered_union(normalized)
 
-    normalized = _ordered_union(
-        normalized,
-        _owner_qualified_property_outputs(
-            tool=tool,
-            context=context,
-            catalog=catalog,
-        ),
+    owner_qualified_outputs = _owner_qualified_property_outputs(
+        tool=tool,
+        context=context,
+        catalog=catalog,
     )
+    normalized = _ordered_union(normalized, owner_qualified_outputs)
 
+    missing_alias: str | None = None
     if any(
         marker in context
         for marker in (
@@ -445,18 +862,39 @@ def _complete_outputs(
             for alias in normalized
         ]
 
-    location_detail = any(
-        token in original
-        for token in (
-            "위치",
-            "위치별",
-            "어디",
-            "작업장",
-            "창고",
-            "선반",
-            "where",
-            "shelf",
-            "bin",
+    location_question = _without_resolved_entity_name_mentions(
+        original_question, entity, confirmed_entity, catalog
+    )
+    location_context = location_question.casefold()
+    location_detail = (
+        _schema_location_detail_requested(location_question, catalog)
+        or any(
+            token in location_context
+            for token in (
+                "위치",
+                "위치별",
+                "어디",
+                "작업장",
+                "창고",
+                "선반",
+            )
+        )
+        or bool(
+            _search_tokens(location_question)
+            & {
+                "where",
+                "wherever",
+                "anywhere",
+                "somewhere",
+                "everywhere",
+                "elsewhere",
+                "whereabouts",
+                "location",
+                "locations",
+                "shelf",
+                "bin",
+                "bins",
+            }
         )
     )
     inventory_requested = any(
@@ -464,19 +902,23 @@ def _complete_outputs(
     )
     if tool == "sql" and inventory_requested:
         if location_detail:
-            normalized = [alias for alias in normalized if alias != "actualStock"]
-            normalized = _ordered_union(
-                normalized,
-                [
-                    "productId",
-                    "productName",
-                    "locationId",
-                    "locationName",
-                    "shelf",
-                    "bin",
-                    "quantity",
-                ],
-            )
+            location_outputs = [
+                "productId",
+                "productName",
+                "locationId",
+                "locationName",
+                "shelf",
+                "bin",
+                "quantity",
+            ]
+            preserve_actual_stock = "shortageQty" in normalized
+            requested_extras = [
+                alias
+                for alias in normalized
+                if (alias != "actualStock" or preserve_actual_stock)
+                and alias not in location_outputs
+            ]
+            normalized = _ordered_union(location_outputs, requested_extras)
         else:
             normalized = [
                 alias
@@ -512,13 +954,74 @@ def _complete_outputs(
     if tool == "graph" and _common_component_summary_requested(
         original_question, entity
     ):
-        normalized = [
+        summary_core = [
             "finishedProductIdA",
             "finishedProductIdB",
             "componentId",
             "componentName",
             "minDepthA",
             "minDepthB",
+        ]
+        explicit_schema_outputs = _explicit_schema_property_outputs(
+            tool=tool,
+            context=original_question,
+            catalog=catalog,
+        )
+        common_owner_qualified_outputs = _owner_qualified_property_outputs(
+            tool=tool,
+            context=original_question,
+            catalog=catalog,
+        )
+        schema_requested_candidates = [
+            alias for alias in outputs if alias in explicit_schema_outputs
+        ]
+        schema_requested_candidates = _ordered_union(
+            schema_requested_candidates,
+            common_owner_qualified_outputs,
+        )
+        schema_requested_outputs = [
+            alias
+            for alias in schema_requested_candidates
+            if not _property_is_filter_only(
+                alias=alias,
+                context=original_question,
+                catalog=catalog,
+            )
+        ]
+        common_missing_alias: str | None = None
+        if any(
+            marker in original_question.casefold()
+            for marker in (
+                "null",
+                "미등록",
+                "등록되지",
+                "비어",
+                "값이 없",
+                "not set",
+                "missing",
+            )
+        ):
+            common_missing_alias, _ = _missing_value_target(
+                tool=tool,
+                context=original_question,
+                catalog=catalog,
+            )
+        if common_missing_alias is not None:
+            schema_requested_outputs.append(common_missing_alias)
+        owner_identity_outputs = _graph_selected_owner_identity_outputs(
+            outputs,
+            schema_requested_outputs,
+            catalog,
+        )
+        schema_requested_outputs = _ordered_union(
+            owner_identity_outputs,
+            schema_requested_outputs,
+        )
+        normalized = _ordered_union(summary_core, schema_requested_outputs)
+        normalized = [
+            alias
+            for alias in normalized
+            if alias not in {"pathProductIds", "pathProductNames", "depth"}
         ]
     if "workOrderId" in normalized and "totalScrappedQty" in normalized:
         index = normalized.index("totalScrappedQty")
@@ -778,6 +1281,7 @@ def make_plan_outputs_node(
                     selected,
                     tool=tool,
                     entity=state.get("entity"),
+                    confirmed_entity=state.get("confirmed_entity"),
                     question=route_subquery["question"],
                     original_question=state["query"],
                     join_keys=route_subquery["joinKeys"],

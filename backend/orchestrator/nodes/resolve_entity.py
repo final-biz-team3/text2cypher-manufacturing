@@ -540,6 +540,7 @@ def make_resolve_entity_node(
             state.get("confirmed_entity")
         )
         valid_confirmed: list[dict] = []
+        valid_confirmed_types: set[str] = set()
         for candidate_entity in raw_confirmed_entities:
             config = _confirmed_entity_config(candidate_entity, entity_types)
             if config is not None and await _confirmed_entity_exists(
@@ -552,6 +553,7 @@ def make_resolve_entity_node(
                     candidate_entity,
                 )
                 valid_confirmed.append(candidate_entity)
+                valid_confirmed_types.add(config.entity_type)
             else:
                 logger.warning(
                     "resolve_entity: query=%r -> confirmed_entity=%r 검증 실패 "
@@ -590,7 +592,7 @@ def make_resolve_entity_node(
             )
             return {"entity": None}
 
-        lookups: list[tuple[str, str, NamedEntityType, bool]] = []
+        lookups: list[tuple[str, str, NamedEntityType, bool, bool]] = []
         for entity_type, entity_name in extractions:
             if _is_non_name_identifier(entity_name, identifier_only_aliases):
                 continue
@@ -633,9 +635,8 @@ def make_resolve_entity_node(
                     entity_type,
                     lookup_name,
                     config,
-                    had_type_label
-                    and _is_generic_descriptor(lookup_name)
-                    or _is_type_alias_fragment(lookup_name, config),
+                    had_type_label and _is_generic_descriptor(lookup_name),
+                    _is_type_alias_fragment(lookup_name, config),
                 )
             )
 
@@ -650,7 +651,7 @@ def make_resolve_entity_node(
         found_entities = await asyncio.gather(
             *(
                 _find_entity_by_name(config, name, pool)
-                for _, name, config, _ in lookups
+                for _, name, config, _, _ in lookups
             )
         )
         relation_products = await _find_product_relation_endpoints(
@@ -680,11 +681,15 @@ def make_resolve_entity_node(
             )
 
         resolved: list[dict] = []
+        explicit_lookup_count = sum(
+            not status_descriptor for _, _, _, status_descriptor, _ in lookups
+        )
         for index, (
             entity_type,
             entity_name,
             _config,
-            generic_descriptor,
+            status_descriptor,
+            type_alias_fragment,
         ) in enumerate(lookups):
             entity = found_entities[index]
             if entity is None:
@@ -692,7 +697,7 @@ def make_resolve_entity_node(
                     if leading_fallback not in resolved:
                         resolved.append(leading_fallback)
                     continue
-                if generic_descriptor:
+                if status_descriptor:
                     continue
                 candidates = candidates_by_index[index]
                 confirmed_candidate = next(
@@ -706,6 +711,18 @@ def make_resolve_entity_node(
                 if confirmed_candidate is not None:
                     if confirmed_candidate not in resolved:
                         resolved.append(confirmed_candidate)
+                    continue
+                if type_alias_fragment and entity_type in valid_confirmed_types:
+                    continue
+                has_other_concrete_entity = bool(
+                    any(
+                        confirmed_type != entity_type
+                        for confirmed_type in valid_confirmed_types
+                    )
+                    or relation_products
+                    or explicit_lookup_count > 1
+                )
+                if type_alias_fragment and not has_other_concrete_entity:
                     continue
                 if candidates:
                     logger.info(

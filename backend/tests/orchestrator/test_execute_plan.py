@@ -201,6 +201,43 @@ async def test_execute_plan_passes_subquery_context_and_aligned_bindings() -> No
     assert "subquery_results" not in result
 
 
+async def test_execute_plan_fails_safely_for_invalid_input_binding_row() -> None:
+    graph_agent = _FakeAgent(_result("MATCH path", [{"componentName": "missing id"}]))
+    sql_agent = _FakeAgent(_result("SELECT stock", [{"componentId": 7}]))
+
+    result = await _node(sql_agent, graph_agent)(
+        {
+            "query": "복합 질문",
+            "subqueries": [
+                _step(
+                    "graph_components",
+                    "graph",
+                    "부품을 찾는다.",
+                    outputs=["componentId"],
+                ),
+                _step(
+                    "sql_stock",
+                    "sql",
+                    "재고를 찾는다.",
+                    depends_on=["graph_components"],
+                    bindings={"componentIds": "graph_components.componentId"},
+                ),
+            ],
+        }
+    )
+
+    assert sql_agent.calls == []
+    assert result["sql_query"] is None
+    assert result["sql_result"] == {
+        "result": None,
+        "error": "하위 질의 입력 계획이 유효하지 않아 실행하지 않았습니다.",
+        "attempts": [],
+        "empty_reason": None,
+        "truncated": False,
+    }
+    assert "componentId" not in result["sql_result"]["error"]
+
+
 async def test_execute_plan_serializes_sql_scalars_for_graph_generation() -> None:
     """SQL의 Decimal·날짜 binding이 Cypher 생성 프롬프트까지 안전하게 전달된다."""
     sql_agent = _FakeAgent(

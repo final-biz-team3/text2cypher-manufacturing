@@ -1,6 +1,7 @@
 """검증된 하위 질의를 의존성 wave 순서로 실행한다."""
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -8,6 +9,8 @@ from orchestrator.bindings import collect_input_bindings
 from orchestrator.planning import Subquery
 from orchestrator.state import OrchestratorState
 from orchestrator.subgraphs.retry_agent import INCONCLUSIVE, NO_DATA
+
+logger = logging.getLogger(__name__)
 
 _TOOL_OUTPUT_FIELDS = {
     "sql": ("sql_query", "sql_result"),
@@ -44,6 +47,16 @@ def _dependency_empty(empty_reasons: list[str | None]) -> dict[str, Any]:
         "error": None,
         "attempts": [],
         "empty_reason": empty_reason,
+        "truncated": False,
+    }
+
+
+def _input_binding_failure() -> dict[str, Any]:
+    return {
+        "result": None,
+        "error": "하위 질의 입력 계획이 유효하지 않아 실행하지 않았습니다.",
+        "attempts": [],
+        "empty_reason": None,
         "truncated": False,
     }
 
@@ -134,7 +147,15 @@ def make_execute_plan_node(
                 )
                 return query_field, result_field, None, summary
 
-            input_bindings = _extract_input_bindings(subquery, outcomes)
+            try:
+                input_bindings = _extract_input_bindings(subquery, outcomes)
+            except ValueError as exc:
+                logger.error(
+                    "input binding 검증 실패: subquery_id=%r error=%s",
+                    subquery["id"],
+                    exc,
+                )
+                return query_field, result_field, None, _input_binding_failure()
             result = await agents[subquery["tool"]].ainvoke(
                 _initial_state(
                     subquery=subquery,
