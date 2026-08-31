@@ -51,7 +51,7 @@ def _dependency_empty(empty_reasons: list[str | None]) -> dict[str, Any]:
 def _extract_input_bindings(
     subquery: Subquery, outcomes: dict[str, dict[str, Any]]
 ) -> dict[str, list[Any]]:
-    """선행 결과에서 최초 등장 순서로 고유 binding 배열을 만든다."""
+    """선행 결과 행의 순서와 중복을 그대로 binding 배열에 투영한다."""
     return collect_input_bindings(
         subquery.get("inputBindings", {}),
         {

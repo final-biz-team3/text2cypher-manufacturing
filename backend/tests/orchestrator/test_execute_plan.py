@@ -144,7 +144,7 @@ async def test_execute_plan_runs_independent_subqueries_concurrently() -> None:
 
 
 async def test_execute_plan_passes_subquery_context_and_aligned_bindings() -> None:
-    """하위 질문·entity·alias와 최초 등장 순서의 고유 binding을 전달한다."""
+    """동일 dependency의 binding 배열은 행 순서와 중복을 함께 보존한다."""
     graph_agent = _FakeAgent(
         _result(
             "MATCH path",
@@ -193,8 +193,8 @@ async def test_execute_plan_passes_subquery_context_and_aligned_bindings() -> No
     assert sql_agent.calls[0]["entity"] is None
     assert sql_agent.calls[0]["required_outputs"] == ["componentId"]
     assert sql_agent.calls[0]["input_bindings"] == {
-        "componentIds": [7, 9],
-        "supplierIds": [2, 3],
+        "componentIds": [7, 7, 9],
+        "supplierIds": [2, 3, 3],
     }
     assert result["cypher_query"] == "MATCH path"
     assert result["sql_query"] == "SELECT stock"
@@ -265,7 +265,7 @@ async def test_execute_plan_serializes_sql_scalars_for_graph_generation() -> Non
         if message["role"] == "user"
     )
     assert json.loads(graph_user_message)["inputBindings"] == {
-        "prices": ["12.50"],
+        "prices": ["12.50", "12.50"],
         "asOfDates": ["2026-08-28", "2026-08-29"],
     }
     assert result["cypher_query"] == "MATCH (p:Product) RETURN p"
