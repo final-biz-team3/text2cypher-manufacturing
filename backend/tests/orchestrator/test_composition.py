@@ -572,7 +572,7 @@ def _graph_shortage_row(
     component_id: int,
     component_name: str,
     path: list[int],
-    quantities: list[int | float],
+    quantities: list[int | float | str],
     *,
     supplier_id: int | None = None,
     supplier_name: str | None = None,
@@ -655,6 +655,156 @@ def test_bom_shortage_deduplicates_supplier_paths_and_sums_distinct_paths() -> N
     assert (graph_rows, sql_rows) == originals
 
 
+def test_bom_shortage_counts_duplicate_path_and_supplier_once() -> None:
+    duplicate = _graph_shortage_row(
+        10,
+        "External",
+        [1, 10],
+        [2],
+        supplier_id=1,
+        supplier_name="Only",
+    )
+
+    result = compose_results(
+        _shortage_steps(),
+        {
+            "graph": _source([duplicate, deepcopy(duplicate)]),
+            "sql": _source([{"componentId": 10, "makeFlag": False, "actualStock": 0}]),
+        },
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["error"] is None
+    assert result["rows"][0]["requiredQty"] == Decimal("20.000000")
+    assert result["rows"][0]["suppliers"] == [{"supplierId": 1, "supplierName": "Only"}]
+
+
+def test_bom_shortage_merges_supplier_fan_out_without_recounting_path() -> None:
+    graph_rows = [
+        _graph_shortage_row(
+            10,
+            "External",
+            [1, 10],
+            [2],
+            supplier_id=1,
+            supplier_name="First",
+        ),
+        _graph_shortage_row(
+            10,
+            "External",
+            [1, 10],
+            ["2.000000"],
+            supplier_id=2,
+            supplier_name="Second",
+        ),
+        _graph_shortage_row(10, "External", [1, 10], [2.0]),
+    ]
+
+    result = compose_results(
+        _shortage_steps(),
+        {
+            "graph": _source(graph_rows),
+            "sql": _source([{"componentId": 10, "makeFlag": False, "actualStock": 0}]),
+        },
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["error"] is None
+    assert result["rows"][0]["requiredQty"] == Decimal("20.000000")
+    assert result["rows"][0]["suppliers"] == [
+        {"supplierId": 1, "supplierName": "First"},
+        {"supplierId": 2, "supplierName": "Second"},
+    ]
+
+
+def test_bom_shortage_rejects_quantity_conflict_on_same_physical_path() -> None:
+    graph_rows = [
+        _graph_shortage_row(10, "External", [1, 10], [2]),
+        _graph_shortage_row(10, "External", [1, 10], [3]),
+    ]
+    originals = deepcopy(graph_rows)
+
+    result = compose_results(
+        _shortage_steps(),
+        {
+            "graph": _source(graph_rows),
+            "sql": _source([{"componentId": 10, "makeFlag": False, "actualStock": 0}]),
+        },
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["rows"] == []
+    assert "동일 BOM 경로에 서로 다른 quantityPerAssembly가 있습니다" in str(
+        result["error"]
+    )
+    assert graph_rows == originals
+
+
+def test_bom_shortage_multiplies_before_normalizing_tiny_quantity() -> None:
+    graph_rows = [
+        _graph_shortage_row(10, "External", [1, 10], ["0.00000006"]),
+    ]
+
+    result = compose_results(
+        _shortage_steps(),
+        {
+            "graph": _source(graph_rows),
+            "sql": _source([{"componentId": 10, "makeFlag": False, "actualStock": 0}]),
+        },
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["error"] is None
+    assert result["rows"][0]["requiredQty"] == Decimal("0.000001")
+    assert result["rows"][0]["shortageQty"] == Decimal("0.000001")
+
+
+def test_bom_shortage_does_not_round_away_path_quantity_conflict() -> None:
+    graph_rows = [
+        _graph_shortage_row(10, "External", [1, 10], ["0.00000001"]),
+        _graph_shortage_row(10, "External", [1, 10], ["0.00000002"]),
+    ]
+
+    result = compose_results(
+        _shortage_steps(),
+        {
+            "graph": _source(graph_rows),
+            "sql": _source([{"componentId": 10, "makeFlag": False, "actualStock": 0}]),
+        },
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["rows"] == []
+    assert "동일 BOM 경로에 서로 다른 quantityPerAssembly가 있습니다" in str(
+        result["error"]
+    )
+
+
+def test_bom_shortage_sums_distinct_physical_paths() -> None:
+    graph_rows = [
+        _graph_shortage_row(10, "External", [1, 2, 10], [2, 3]),
+        _graph_shortage_row(10, "External", [1, 3, 10], [1, 4]),
+    ]
+
+    result = compose_results(
+        _shortage_steps(),
+        {
+            "graph": _source(graph_rows),
+            "sql": _source([{"componentId": 10, "makeFlag": False, "actualStock": 0}]),
+        },
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["error"] is None
+    assert result["rows"][0]["requiredQty"] == Decimal("100.000000")
+
+
 def test_bom_shortage_validates_all_rows_before_applying_row_limit() -> None:
     graph_rows = [
         _graph_shortage_row(10, "First", [1, 10], [2]),
@@ -675,6 +825,30 @@ def test_bom_shortage_validates_all_rows_before_applying_row_limit() -> None:
 
     assert result["rows"] == []
     assert "quantityPerAssembly" in str(result["error"])
+
+
+def test_bom_shortage_detects_path_conflict_after_output_row_limit() -> None:
+    graph_rows = [
+        _graph_shortage_row(10, "First", [1, 10], [2]),
+        _graph_shortage_row(20, "Second", [1, 20], [3]),
+        _graph_shortage_row(20, "Second", [1, 20], [4]),
+    ]
+    sql_rows = [
+        {"componentId": 10, "makeFlag": False, "actualStock": 0},
+        {"componentId": 20, "makeFlag": False, "actualStock": 0},
+    ]
+
+    result = compose_results(
+        _shortage_steps(),
+        {"graph": _source(graph_rows), "sql": _source(sql_rows)},
+        row_limit=1,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["rows"] == []
+    assert "동일 BOM 경로에 서로 다른 quantityPerAssembly가 있습니다" in str(
+        result["error"]
+    )
 
 
 @pytest.mark.parametrize(
