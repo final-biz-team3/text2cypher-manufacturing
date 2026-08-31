@@ -4,6 +4,8 @@ import cypher from 'react-syntax-highlighter/dist/esm/languages/prism/cypher'
 import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Button } from '@/components/ui/button'
+import { SelfCorrectionTimeline } from '@/components/result/SelfCorrectionTimeline'
+import type { SelfCorrectionStep } from '@/types/query'
 
 SyntaxHighlighter.registerLanguage('sql', sql)
 SyntaxHighlighter.registerLanguage('cypher', cypher)
@@ -16,17 +18,22 @@ interface GeneratedQuery {
 
 interface GeneratedQueryPanelProps {
   queries: GeneratedQuery[]
+  sqlAttempts: SelfCorrectionStep[]
+  cypherAttempts: SelfCorrectionStep[]
   collapsed: boolean
   onToggleCollapsed: () => void
 }
 
-// 생성된 SQL/Cypher 쿼리를 보여주고 복사할 수 있는 우측 슬라이드 패널.
+// 자기수정 타임라인(위) + 생성된 SQL/Cypher 쿼리(아래)를 함께 보여주는 우측 슬라이드 패널.
 // tool_plan에 sql/graph가 모두 있으면 둘 다 나열한다.
 export function GeneratedQueryPanel({
   queries,
+  sqlAttempts,
+  cypherAttempts,
   collapsed,
   onToggleCollapsed,
 }: GeneratedQueryPanelProps) {
+  const hasTimeline = sqlAttempts.length > 0 || cypherAttempts.length > 0
   return (
     <aside
       className={`flex shrink-0 flex-col border-l border-border bg-panel transition-[width] duration-200 ${
@@ -50,14 +57,39 @@ export function GeneratedQueryPanel({
         </div>
       ) : (
         <div className="flex flex-1 flex-col overflow-y-auto">
-          {queries.map((item) => (
-            <QueryBlock
-              key={item.label}
-              label={item.label}
-              language={item.language}
-              query={item.query}
-            />
-          ))}
+          {hasTimeline ? (
+            <div className="flex flex-col gap-3 border-b border-border p-4">
+              <p className="text-[12.5px] font-semibold text-text">자기수정 타임라인</p>
+              {sqlAttempts.length > 0 ? (
+                <div>
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
+                    SQL 시도
+                  </p>
+                  <SelfCorrectionTimeline steps={sqlAttempts} />
+                </div>
+              ) : null}
+              {cypherAttempts.length > 0 ? (
+                <div>
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase text-text-faint">
+                    Cypher 시도
+                  </p>
+                  <SelfCorrectionTimeline steps={cypherAttempts} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {queries.length > 0 ? (
+            <div className="flex flex-col gap-3 p-4">
+              {queries.map((item) => (
+                <QueryBlock
+                  key={item.label}
+                  label={item.label}
+                  language={item.language}
+                  query={item.query}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
     </aside>
@@ -89,7 +121,7 @@ function QueryBlock({ label, language, query }: GeneratedQuery) {
   }
 
   return (
-    <div className="flex flex-col border-b border-border">
+    <div className="flex flex-col overflow-hidden rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-code-text/10 bg-code px-3 py-2">
         <span className="text-[11px] font-semibold tracking-wide text-code-text/70 uppercase">
           {label}
@@ -104,11 +136,16 @@ function QueryBlock({ label, language, query }: GeneratedQuery) {
           {copied ? '복사됨' : '복사'}
         </Button>
       </div>
-      <div className="overflow-x-auto bg-code">
+      {/* react-syntax-highlighter는 showLineNumbers+wrapLongLines를 함께 쓰면 테마의
+          code[class*="language-"] 기본 스타일(white-space: pre)이 wrapLongLines가
+          주려는 pre-wrap을 인라인 스타일 병합 순서상 다시 덮어써 줄바꿈이 안 먹는다
+          (react-syntax-highlighter#396류 이슈) - !important로 강제한다. */}
+      <div className="query-code-block bg-code">
         <SyntaxHighlighter
           language={language}
           style={vscDarkPlus}
           showLineNumbers
+          wrapLongLines
           customStyle={{
             margin: 0,
             padding: '0.75rem',
