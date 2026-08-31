@@ -4,12 +4,13 @@ from datetime import datetime
 from typing import Any
 
 from core.auth import CurrentUser
-from core.history import list_history, save_conversation
+from core.history import delete_conversation, list_history, save_conversation
 
 
 class _FakeCursor:
-    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+    def __init__(self, rows: list[tuple[Any, ...]], rowcount: int = 0) -> None:
         self._rows = rows
+        self.rowcount = rowcount
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
@@ -21,6 +22,8 @@ class _FakeConnection:
 
     async def execute(self, query: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
         self._pool.statements.append((query, params))
+        if query.startswith("DELETE"):
+            return _FakeCursor([], rowcount=self._pool.delete_rowcount)
         return _FakeCursor(self._pool.rows)
 
     async def commit(self) -> None:
@@ -39,10 +42,15 @@ class _FakeConnectionContext:
 
 
 class _FakePool:
-    def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
+    def __init__(
+        self,
+        rows: list[tuple[Any, ...]] | None = None,
+        delete_rowcount: int = 0,
+    ) -> None:
         self.statements: list[tuple[str, tuple[Any, ...]]] = []
         self.committed = False
         self.rows = rows or []
+        self.delete_rowcount = delete_rowcount
 
     def connection(self, timeout: float | None = None) -> _FakeConnectionContext:
         return _FakeConnectionContext(self)
@@ -112,3 +120,44 @@ async def test_list_history_returns_all_rows_for_admin() -> None:
     query, params = pool.statements[0]
     assert "WHERE" not in query
     assert params == ()
+
+
+async def test_delete_conversation_deletes_own_row_for_non_admin() -> None:
+    pool = _FakePool(delete_rowcount=1)
+
+    deleted = await delete_conversation(
+        pool, CurrentUser(username="kim.quality", role="user"), 42
+    )
+
+    query, params = pool.statements[0]
+    assert "DELETE FROM app.conversation_history" in query
+    assert "WHERE id = %s AND username = %s" in query
+    assert params == (42, "kim.quality")
+    assert pool.committed is True
+    assert deleted is True
+
+
+async def test_delete_conversation_returns_false_when_not_found() -> None:
+    pool = _FakePool(delete_rowcount=0)
+
+    deleted = await delete_conversation(
+        pool, CurrentUser(username="kim.quality", role="user"), 42
+    )
+
+    assert deleted is False
+
+
+async def test_delete_conversation_admin_deletes_any_row_without_username_filter() -> (
+    None
+):
+    pool = _FakePool(delete_rowcount=1)
+
+    deleted = await delete_conversation(
+        pool, CurrentUser(username="park.admin", role="admin"), 7
+    )
+
+    query, params = pool.statements[0]
+    assert "WHERE id = %s" in query
+    assert "username" not in query
+    assert params == (7,)
+    assert deleted is True
