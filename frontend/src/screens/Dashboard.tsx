@@ -13,6 +13,7 @@ import { useHealthStore } from '@/store/useHealthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
+import { formatQueryError } from '@/lib/formatQueryError'
 import type { AmbiguousCandidate, ChatResponse, HistoryEntry } from '@/lib/schemas'
 import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
@@ -56,19 +57,24 @@ function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
   }
 }
 
-// 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다
+// 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다.
+// 실패 다음에 또 다른 시도가 이어졌다면(=실제로 재시도됨) "다시 시도합니다."를 덧붙인다.
 function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrectionStep[] {
-  return attempts.map((attempt, index) => ({
-    id: `${prefix}-${index}`,
-    status: attempt.error === null ? 'success' : 'fail',
-    title: `시도 ${index + 1}`,
-    detail:
+  return attempts.map((attempt, index) => {
+    const retried = attempt.error !== null && index < attempts.length - 1
+    const detail =
       attempt.error === null
         ? '성공'
         : attempt.error === 'EMPTY_RESULT'
           ? '결과 없음'
-          : attempt.error,
-  }))
+          : formatQueryError(attempt.error)
+    return {
+      id: `${prefix}-${index}`,
+      status: attempt.error === null ? 'success' : 'fail',
+      title: `시도 ${index + 1}`,
+      detail: retried ? `${detail} 다시 시도합니다.` : detail,
+    }
+  })
 }
 
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
