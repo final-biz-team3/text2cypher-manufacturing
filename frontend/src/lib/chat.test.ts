@@ -17,10 +17,14 @@ describe('sendChatQuery', () => {
     const result = await sendChatQuery('재고가 부족한 제품을 알려줘')
 
     expect(result).toEqual(data)
-    expect(postMock).toHaveBeenCalledWith('/chat', {
-      query: '재고가 부족한 제품을 알려줘',
-      confirmed_entity: null,
-    })
+    expect(postMock).toHaveBeenCalledWith(
+      '/chat',
+      {
+        query: '재고가 부족한 제품을 알려줘',
+        confirmed_entity: null,
+      },
+      { timeout: 60_000 },
+    )
   })
 
   it('sends confirmed_entity when provided', async () => {
@@ -28,10 +32,14 @@ describe('sendChatQuery', () => {
 
     await sendChatQuery('q', { productId: 680 })
 
-    expect(postMock).toHaveBeenCalledWith('/chat', {
-      query: 'q',
-      confirmed_entity: { productId: 680 },
-    })
+    expect(postMock).toHaveBeenCalledWith(
+      '/chat',
+      {
+        query: 'q',
+        confirmed_entity: { productId: 680 },
+      },
+      { timeout: 60_000 },
+    )
   })
 
   it('throws ClarificationNeededError when the response is ENTITY_AMBIGUOUS', async () => {

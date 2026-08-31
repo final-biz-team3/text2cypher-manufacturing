@@ -10,6 +10,12 @@ import {
 
 export class ChatError extends Error {}
 
+const configuredChatTimeout = Number(import.meta.env.VITE_CHAT_TIMEOUT_MS ?? 60_000)
+const CHAT_TIMEOUT_MS =
+  Number.isFinite(configuredChatTimeout) && configuredChatTimeout > 0
+    ? configuredChatTimeout
+    : 60_000
+
 // 엔티티 이름이 모호해 사용자가 후보 중 하나를 골라야 할 때 던진다
 export class ClarificationNeededError extends Error {
   candidates: AmbiguousCandidate[]
@@ -29,7 +35,11 @@ export async function sendChatQuery(
 ): Promise<ChatResponse> {
   let data: unknown
   try {
-    const res = await api.post('/chat', { query, confirmed_entity: confirmedEntity ?? null })
+    const res = await api.post(
+      '/chat',
+      { query, confirmed_entity: confirmedEntity ?? null },
+      { timeout: CHAT_TIMEOUT_MS },
+    )
     data = res.data
   } catch (err) {
     const axiosErr = err as AxiosError
