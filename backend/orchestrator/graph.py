@@ -16,6 +16,7 @@ from orchestrator.execution.sql_executor import execute_sql
 from orchestrator.nodes.compose_results import make_compose_results_node
 from orchestrator.nodes.execute_plan import make_execute_plan_node
 from orchestrator.nodes.generate_answer import make_generate_answer_node
+from orchestrator.nodes.guard_request import make_guard_request_node
 from orchestrator.nodes.plan_outputs import make_plan_outputs_node
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import make_route_query_node
@@ -43,7 +44,7 @@ def _load_schema_context() -> tuple[SqlSchema, str, GraphSchema, str]:
 
 
 # OpenAI 클라이언트/PostgreSQL 풀을 주입받아 컴파일된 그래프를 반환
-# START -> resolve_entity -> route_query -> plan_outputs -> execute_plan
+# START -> guard_request -> resolve_entity -> route_query -> plan_outputs -> execute_plan
 # -> compose_results -> generate_answer -> END
 def build_orchestrator_graph(
     openai_client: Any,
@@ -72,6 +73,7 @@ def build_orchestrator_graph(
     )
 
     graph = StateGraph(OrchestratorState)
+    graph.add_node("guard_request", cast(Any, make_guard_request_node()))
     # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다
     # (async Callable의 런타임 시그니처는 StateGraph 노드 계약과 일치한다).
     graph.add_node(
@@ -120,7 +122,14 @@ def build_orchestrator_graph(
         "generate_answer",
         cast(Any, make_generate_answer_node(openai_client)),
     )
-    graph.add_edge(START, "resolve_entity")
+    graph.add_edge(START, "guard_request")
+    graph.add_conditional_edges(
+        "guard_request",
+        lambda state: (
+            "blocked" if state.get("query_failure") is not None else "allowed"
+        ),
+        {"blocked": "generate_answer", "allowed": "resolve_entity"},
+    )
     graph.add_edge("resolve_entity", "route_query")
     graph.add_edge("route_query", "plan_outputs")
     graph.add_edge("plan_outputs", "execute_plan")

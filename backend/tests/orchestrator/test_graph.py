@@ -17,10 +17,18 @@ load_dotenv()
 from core.postgres import bootstrap_postgres, get_pool, open_pool  # noqa: E402
 from orchestrator.graph import build_orchestrator_graph  # noqa: E402
 from tests.mocks.openai import (  # noqa: E402
+    MockChatCompletion,
     MockOpenAIClient,
     make_content_response,
     make_tool_call_response,
 )
+
+_ANSWER = "조회 결과는 **504건**이며, 주요 내용을 정리했습니다."
+
+
+def _answering_client(*responses: MockChatCompletion) -> MockOpenAIClient:
+    return MockOpenAIClient(*responses, make_content_response(_ANSWER))
+
 
 # execute_cypher가 Neo4j reader 드라이버 싱글턴을 모듈 레벨 전역으로 갖고
 # 있어서, 테스트 함수마다 기본(function scope)으로 다른 이벤트 루프를 쓰면
@@ -42,7 +50,7 @@ async def postgres_pool():
 
 async def test_graph_resolves_entity_then_runs_sql_agent_once(postgres_pool) -> None:
     """제품명이 있는 SQL형 질의는 entity 확정 후 sql_agent가 실제 DB 결과를 받는다."""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_tool_call_response(
             "extract_entity",
             {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
@@ -93,14 +101,14 @@ async def test_graph_resolves_entity_then_runs_sql_agent_once(postgres_pool) -> 
         "total_count": 1,
         "truncated": False,
     }
-    assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
-    assert len(openai_client.calls) == 4
+    assert result["final_answer"] == _ANSWER
+    assert len(openai_client.calls) == 5
 
 
 async def test_graph_routes_to_graph_and_runs_cypher_agent_once(postgres_pool) -> None:
     """부품 사용처를 묻는 질의는 entity 확정 후 graph로 라우팅되고 cypher_agent가
     실제 Neo4j 결과를 받는다."""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_tool_call_response(
             "extract_entity", {"entityType": "product", "entityName": "Paint - Black"}
         ),
@@ -137,7 +145,7 @@ async def test_graph_routes_to_graph_and_runs_cypher_agent_once(postgres_pool) -
     assert any(row["finishedProductId"] == 680 for row in graph_rows)
     assert result["composed_result"]["mode"] == "single"
     assert result["composed_result"]["rows"] == graph_rows
-    assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
+    assert result["final_answer"] == _ANSWER
 
 
 async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
@@ -145,7 +153,7 @@ async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
 ) -> None:
     """tool_plan이 ["sql", "graph"] Hybrid일 때 sql_agent와 cypher_agent가 각각
     독립적으로 실행되고, 한쪽의 attempts/error가 다른 쪽으로 섞이지 않는다."""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_tool_call_response(
             "extract_entity",
             {"entityType": "product", "entityName": "Touring-1000 Yellow, 54"},
@@ -227,14 +235,14 @@ async def test_graph_runs_both_agents_independently_for_hybrid_tool_plan(
         + len(result["graph_result"]["result"]),
         "truncated": False,
     }
-    assert result["final_answer"] == f"COMPOSED: {result['composed_result']}"
+    assert result["final_answer"] == _ANSWER
 
-    assert len(openai_client.calls) == 6
+    assert len(openai_client.calls) == 7
 
 
 async def test_graph_builds_final_answer_from_sql_result(postgres_pool) -> None:
     """특정 제품을 지칭하지 않는 집계 질의도 sql_agent를 거쳐 final_answer가 채워진다."""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_content_response("[]"),
         make_content_response('["sql"]'),
         make_content_response('{"requiredOutputs":["productCount"]}'),
@@ -253,8 +261,7 @@ async def test_graph_builds_final_answer_from_sql_result(postgres_pool) -> None:
     )
     assert result["sql_result"]["error"] is None
     assert result["sql_result"]["result"] == [{"productCount": 504}]
-    assert result["final_answer"] is not None
-    assert "504" in result["final_answer"]
+    assert result["final_answer"] == _ANSWER
 
 
 async def test_graph_composes_canonical_rq18_many_to_one(postgres_pool) -> None:
@@ -304,7 +311,7 @@ LEFT JOIN production.productinventory AS i ON i.productid = p.productid
 WHERE p.productid IN (530)
 GROUP BY p.productid
 ORDER BY p.productid"""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_tool_call_response(
             "extract_entity",
             {"entityType": "supplier", "entityName": "Allenson Cycles"},
@@ -360,7 +367,7 @@ ORDER BY p.productid"""
         {key: value for key, value in row.items() if key != "actualStock"}
         for row in composed["rows"]
     ] == graph_rows
-    assert result["final_answer"] == f"COMPOSED: {composed}"
+    assert result["final_answer"] == _ANSWER
 
 
 async def test_graph_composes_canonical_rq19_bom_shortage(postgres_pool) -> None:
@@ -417,7 +424,7 @@ WHERE p.productid IN (
 )
 GROUP BY p.productid, p.makeflag
 ORDER BY p.productid"""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_tool_call_response(
             "extract_entity",
             {
@@ -468,7 +475,7 @@ ORDER BY p.productid"""
             ],
         }
     ]
-    assert result["final_answer"] == f"COMPOSED: {composed}"
+    assert result["final_answer"] == _ANSWER
 
 
 async def test_graph_composes_canonical_rq20_one_to_many(postgres_pool) -> None:
@@ -515,7 +522,7 @@ RETURN workOrder.workOrderId AS workOrderId,
   location.locationId AS locationId,
   location.name AS locationName
 ORDER BY sequence, routingOperationKey"""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_content_response("[]"),
         make_content_response(route_plan),
         make_content_response(
@@ -560,4 +567,4 @@ ORDER BY sequence, routingOperationKey"""
         all(row[key] == value for key, value in sql_fact.items())
         for row in composed["rows"]
     )
-    assert result["final_answer"] == f"COMPOSED: {composed}"
+    assert result["final_answer"] == _ANSWER

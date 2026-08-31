@@ -1,7 +1,9 @@
 import json
 import logging
 import os
-from collections.abc import Callable
+import re
+from collections import Counter
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
@@ -14,6 +16,49 @@ from orchestrator.planning import (
 from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
+
+_NUMBER_LITERAL = re.compile(r"(?<![A-Za-z0-9])[-+]?\d+(?:[.,]\d+)*(?![A-Za-z0-9])")
+
+
+def _numeric_literal_counts(value: str) -> Counter[str]:
+    return Counter(
+        match.group(0).replace(",", "").removeprefix("+")
+        for match in _NUMBER_LITERAL.finditer(value)
+    )
+
+
+def _entity_numbers_mentioned_in_query(
+    query: str, entity: object | None
+) -> Counter[str]:
+    """질문에 실제 이름 문자열로 등장한 entity 숫자만 한 번 제외한다."""
+    values: list[object]
+    if isinstance(entity, list):
+        values = entity
+    else:
+        values = [entity]
+    counts: Counter[str] = Counter()
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        for field_value in value.values():
+            if isinstance(field_value, str) and field_value and field_value in query:
+                counts.update(_numeric_literal_counts(field_value))
+    return counts
+
+
+def _validate_numeric_condition_preservation(
+    query: str, entity: object | None, plan: Mapping[str, Any]
+) -> None:
+    """entity 이름을 제외한 원문 숫자가 하위 질문에서 사라지면 fail-closed한다."""
+    required = _numeric_literal_counts(query)
+    required.subtract(_entity_numbers_mentioned_in_query(query, entity))
+    required = +required
+    planned_text = " ".join(
+        str(subquery.get("question", "")) for subquery in plan.get("subqueries", [])
+    )
+    missing = required - _numeric_literal_counts(planned_text)
+    if missing:
+        raise ValueError("원본 질문의 숫자 조건이 하위 질의에서 누락되었습니다.")
 
 
 def _recover_tool_plan(raw_response: str) -> list[str] | None:
@@ -120,6 +165,7 @@ A: {"tool_plan":["graph","sql"],"subqueries":[{"id":"graph_supplier_impact","too
   완제품이 아니라 직접 공급 부품의 componentId 하나만 전달한다.
 - tool_plan은 실제 의존 실행 순서로 쓰고 각 도구는 한 번만 포함한다.
 - resultTransform은 위 부족량 계산 계약에 정확히 해당할 때만 bom_shortage_v1을 사용하고, 나머지는 null이다.
+- 원본 질문의 필터, 비교 조건, 수량, 기간, 상위 N 같은 숫자 조건을 하위 질문에 빠짐없이 그대로 보존한다.
 """
 
 
@@ -170,6 +216,9 @@ def make_route_query_node(
                     # 누락되면 production 가용성을 위해 기존 deterministic
                     # recovery를 적용하되 rawRouteDraft에는 원문을 남긴다.
                     recover_missing_binding_join_keys=attempt > 0,
+                )
+                _validate_numeric_condition_preservation(
+                    state["query"], state.get("entity"), plan
                 )
                 raw_route_draft = (
                     raw_document if isinstance(raw_document, dict) else None
