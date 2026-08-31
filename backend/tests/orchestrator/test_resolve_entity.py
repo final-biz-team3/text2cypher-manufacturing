@@ -40,6 +40,41 @@ def _graph_schema() -> GraphSchema:
                         "name": {"type": "STRING", "sourceColumn": "name"},
                     },
                 },
+                "ScrapReason": {
+                    "uniqueKey": "scrapReasonId",
+                    "source": {"schema": "production", "table": "scrapreason"},
+                    "aliases": ["폐기 사유", "폐기사유"],
+                    "properties": {
+                        "scrapReasonId": {
+                            "type": "INTEGER",
+                            "sourceColumn": "scrapreasonid",
+                        },
+                        "name": {"type": "STRING", "sourceColumn": "name"},
+                    },
+                },
+                "Location": {
+                    "uniqueKey": "locationId",
+                    "source": {"schema": "production", "table": "location"},
+                    "aliases": ["작업장"],
+                    "properties": {
+                        "locationId": {
+                            "type": "INTEGER",
+                            "sourceColumn": "locationid",
+                        },
+                        "name": {"type": "STRING", "sourceColumn": "name"},
+                    },
+                },
+                "WorkOrder": {
+                    "uniqueKey": "workOrderId",
+                    "source": {"schema": "production", "table": "workorder"},
+                    "aliases": ["작업지시"],
+                    "properties": {
+                        "workOrderId": {
+                            "type": "INTEGER",
+                            "sourceColumn": "workorderid",
+                        }
+                    },
+                },
             },
             "relationships": {},
         }
@@ -144,11 +179,316 @@ async def test_resolve_entity_returns_entity_when_product_category_found() -> No
             "productCategoryName": "Components",
         }
     }
+    prompt = openai_client.calls[0]["messages"][0]["content"]
+    assert "'Fasteners 제품 몇 개'" in prompt
     assert pool.last_query == (
         "SELECT productcategoryid, name "
         "FROM production.productcategory WHERE name = %s",
         ("Components",),
     )
+
+
+async def test_resolve_entity_recovers_leading_category_modifier() -> None:
+    query = "Fasteners 제품 몇 개야?"
+    openai_client = MockOpenAIClient(make_no_tool_call_response())
+    pool = MockAsyncPostgresPool(rows_by_name={query: (81, "Fasteners")})
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": query})
+
+    assert result == {
+        "entity": {
+            "productCategoryId": 81,
+            "productCategoryName": "Fasteners",
+        }
+    }
+    assert pool.last_query == (
+        "SELECT productcategoryid, name FROM production.productcategory "
+        "WHERE lower(%s) LIKE lower(name) || '%%' "
+        "ORDER BY char_length(name) DESC LIMIT 1",
+        (query,),
+    )
+
+
+async def test_resolve_entity_recovers_leading_product_name() -> None:
+    query = "Ink - Azure 재고 얼마나 부족해?"
+    openai_client = MockOpenAIClient(make_no_tool_call_response())
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={("production.product", query): (8021, "Ink - Azure")},
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": query})
+
+    assert result == {"entity": {"productId": 8021, "productName": "Ink - Azure"}}
+
+
+async def test_resolve_entity_recovers_after_generic_entity_extraction() -> None:
+    query = "Ink - Azure 재고 얼마나 부족해?"
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity", {"entityType": "product", "entityName": "제품"}
+        )
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={("production.product", query): (8021, "Ink - Azure")},
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": query})
+
+    assert result == {"entity": {"productId": 8021, "productName": "Ink - Azure"}}
+
+
+async def test_resolve_entity_recovers_leading_supplier_name() -> None:
+    query = "Cobalt Works 부품이 들어가는 완제품 경로?"
+    openai_client = MockOpenAIClient(make_no_tool_call_response())
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={("purchasing.vendor", query): (8401, "Cobalt Works")},
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": query})
+
+    assert result == {"entity": {"supplierId": 8401, "supplierName": "Cobalt Works"}}
+
+
+async def test_resolve_entity_recovers_named_product_after_malformed_tool_call() -> (
+    None
+):
+    query = "Ink - Azure 재고 얼마나 부족해?"
+    response = make_tool_call_response(
+        "extract_entity", {"entityType": "product", "entityName": "ignored"}
+    )
+    assert response.choices[0].message.tool_calls is not None
+    response.choices[0].message.tool_calls[0].function.arguments = "{not-json"
+    openai_client = MockOpenAIClient(response)
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={("production.product", query): (8021, "Ink - Azure")},
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": query})
+
+    assert result == {"entity": {"productId": 8021, "productName": "Ink - Azure"}}
+
+
+async def test_resolve_entity_recovers_leading_product_after_wrong_extraction() -> None:
+    query = "Ink - Azure 재고 얼마나 부족해?"
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "Ink - Azure 재고"},
+        )
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={("production.product", query): (8021, "Ink - Azure")},
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": query})
+
+    assert result == {"entity": {"productId": 8021, "productName": "Ink - Azure"}}
+
+
+async def test_resolve_entity_prefers_unique_exact_prefix_over_wrong_type() -> None:
+    query = "Ink - Azure 재고 얼마나 부족해?"
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "supplier", "entityName": "Ink - Azure"},
+        )
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={("production.product", query): (8021, "Ink - Azure")},
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": query})
+
+    assert result == {"entity": {"productId": 8021, "productName": "Ink - Azure"}}
+
+
+async def test_resolve_entity_strips_type_label_from_named_product() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "부품 Nebula Pin"},
+        )
+    )
+    pool = MockAsyncPostgresPool(rows_by_name={"Nebula Pin": (8104, "Nebula Pin")})
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node({"query": "부품 Nebula Pin 재고를 알려줘."})
+
+    assert result == {"entity": {"productId": 8104, "productName": "Nebula Pin"}}
+
+
+async def test_resolve_entity_ignores_unmatched_product_descriptor() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "표면 처리가 끝난 제품"},
+        )
+    )
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    result = await node({"query": "표면 처리가 끝난 제품 열 개 보여줘."})
+
+    assert result == {"entity": None}
+
+
+async def test_resolve_entity_ignores_type_alias_fragment_without_exact_match() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "scrapReason", "entityName": "폐기"},
+        )
+    )
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    result = await node({"query": "폐기가 많은 작업의 이유를 알려줘."})
+
+    assert result == {"entity": None}
+
+
+async def test_resolve_entity_ignores_status_plus_supplier_type() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "supplier", "entityName": "활성 공급업체"},
+        )
+    )
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    result = await node({"query": "활성 공급업체별 처리량을 비교해줘."})
+
+    assert result == {"entity": None}
+
+
+async def test_resolve_entity_ignores_category_without_product_context() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "productCategory", "entityName": "구매 요청"},
+        )
+    )
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    result = await node({"query": "구매 요청이 많은 업체를 보여줘."})
+
+    assert result == {"entity": None}
+
+
+async def test_resolve_entity_ignores_alias_of_non_resolvable_node() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "location", "entityName": "작업지시"},
+        )
+    )
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    result = await node({"query": "작업지시별 작업장을 비교해줘."})
+
+    assert result == {"entity": None}
+
+
+@pytest.mark.parametrize(
+    ("query", "entity_name"),
+    [
+        ("작업지시 28401의 공정 흐름을 알려줘.", "작업지시 28401"),
+        ("28401의 공정 흐름을 알려줘.", "28401"),
+    ],
+)
+async def test_resolve_entity_ignores_non_name_identifiers(
+    query: str, entity_name: str
+) -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": entity_name},
+        )
+    )
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    assert await node({"query": query}) == {"entity": None}
+
+
+async def test_resolve_entity_ignores_relational_product_descriptor() -> None:
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "같은 부품"},
+        )
+    )
+    node = make_resolve_entity_node(
+        openai_client, MockAsyncPostgresPool(rows_by_name={}), _graph_schema()
+    )
+
+    result = await node({"query": "같은 부품을 쓰는 공급사를 비교해줘."})
+
+    assert result == {"entity": None}
+
+
+@pytest.mark.parametrize("response", ["single", "none"])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Aurora Gearbox와 Titan Washer 사이의 조립 경로를 알려줘.",
+        "Aurora Gearbox와 Titan Washer가 어떻게 연결돼 있는지 알려줘.",
+    ],
+)
+async def test_resolve_entity_recovers_all_product_relation_endpoints(
+    response: str, query: str
+) -> None:
+    openai_response = (
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "Aurora Gearbox"},
+        )
+        if response == "single"
+        else make_no_tool_call_response()
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={"Aurora Gearbox": (8201, "Aurora Gearbox")},
+        contained_rows_by_table_and_query={
+            ("production.product", query): [
+                (8201, "Aurora Gearbox"),
+                (8202, "Titan Washer"),
+            ]
+        },
+    )
+    node = make_resolve_entity_node(
+        MockOpenAIClient(openai_response), pool, _graph_schema()
+    )
+
+    result = await node({"query": query})
+
+    assert result == {
+        "entity": [
+            {"productId": 8201, "productName": "Aurora Gearbox"},
+            {"productId": 8202, "productName": "Titan Washer"},
+        ]
+    }
 
 
 async def test_resolve_entity_returns_entity_when_supplier_found() -> None:
@@ -206,6 +546,47 @@ async def test_resolve_entity_returns_all_named_entities_in_question_order() -> 
             {"productId": 775, "productName": "Mountain-100 Black, 38"},
         ]
     }
+    prompt = openai_client.calls[0]["messages"][0]["content"]
+    assert "'Orion Frame과 Alloy Sheet 사이 경로'" in prompt
+
+
+async def test_resolve_entity_does_not_mask_missing_entity_in_multi_entity_query() -> (
+    None
+):
+    """앞부분 entity fallback이 함께 요청된 미등록 entity를 삼키지 않는다."""
+    query = (
+        "Touring-1000 Yellow, 54 재고와 존재하지 않는 공급업체의 " "공급 부품을 알려줘."
+    )
+    openai_client = MockOpenAIClient(
+        make_tool_calls_response(
+            [
+                (
+                    "extract_entity",
+                    {
+                        "entityType": "product",
+                        "entityName": "Touring-1000 Yellow, 54",
+                    },
+                ),
+                (
+                    "extract_entity",
+                    {
+                        "entityType": "supplier",
+                        "entityName": "존재하지 않는 공급업체",
+                    },
+                ),
+            ]
+        )
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")},
+        rows_by_table_and_name={
+            ("production.product", query): (956, "Touring-1000 Yellow, 54")
+        },
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    with pytest.raises(EntityNotFoundError):
+        await node({"query": query})
 
 
 async def test_resolve_entity_returns_none_entity_when_no_entity_mentioned() -> None:
