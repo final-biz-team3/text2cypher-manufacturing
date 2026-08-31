@@ -28,6 +28,7 @@ from core.postgres import get_pool
 from evaluation.contracts import (
     collect_input_bindings,
     compare_execution_contract,
+    compare_execution_plan_contract,
     entity_matches,
 )
 from evaluation.errors import InfrastructureError, QuerySafetyError, ResultContractError
@@ -44,8 +45,10 @@ from evaluation.safety import validate_read_only_cypher, validate_read_only_sql
 from orchestrator.composition import compose_results
 from orchestrator.errors import AppError
 from orchestrator.graph import build_orchestrator_graph
+from orchestrator.nodes.plan_outputs import make_plan_outputs_node
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import RoutePlanError, make_route_query_node
+from orchestrator.output_catalog import build_output_catalog
 from orchestrator.planning import BomShortageTransform
 
 _CONNECTION_ERRORS = (
@@ -97,6 +100,7 @@ class EvaluationRunner:
         self.sql_schema_text = serialize_sql_schema(sql_schema)
         self.graph_schema_text = serialize_graph_schema(graph_schema)
         self.graph_query_policy = graph_schema.query_policy
+        output_catalog = build_output_catalog(sql_schema, graph_schema)
         # resolve_entity/route_query 노드는 async다 - 이 클래스(그리고
         # 아래를 호출하는 _evaluate_case)는 전부 동기라, 호출부 입장에서는
         # 평범한 함수처럼 보이게 감싼다. 감쌀 때 매번 asyncio.run()을 쓰면 안
@@ -113,6 +117,7 @@ class EvaluationRunner:
         self._loop = loop
         self.resolve_entity: Callable[[Any], Any] | None
         self.route_query: Callable[[Any], Any] | None
+        self.plan_outputs: Callable[[Any], Any] | None
         self.orchestrator_graph: Any | None = None
         if self.openai_client is not None:
             assert loop is not None, "openai_client가 있으면 loop도 필요합니다."
@@ -120,13 +125,23 @@ class EvaluationRunner:
                 self.openai_client, get_pool(), graph_schema
             )
             route_query_node = make_route_query_node(
-                self.openai_client, reasoning_effort=reasoning_effort
+                self.openai_client,
+                reasoning_effort=reasoning_effort,
+                shared_join_aliases=output_catalog.shared_join_aliases,
+            )
+            plan_outputs_node = make_plan_outputs_node(
+                self.openai_client,
+                output_catalog,
+                reasoning_effort=reasoning_effort,
             )
             self.resolve_entity = lambda state: loop.run_until_complete(
                 resolve_entity_node(state)
             )
             self.route_query = lambda state: loop.run_until_complete(
                 route_query_node(state)
+            )
+            self.plan_outputs = lambda state: loop.run_until_complete(
+                plan_outputs_node(state)
             )
             if execution_mode == "orchestrator":
                 self.orchestrator_graph = build_orchestrator_graph(
@@ -137,6 +152,7 @@ class EvaluationRunner:
         else:
             self.resolve_entity = None
             self.route_query = None
+            self.plan_outputs = None
 
     def _execute(
         self,
@@ -316,6 +332,7 @@ class EvaluationRunner:
                 required_outputs=final.required_outputs,
                 aliases={},
                 ordering=final.ordering,
+                strict_required_outputs=True,
             )
         except ResultContractError as exc:
             raise InfrastructureError(
@@ -359,6 +376,7 @@ class EvaluationRunner:
                 required_outputs=final.required_outputs,
                 aliases={},
                 ordering=final.ordering,
+                strict_required_outputs=True,
             )
         except ResultContractError as exc:
             comparison["error"] = str(exc)
@@ -457,9 +475,7 @@ class EvaluationRunner:
         # (_evaluate_subqueries)에서 그대로 쓸 수 있어야 해서 _run_async로
         # 감싼다(왜 매번 asyncio.run()을 쓰면 안 되는지는 __init__의
         # resolve_entity/route_query 주석 참고 - 동일하게 적용됨).
-        context = entity
-        if inputs:
-            context = {"resolvedEntities": entity, "upstreamBindings": inputs}
+        context = None if inputs else entity
         # expected의 업무 규칙·출력 계약은 채점 전용이다. 후보 생성에 넣으면
         # production에는 없는 정답 힌트를 제공하게 된다.
         if expected.tool == "sql":
@@ -469,6 +485,8 @@ class EvaluationRunner:
                     query=actual["question"],
                     entity=context,
                     schema_text=self.sql_schema_text,
+                    required_outputs=actual.get("requiredOutputs", []),
+                    input_bindings=inputs,
                     reasoning_effort=getattr(
                         self, "reasoning_effort", DEFAULT_REASONING_EFFORT
                     ),
@@ -483,6 +501,8 @@ class EvaluationRunner:
                 entity=context,
                 schema_text=self.graph_schema_text,
                 query_policy=self.graph_query_policy,
+                required_outputs=actual.get("requiredOutputs", []),
+                input_bindings=inputs,
                 reasoning_effort=getattr(
                     self, "reasoning_effort", DEFAULT_REASONING_EFFORT
                 ),
@@ -623,6 +643,7 @@ class EvaluationRunner:
                     required_outputs=expected.required_outputs,
                     aliases=expected.aliases,
                     ordering=expected.ordering,
+                    strict_required_outputs=True,
                 )
                 record["checks"]["resultContract"] = True
             except psycopg.errors.QueryCanceled as exc:
@@ -677,6 +698,11 @@ class EvaluationRunner:
     ) -> dict[str, Any]:
         if self.resolve_entity is None or self.route_query is None:
             raise InfrastructureError("모델 평가에는 OpenAI client가 필요합니다.")
+        client = getattr(self, "openai_client", None)
+        counting_client = client if isinstance(client, CountingOpenAIClient) else None
+        if counting_client is not None:
+            counting_client.reset_case()
+        started = perf_counter()
         contract = self.manifest.contracts[case.contract_id]
         record: dict[str, Any] = {
             "caseId": case.case_id,
@@ -686,6 +712,7 @@ class EvaluationRunner:
             "question": case.question,
             "route": contract.route,
             "supportStatus": contract.support_status,
+            "executionMode": "source",
         }
         try:
             entity_result = self.resolve_entity({"query": case.question})
@@ -710,6 +737,15 @@ class EvaluationRunner:
 
         try:
             plan = self.route_query({"query": case.question, "entity": entity})
+            if "routeDraft" in plan and self.plan_outputs is not None:
+                output_plan = self.plan_outputs(
+                    {
+                        "query": case.question,
+                        "entity": entity,
+                        **plan,
+                    }
+                )
+                plan.update(output_plan)
         except OpenAIError as exc:
             raise InfrastructureError(f"OpenAI route 생성 실패: {exc}") from exc
         except RoutePlanError as exc:
@@ -722,19 +758,51 @@ class EvaluationRunner:
         except Exception as exc:
             raise InfrastructureError(f"route 생성 API 오류: {exc}") from exc
 
+        route_draft = plan.get("routeDraft")
+        raw_route_draft = plan.get("rawRouteDraft")
+        raw_route_subqueries = (
+            raw_route_draft.get("subqueries")
+            if isinstance(raw_route_draft, dict)
+            else (
+                route_draft.get("subqueries")
+                if isinstance(route_draft, dict)
+                else plan.get("subqueries")
+            )
+        )
         comparison = compare_execution_contract(
             contract,
             case,
             plan.get("tool_plan"),
-            plan.get("subqueries"),
+            raw_route_subqueries,
             plan.get("resultTransform"),
         )
+        normalized_comparison = compare_execution_contract(
+            contract,
+            case,
+            plan.get("tool_plan"),
+            (
+                route_draft.get("subqueries")
+                if isinstance(route_draft, dict)
+                else plan.get("subqueries")
+            ),
+            plan.get("resultTransform"),
+        )
+        execution_plan_comparison = compare_execution_plan_contract(
+            contract,
+            plan.get("subqueries", []),
+            normalized_comparison["idMapping"],
+        )
+        required_outputs_pass = execution_plan_comparison["requiredOutputsPass"]
+        required_outputs_exact_pass = execution_plan_comparison[
+            "requiredOutputsExactPass"
+        ]
+        binding_pass = execution_plan_comparison["bindingPass"]
         subquery_records = self._evaluate_subqueries(
             contract,
             case,
             plan.get("subqueries", []),
             entity,
-            comparison["idMapping"],
+            normalized_comparison["idMapping"],
         )
         all_subqueries_pass = all(item["status"] == "PASS" for item in subquery_records)
         result_values = [item["checks"].get("result") for item in subquery_records]
@@ -759,6 +827,8 @@ class EvaluationRunner:
             entity_pass
             and comparison["routingPass"]
             and comparison["splitPass"]
+            and required_outputs_pass
+            and binding_pass
             and all_subqueries_pass
         )
         generated = [
@@ -770,8 +840,13 @@ class EvaluationRunner:
             "entity": entity_pass,
             "routing": comparison["routingPass"],
             "split": comparison["splitPass"],
+            "requiredOutputs": required_outputs_pass,
+            "requiredOutputsExact": required_outputs_exact_pass,
+            "binding": binding_pass,
             "generation": bool(generated)
             and all(item["checks"]["generation"] is True for item in generated),
+            "safety": bool(generated)
+            and all(item["checks"]["readOnly"] is True for item in generated),
             "execution": bool(generated)
             and all(item["checks"]["execution"] is True for item in generated),
             "resultContract": result_contract_pass,
@@ -790,28 +865,32 @@ class EvaluationRunner:
             if item.get("failureCategory") not in {None, "DEPENDENCY_BLOCKED"}
         )
         failure_reasons = list(dict.fromkeys(failure_reasons))
-        source_mode_final_evaluated = (
-            contract.support_status == "FULLY_EVALUATED"
-            and contract.final_result is None
-        )
         record.update(
             {
                 "toolPlan": plan.get("tool_plan"),
+                "rawRouteDraft": raw_route_draft,
+                "routeDraft": route_draft,
                 "subqueryPlan": plan.get("subqueries"),
                 "contractComparison": comparison,
+                "normalizedContractComparison": normalized_comparison,
+                "executionPlanComparison": execution_plan_comparison,
                 "subqueries": subquery_records,
                 "checks": checks,
                 "failureReasons": failure_reasons,
                 "queryPipelinePass": query_pipeline_pass,
+                "splitPass": comparison["splitPass"],
+                "requiredOutputsPass": required_outputs_pass,
+                "requiredOutputsExactPass": required_outputs_exact_pass,
+                "bindingPass": binding_pass,
                 "semanticResultPass": semantic_result_pass,
                 # source mode는 하위 query를 각각 진단할 뿐 composition을 실행하지
                 # 않는다. 명시적인 finalResult 계약이 있는 HYBRID를 source hash가
                 # 맞았다는 이유만으로 최종 결과까지 통과한 것으로 기록하지 않는다.
-                "finalResultEvaluated": source_mode_final_evaluated,
-                "finalResultPass": (
-                    semantic_result_pass if source_mode_final_evaluated else None
-                ),
+                "finalResultEvaluated": False,
+                "finalResultPass": None,
                 "status": "PASS" if query_pipeline_pass else "FAIL",
+                **(counting_client.snapshot() if counting_client is not None else {}),
+                "elapsedMs": round((perf_counter() - started) * 1000, 3),
             }
         )
         return record
@@ -842,50 +921,12 @@ class EvaluationRunner:
         return self._run_async(collect_updates())
 
     @staticmethod
-    def _planning_measurements(
-        contract: EvaluationContract,
-        actual_subqueries: Any,
-        id_mapping: dict[str, str],
-    ) -> tuple[bool, bool]:
-        actual_by_id = (
-            {
-                item.get("id"): item
-                for item in actual_subqueries
-                if isinstance(item, dict)
-            }
-            if isinstance(actual_subqueries, list)
-            else {}
-        )
-        required_outputs_pass = len(actual_by_id) == len(contract.subqueries)
-        binding_pass = len(actual_by_id) == len(contract.subqueries)
-        for expected in contract.subqueries:
-            actual_id = id_mapping.get(expected.id)
-            actual = actual_by_id.get(actual_id)
-            if not isinstance(actual, dict):
-                required_outputs_pass = False
-                binding_pass = False
-                continue
-            outputs = actual.get("requiredOutputs")
-            required_outputs_pass = required_outputs_pass and (
-                isinstance(outputs, list)
-                and len(outputs) == len(set(outputs))
-                and set(expected.required_outputs).issubset(outputs)
-            )
-            translated_bindings = {
-                key: f"{id_mapping.get(source.split('.', 1)[0])}.{source.split('.', 1)[1]}"
-                for key, source in expected.input_bindings.items()
-            }
-            binding_pass = binding_pass and (
-                actual.get("inputBindings", {}) == translated_bindings
-            )
-        return required_outputs_pass, binding_pass
-
-    @staticmethod
     def _attempt_execution_pass(attempt: dict[str, Any]) -> bool:
         error = attempt.get("error")
         return (
             error in (None, "EMPTY_RESULT")
             or isinstance(error, str)
+            and error.startswith("결과의 ")
             and "필수 alias" in error
         )
 
@@ -985,6 +1026,7 @@ class EvaluationRunner:
                     required_outputs=expected.required_outputs,
                     aliases=expected.aliases,
                     ordering=expected.ordering,
+                    strict_required_outputs=True,
                 )
                 record["checks"]["resultContract"] = True
             except ResultContractError as exc:
@@ -1040,6 +1082,7 @@ class EvaluationRunner:
             "question": case.question,
             "route": contract.route,
             "supportStatus": contract.support_status,
+            "executionMode": "orchestrator",
         }
         state: dict[str, Any] = {"query": case.question}
         pipeline_exception: Exception | None = None
@@ -1066,18 +1109,45 @@ class EvaluationRunner:
         entity_pass = entity_matches(contract.expected_entities, entity)
         plan_tool_plan = state.get("tool_plan")
         actual_subqueries = state.get("subqueries", [])
+        route_draft = state.get("routeDraft")
+        raw_route_draft = state.get("rawRouteDraft")
+        raw_route_subqueries = (
+            raw_route_draft.get("subqueries")
+            if isinstance(raw_route_draft, dict)
+            else (
+                route_draft.get("subqueries")
+                if isinstance(route_draft, dict)
+                else actual_subqueries
+            )
+        )
         comparison = compare_execution_contract(
             contract,
             case,
             plan_tool_plan,
-            actual_subqueries,
+            raw_route_subqueries,
             state.get("resultTransform"),
         )
-        required_outputs_pass, binding_pass = self._planning_measurements(
-            contract, actual_subqueries, comparison["idMapping"]
+        normalized_comparison = compare_execution_contract(
+            contract,
+            case,
+            plan_tool_plan,
+            (
+                route_draft.get("subqueries")
+                if isinstance(route_draft, dict)
+                else actual_subqueries
+            ),
+            state.get("resultTransform"),
         )
+        execution_plan_comparison = compare_execution_plan_contract(
+            contract, actual_subqueries, normalized_comparison["idMapping"]
+        )
+        required_outputs_pass = execution_plan_comparison["requiredOutputsPass"]
+        required_outputs_exact_pass = execution_plan_comparison[
+            "requiredOutputsExactPass"
+        ]
+        binding_pass = execution_plan_comparison["bindingPass"]
         subquery_records = self._evaluate_orchestrator_sources(
-            contract, case, state, comparison["idMapping"]
+            contract, case, state, normalized_comparison["idMapping"]
         )
 
         attempted_sources = [item for item in subquery_records if item.get("attempts")]
@@ -1193,6 +1263,7 @@ class EvaluationRunner:
             "routing": comparison["routingPass"],
             "split": comparison["splitPass"],
             "requiredOutputs": required_outputs_pass,
+            "requiredOutputsExact": required_outputs_exact_pass,
             "binding": binding_pass,
             "generation": generation_pass,
             "safety": safety_pass,
@@ -1206,8 +1277,12 @@ class EvaluationRunner:
             {
                 "entity": entity,
                 "toolPlan": plan_tool_plan,
+                "rawRouteDraft": raw_route_draft,
+                "routeDraft": route_draft,
                 "subqueryPlan": actual_subqueries,
                 "contractComparison": comparison,
+                "normalizedContractComparison": normalized_comparison,
+                "executionPlanComparison": execution_plan_comparison,
                 "subqueries": subquery_records,
                 "composedResult": composed,
                 "finalResultComparison": final_comparison,
@@ -1217,6 +1292,7 @@ class EvaluationRunner:
                 "routePass": comparison["routingPass"],
                 "splitPass": comparison["splitPass"],
                 "requiredOutputsPass": required_outputs_pass,
+                "requiredOutputsExactPass": required_outputs_exact_pass,
                 "bindingPass": binding_pass,
                 "firstAttemptExecutionPass": first_attempt_execution_pass,
                 "recoveredByRetry": recovered_by_retry,
@@ -1265,6 +1341,7 @@ class EvaluationRunner:
                             "question": case.question,
                             "route": contract.route,
                             "supportStatus": contract.support_status,
+                            "executionMode": getattr(self, "execution_mode", "source"),
                             "status": "ERROR",
                             "error": str(exc),
                             "queryPipelinePass": False,

@@ -16,6 +16,17 @@ from orchestrator.state import OrchestratorState
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_attempt_execution_metric_separates_preflight_and_row_contract_errors() -> None:
+    assert EvaluationRunner._attempt_execution_pass({"error": None})
+    assert EvaluationRunner._attempt_execution_pass({"error": "EMPTY_RESULT"})
+    assert EvaluationRunner._attempt_execution_pass(
+        {"error": "결과의 0번 행에 필수 alias가 없습니다: componentId"}
+    )
+    assert not EvaluationRunner._attempt_execution_pass(
+        {"error": "RETURN에 필수 alias가 없습니다: componentId"}
+    )
+
+
 def test_sql_generation_does_not_receive_gold_contract_hints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -40,7 +51,7 @@ def test_sql_generation_does_not_receive_gold_contract_hints(
     )
 
     assert "business_rules" not in captured
-    assert "required_outputs" not in captured
+    assert captured["required_outputs"] == []
 
 
 def test_cypher_generation_does_not_receive_gold_contract_hints(
@@ -70,7 +81,37 @@ def test_cypher_generation_does_not_receive_gold_contract_hints(
     )
 
     assert "business_rules" not in captured
-    assert "required_outputs" not in captured
+    assert captured["required_outputs"] == []
+
+
+def test_dependent_generation_uses_bindings_without_root_entity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    expected = manifest.contracts["RQ18"].subqueries[1]
+    captured: dict[str, Any] = {}
+
+    async def generate_sql(*args: Any, **kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "SELECT 1"
+
+    monkeypatch.setattr(runner_module, "generate_sql", generate_sql)
+    runner = object.__new__(EvaluationRunner)
+    runner.openai_client = object()
+    runner.sql_schema_text = "schema"
+
+    runner._generate_query(
+        expected,
+        {
+            "question": "앞 단계 부품의 재고를 조회한다.",
+            "requiredOutputs": ["componentId", "actualStock"],
+        },
+        {"supplierId": 73, "supplierName": "North Mill"},
+        {"componentIds": [801, 802]},
+    )
+
+    assert captured["entity"] is None
+    assert captured["input_bindings"] == {"componentIds": [801, 802]}
 
 
 def test_runner_accepts_integral_float_id_and_complete_single_query_output_plan() -> (
@@ -122,10 +163,17 @@ def test_runner_accepts_integral_float_id_and_complete_single_query_output_plan(
     assert record["checks"]["entity"] is True
     assert record["checks"]["result"] is True
     assert record["semanticResultPass"] is True
-    assert record["finalResultPass"] is True
+    assert record["finalResultPass"] is None
+    assert record["finalResultEvaluated"] is False
     assert record["queryPipelinePass"] is True
     assert record["status"] == "PASS"
     assert record["failureReasons"] == []
+    assert record["splitPass"] is record["contractComparison"]["splitPass"]
+    assert (
+        record["requiredOutputsPass"]
+        is record["executionPlanComparison"]["requiredOutputsPass"]
+    )
+    assert record["bindingPass"] is record["executionPlanComparison"]["bindingPass"]
 
 
 def test_entity_mismatch_keeps_result_evaluation_but_fails_pipeline() -> None:
@@ -173,7 +221,8 @@ def test_entity_mismatch_keeps_result_evaluation_but_fails_pipeline() -> None:
 
     assert record["checks"]["entity"] is False
     assert record["semanticResultPass"] is True
-    assert record["finalResultPass"] is True
+    assert record["finalResultPass"] is None
+    assert record["finalResultEvaluated"] is False
     assert record["queryPipelinePass"] is False
     assert record["status"] == "FAIL"
     assert record["failureReasons"] == ["ENTITY_MISMATCH"]

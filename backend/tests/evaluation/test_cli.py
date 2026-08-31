@@ -137,7 +137,7 @@ def test_mixed_known_and_unknown_ids_are_rejected(
 
 
 def test_parse_ids_supports_rq_and_hq_ranges_with_the_same_prefix() -> None:
-    assert cli._parse_ids("RQ01,RQ18-RQ20,HQ01-HQ03") == {
+    assert cli._parse_ids("RQ01,RQ18-RQ20,HQ01-HQ03,RB04-R") == {
         "RQ01",
         "RQ18",
         "RQ19",
@@ -145,11 +145,12 @@ def test_parse_ids_supports_rq_and_hq_ranges_with_the_same_prefix() -> None:
         "HQ01",
         "HQ02",
         "HQ03",
+        "RB04-R",
     }
     assert cli._parse_ids("all") is None
 
 
-@pytest.mark.parametrize("value", ["RQ01-HQ01", "HQ10-HQ01", "RB01-S"])
+@pytest.mark.parametrize("value", ["RQ01-HQ01", "HQ10-HQ01", "RB01-X"])
 def test_parse_ids_rejects_mixed_reversed_or_case_variant_ranges(value: str) -> None:
     with pytest.raises(argparse.ArgumentTypeError):
         cli._parse_ids(value)
@@ -197,3 +198,34 @@ def test_parser_exposes_holdout_without_changing_defaults() -> None:
     assert parser.parse_args(["--reasoning-effort", "high"]).reasoning_effort == "high"
     assert parser.parse_args(["--execution-mode", "source"]).execution_mode == "source"
     assert parser.parse_args(["--suite", "holdout"]).suite == "holdout"
+    assert parser.parse_args([]).performance_baseline is None
+
+
+def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> None:
+    artifact = tmp_path / "evaluation.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "commit": "abc",
+                    "workingTreeDirty": False,
+                    "model": "test-model",
+                    "reasoningEffort": "medium",
+                    "snapshot": {"sha256": "snapshot"},
+                    "evaluationSet": {"caseIds": ["RQ01"]},
+                    "metrics": {
+                        "executionMode": "orchestrator",
+                        "averageModelCallCount": 3.0,
+                        "p95LatencyMs": 100.0,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    baseline = cli._load_performance_baseline(artifact)
+
+    assert baseline["commit"] == "abc"
+    assert baseline["averageModelCallCount"] == 3.0
+    assert len(baseline["artifactSha256"]) == 64

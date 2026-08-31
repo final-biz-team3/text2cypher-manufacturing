@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -36,6 +37,7 @@ use_windows_selector_event_loop_policy()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
 _QUERY_ID = re.compile(r"^(RQ|HQ)(\d{2})$")
+_CASE_ID = re.compile(r"^(?:(?:RQ|HQ)\d{2}|RB\d{2}-[CRS])$")
 _QUERY_RANGE = re.compile(r"^((?:RQ|HQ)\d{2})-((?:RQ|HQ)\d{2})$")
 
 
@@ -60,7 +62,7 @@ def _parse_ids(value: str) -> set[str] | None:
                 f"{start_prefix}{number:02d}" for number in range(start, end + 1)
             )
             continue
-        if not _QUERY_ID.fullmatch(part):
+        if not _CASE_ID.fullmatch(part):
             raise argparse.ArgumentTypeError(f"잘못된 query ID: {part}")
         selected.add(part)
     return selected
@@ -98,7 +100,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir", type=Path, default=PROJECT_ROOT / "artifacts" / "t2c-eval"
     )
+    parser.add_argument("--performance-baseline", type=Path)
     return parser
+
+
+def _load_performance_baseline(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    try:
+        payload = resolved.read_bytes()
+        document = json.loads(payload)
+        summary = document["summary"]
+        metrics = summary["metrics"]
+        return {
+            "artifact": str(resolved),
+            "artifactSha256": hashlib.sha256(payload).hexdigest(),
+            "commit": summary.get("commit"),
+            "workingTreeDirty": summary.get("workingTreeDirty"),
+            "model": summary.get("model"),
+            "reasoningEffort": summary.get("reasoningEffort"),
+            "snapshotSha256": summary.get("snapshot", {}).get("sha256"),
+            "executionMode": metrics.get("executionMode"),
+            "caseIds": summary.get("evaluationSet", {}).get("caseIds"),
+            "averageModelCallCount": metrics.get("averageModelCallCount"),
+            "p95LatencyMs": metrics.get("p95LatencyMs"),
+        }
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ConfigurationError(
+            f"performance baseline artifact를 읽을 수 없습니다: {resolved}: {exc}"
+        ) from exc
 
 
 def _select_cases(
@@ -187,6 +216,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.runs < 1:
             raise ConfigurationError("--runs는 1 이상이어야 합니다.")
         manifest = load_manifest(args.manifest.resolve(), args.case_file)
+        performance_baseline = (
+            _load_performance_baseline(args.performance_baseline)
+            if args.performance_baseline is not None
+            else None
+        )
         cases = _select_cases(
             manifest.cases,
             manifest.contracts,
@@ -222,7 +256,11 @@ def main(argv: list[str] | None = None) -> int:
             if not api_key:
                 raise ConfigurationError("OPENAI_API_KEY가 필요합니다.")
             os.environ["OPENAI_MODEL"] = args.model
-            client = AsyncOpenAI(api_key=api_key, base_url=args.base_url)
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=args.base_url,
+                timeout=60.0,
+            )
 
         database = ReadOnlyDatabaseExecutor.from_environment()
         # client가 있으면(=실제 모델 호출이 필요하면) 이 프로세스 전체가 쓸
@@ -274,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
             validate_gold=args.validate_gold,
             working_tree_dirty=working_tree_dirty,
             reasoning_effort=(None if args.validate_gold else args.reasoning_effort),
+            performance_baseline=performance_baseline,
         )
         write_artifacts(args.output_dir, summary, result.records)
         print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))

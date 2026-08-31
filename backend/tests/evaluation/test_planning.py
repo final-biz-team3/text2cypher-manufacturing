@@ -6,7 +6,10 @@ from orchestrator.planning import (
     BOM_SHORTAGE_GRAPH_OUTPUTS,
     BOM_SHORTAGE_SQL_OUTPUTS,
     parse_execution_plan,
+    parse_route_draft,
+    route_draft_json_schema,
     validate_result_transform,
+    validate_route_subqueries,
     validate_subqueries,
 )
 
@@ -89,6 +92,75 @@ def test_parse_execution_plan_keeps_legacy_tool_plan_with_one_subquery() -> None
     assert result["tool_plan"] == ["sql"]
     assert len(result["subqueries"]) == 1
     assert result["subqueries"][0]["question"] == "원래 질문"
+
+
+def test_route_binding_name_must_match_schema_identity_alias() -> None:
+    subqueries = [
+        {
+            "id": "graph_components",
+            "tool": "graph",
+            "question": "부품을 조회한다.",
+            "dependsOn": [],
+            "joinKeys": ["componentId"],
+        },
+        {
+            "id": "sql_stock",
+            "tool": "sql",
+            "question": "재고를 조회한다.",
+            "dependsOn": ["graph_components"],
+            "joinKeys": ["componentId"],
+            "inputBindings": {"productIds": "graph_components.componentId"},
+        },
+    ]
+
+    with pytest.raises(ValueError, match="binding 이름과 source alias"):
+        validate_route_subqueries(subqueries)
+
+
+def test_parse_route_draft_merges_binding_alias_into_both_join_keys() -> None:
+    content = """{
+      "tool_plan": ["graph", "sql"],
+      "subqueries": [
+        {
+          "id": "graph_supplier_impact",
+          "tool": "graph",
+          "question": "North Mill 공급 부품의 영향을 찾는다.",
+          "dependsOn": [],
+          "joinKeys": [],
+          "inputBindings": {}
+        },
+        {
+          "id": "sql_component_stock",
+          "tool": "sql",
+          "question": "앞 단계 부품의 재고를 찾는다.",
+          "dependsOn": ["graph_supplier_impact"],
+          "joinKeys": ["componentId"],
+          "inputBindings": {
+            "componentIds": "graph_supplier_impact.componentId"
+          }
+        }
+      ],
+      "resultTransform": null
+    }"""
+
+    result = parse_route_draft(content, "공급 중단 영향과 재고")
+
+    assert result["subqueries"][0]["joinKeys"] == ["componentId"]
+    assert result["subqueries"][1]["joinKeys"] == ["componentId"]
+
+
+def test_route_schema_restricts_binding_value_to_matching_identity_alias() -> None:
+    schema = route_draft_json_schema({"componentId", "productId"})
+    variants = schema["properties"]["subqueries"]["items"]["properties"][
+        "inputBindings"
+    ]["anyOf"]
+    component_variant = next(
+        item for item in variants if "componentIds" in item["properties"]
+    )
+
+    assert component_variant["properties"]["componentIds"]["pattern"] == (
+        r"^[^.\s]+\.componentId$"
+    )
 
 
 def test_parse_execution_plan_rejects_tool_order_before_its_dependency() -> None:

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from evaluation.gates import build_regression_gate
 from evaluation.reporting import (
     build_summary,
     calculate_metrics,
@@ -103,6 +104,37 @@ def test_report_summarizes_repeated_trial_outcomes(tmp_path: Path) -> None:
     assert "| RQ03 | 2/2 | 0/2 | 전회 FAIL |" in report
 
 
+def test_quality_scorecard_has_evidence_for_all_eight_areas() -> None:
+    record = _record("RQ01", passed=True)
+    record["executionMode"] = "orchestrator"
+    record["routeDraft"] = {}
+    record["subqueryPlan"] = []
+    record["attemptCount"] = 1
+    record["composedResult"] = {}
+    record["checks"].update(
+        {"requiredOutputs": True, "binding": True, "composition": True}
+    )
+    summary = build_summary(
+        EvaluationRun([record], {"sha256": "snapshot"}, False),
+        model="test-model",
+        commit="commit",
+        validate_gold=False,
+        working_tree_dirty=False,
+    )
+
+    scorecard = summary["qualityScorecard"]
+    assert summary["regressionGate"]["status"] == "FAIL"
+    assert len(scorecard["areas"]) == 8
+    assert all(len(area["controls"]) == 4 for area in scorecard["areas"])
+    assert all(
+        control["status"] in {"PASS", "FAIL"} and control["evidence"]
+        for area in scorecard["areas"]
+        for control in area["controls"]
+    )
+    assert scorecard["passesThreshold"] is False
+    assert any("blind" in item.casefold() for item in scorecard["criticalFailures"])
+
+
 def test_metrics_separate_pipeline_from_result_coverage() -> None:
     record = _record("RQ02", passed=False)
     record["status"] = "PASS"
@@ -190,6 +222,62 @@ def test_suite_scores_keep_canonical_and_robustness_separate() -> None:
 
     assert metrics["suiteScores"]["canonical"]["queryPipelineAccuracy"] == 1.0
     assert metrics["suiteScores"]["robustness"]["queryPipelineAccuracy"] == 0.0
+
+
+def test_source_mode_marks_execution_retry_and_composition_not_applicable(
+    tmp_path: Path,
+) -> None:
+    record = _record("RQ01", passed=True)
+    record["executionMode"] = "source"
+    metrics = calculate_metrics([record])
+
+    assert metrics["promotionEligible"] is False
+    assert metrics["stageAccuracy"]["execution"] is None
+    assert metrics["stageAccuracy"]["composition"] is None
+    assert metrics["stageAccuracy"]["finalResult"] is None
+    assert metrics["firstAttemptExecutionRate"] is None
+    assert metrics["retryRecoveryRate"] is None
+    assert metrics["finalResultAccuracy"] is None
+
+    summary = build_summary(
+        EvaluationRun([record], {"sha256": "snapshot"}, False),
+        model="test-model",
+        commit="commit",
+        validate_gold=False,
+        working_tree_dirty=False,
+    )
+    write_artifacts(tmp_path, summary, [record])
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "| 평가 경로 | source |" in report
+    assert "| 승격 지표 사용 | 아니오 |" in report
+    assert "| 최초 실행 성공률 | N/A |" in report
+    assert "| retry 복구율 | N/A |" in report
+
+
+def test_performance_gate_compares_compatible_baseline() -> None:
+    metrics = {
+        "averageModelCallCount": 4.5,
+        "p95LatencyMs": 190.0,
+        "pipelinePassByRoute": {},
+        "stageAccuracy": {},
+        "caseTrialSummary": {},
+    }
+    baseline = {
+        "compatible": True,
+        "averageModelCallCount": 3.0,
+        "p95LatencyMs": 100.0,
+        "artifactSha256": "abc",
+    }
+
+    gate = build_regression_gate([], metrics, baseline)
+    check = next(
+        item
+        for item in gate["checks"]
+        if item["name"] == "model call and latency budget"
+    )
+
+    assert check["status"] == "PASS"
+    assert check["actual"]["baselineArtifactSha256"] == "abc"
 
 
 def test_report_is_compact_and_keeps_query_details_in_evaluation_json(

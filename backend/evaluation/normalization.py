@@ -49,7 +49,13 @@ def _field_value(
     aliases: tuple[str, ...],
     *,
     allow_single_column_fallback: bool,
+    strict_required_output: bool,
 ) -> Any:
+    if strict_required_output:
+        if field not in row:
+            raise ResultContractError(f"필수 결과 필드 {field!r}가 없습니다.")
+        return _normalize_value(row[field])
+
     def canonical_name(value: str) -> str:
         return re.sub(r"[^\w]", "", value, flags=re.UNICODE).replace("_", "").casefold()
 
@@ -116,6 +122,7 @@ def normalize_rows(
     required_outputs: tuple[str, ...],
     aliases: dict[str, tuple[str, ...]],
     ordering: tuple[str, ...],
+    strict_required_outputs: bool = False,
 ) -> list[dict[str, Any]]:
     """허용 alias를 계약 필드로 바꾸고 타입·행 순서를 정규화한다."""
     normalized = [
@@ -124,7 +131,10 @@ def normalize_rows(
                 row,
                 field,
                 aliases.get(field, ()),
-                allow_single_column_fallback=len(required_outputs) == 1,
+                allow_single_column_fallback=(
+                    not strict_required_outputs and len(required_outputs) == 1
+                ),
+                strict_required_output=strict_required_outputs,
             )
             for field in required_outputs
         }
