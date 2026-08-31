@@ -118,7 +118,7 @@ def build_orchestrator_graph(
     )
     graph.add_node(
         "generate_answer",
-        cast(Any, make_generate_answer_node()),
+        cast(Any, make_generate_answer_node(openai_client)),
     )
     graph.add_edge(START, "resolve_entity")
     graph.add_edge("resolve_entity", "route_query")
