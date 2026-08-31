@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -13,6 +14,7 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
+from agents.generator import DEFAULT_REASONING_EFFORT
 from core.event_loop import use_windows_selector_event_loop_policy
 from core.postgres import bootstrap_postgres, close_pool, open_pool
 from evaluation.database import ReadOnlyDatabaseExecutor
@@ -20,6 +22,11 @@ from evaluation.errors import ConfigurationError, InfrastructureError
 from evaluation.models import EvaluationCase, load_manifest
 from evaluation.reporting import build_summary, write_artifacts
 from evaluation.runner import EvaluationRun, EvaluationRunner
+from orchestrator.execution.cypher_executor import (
+    close_reader_driver,
+    get_reader_driver,
+    verify_reader_is_read_only,
+)
 
 # resolve_entity/route_query/generate_sql/generate_cypher가 전부 async라
 # 이 CLI(전체 동기)에서도 이벤트 루프를 감싸 호출한다(runner.py 참고).
@@ -30,6 +37,7 @@ use_windows_selector_event_loop_policy()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
 _QUERY_ID = re.compile(r"^(RQ|HQ)(\d{2})$")
+_CASE_ID = re.compile(r"^(?:(?:RQ|HQ)\d{2}|RB\d{2}-[CRS])$")
 _QUERY_RANGE = re.compile(r"^((?:RQ|HQ)\d{2})-((?:RQ|HQ)\d{2})$")
 
 
@@ -54,7 +62,7 @@ def _parse_ids(value: str) -> set[str] | None:
                 f"{start_prefix}{number:02d}" for number in range(start, end + 1)
             )
             continue
-        if not _QUERY_ID.fullmatch(part):
+        if not _CASE_ID.fullmatch(part):
             raise argparse.ArgumentTypeError(f"잘못된 query ID: {part}")
         selected.add(part)
     return selected
@@ -74,13 +82,52 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case-file", type=Path)
     parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL"))
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=("medium", "high"),
+        default=DEFAULT_REASONING_EFFORT,
+        help="route와 SQL/Cypher 생성 reasoning effort",
+    )
     parser.add_argument("--base-url")
     parser.add_argument("--validate-gold", action="store_true")
+    parser.add_argument(
+        "--execution-mode",
+        choices=("orchestrator", "source"),
+        default="orchestrator",
+        help="정규 평가는 orchestrator, 기존 직접 생성 경로는 source",
+    )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument(
         "--output-dir", type=Path, default=PROJECT_ROOT / "artifacts" / "t2c-eval"
     )
+    parser.add_argument("--performance-baseline", type=Path)
     return parser
+
+
+def _load_performance_baseline(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    try:
+        payload = resolved.read_bytes()
+        document = json.loads(payload)
+        summary = document["summary"]
+        metrics = summary["metrics"]
+        return {
+            "artifact": str(resolved),
+            "artifactSha256": hashlib.sha256(payload).hexdigest(),
+            "commit": summary.get("commit"),
+            "workingTreeDirty": summary.get("workingTreeDirty"),
+            "model": summary.get("model"),
+            "reasoningEffort": summary.get("reasoningEffort"),
+            "snapshotSha256": summary.get("snapshot", {}).get("sha256"),
+            "executionMode": metrics.get("executionMode"),
+            "caseIds": summary.get("evaluationSet", {}).get("caseIds"),
+            "averageModelCallCount": metrics.get("averageModelCallCount"),
+            "p95LatencyMs": metrics.get("p95LatencyMs"),
+        }
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ConfigurationError(
+            f"performance baseline artifact를 읽을 수 없습니다: {resolved}: {exc}"
+        ) from exc
 
 
 def _select_cases(
@@ -144,6 +191,7 @@ def _error_artifacts(
     model: str | None,
     validate_gold: bool,
     working_tree_dirty: bool | None,
+    reasoning_effort: str | None,
 ) -> None:
     result = EvaluationRun([], {}, True)
     summary = build_summary(
@@ -152,6 +200,7 @@ def _error_artifacts(
         commit=_commit_sha(),
         validate_gold=validate_gold,
         working_tree_dirty=working_tree_dirty,
+        reasoning_effort=None if validate_gold else reasoning_effort,
     )
     summary["error"] = message
     write_artifacts(output_dir, summary, [])
@@ -167,6 +216,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.runs < 1:
             raise ConfigurationError("--runs는 1 이상이어야 합니다.")
         manifest = load_manifest(args.manifest.resolve(), args.case_file)
+        performance_baseline = (
+            _load_performance_baseline(args.performance_baseline)
+            if args.performance_baseline is not None
+            else None
+        )
         cases = _select_cases(
             manifest.cases,
             manifest.contracts,
@@ -174,6 +228,25 @@ def main(argv: list[str] | None = None) -> int:
             ids=ids,
             route=args.routes,
         )
+        needs_production_graph = (
+            not args.validate_gold
+            and args.execution_mode == "orchestrator"
+            and any(
+                manifest.contracts[case.contract_id].route in {"GRAPH", "HYBRID"}
+                for case in cases
+            )
+        )
+        if needs_production_graph:
+            missing = [
+                name
+                for name in ("NEO4J_READER_USER", "NEO4J_READER_PASSWORD")
+                if not os.getenv(name)
+            ]
+            if missing:
+                raise ConfigurationError(
+                    "orchestrator GRAPH 평가에 필요한 reader 설정이 없습니다: "
+                    + ", ".join(missing)
+                )
         if args.validate_gold:
             client = None
         else:
@@ -183,7 +256,11 @@ def main(argv: list[str] | None = None) -> int:
             if not api_key:
                 raise ConfigurationError("OPENAI_API_KEY가 필요합니다.")
             os.environ["OPENAI_MODEL"] = args.model
-            client = AsyncOpenAI(api_key=api_key, base_url=args.base_url)
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=args.base_url,
+                timeout=60.0,
+            )
 
         database = ReadOnlyDatabaseExecutor.from_environment()
         # client가 있으면(=실제 모델 호출이 필요하면) 이 프로세스 전체가 쓸
@@ -199,26 +276,34 @@ def main(argv: list[str] | None = None) -> int:
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(bootstrap_postgres())
                 loop.run_until_complete(open_pool())
-            try:
-                runner = EvaluationRunner(
-                    manifest,
-                    database,
-                    client,
-                    project_root=PROJECT_ROOT,
-                    loop=loop,
-                )
-                result = (
-                    runner.validate_gold(cases)
-                    if args.validate_gold
-                    else runner.run(cases, args.runs)
-                )
-            finally:
-                database.close()
-                if loop is not None:
-                    loop.run_until_complete(close_pool())
+                if needs_production_graph:
+                    reader_driver = get_reader_driver()
+                    loop.run_until_complete(reader_driver.verify_connectivity())
+                    loop.run_until_complete(verify_reader_is_read_only(reader_driver))
+            runner = EvaluationRunner(
+                manifest,
+                database,
+                client,
+                project_root=PROJECT_ROOT,
+                loop=loop,
+                execution_mode=args.execution_mode,
+                reasoning_effort=args.reasoning_effort,
+            )
+            result = (
+                runner.validate_gold(cases)
+                if args.validate_gold
+                else runner.run(cases, args.runs)
+            )
         finally:
+            database.close()
             if loop is not None:
-                loop.close()
+                try:
+                    loop.run_until_complete(close_reader_driver())
+                finally:
+                    try:
+                        loop.run_until_complete(close_pool())
+                    finally:
+                        loop.close()
 
         summary = build_summary(
             result,
@@ -226,6 +311,8 @@ def main(argv: list[str] | None = None) -> int:
             commit=_commit_sha(),
             validate_gold=args.validate_gold,
             working_tree_dirty=working_tree_dirty,
+            reasoning_effort=(None if args.validate_gold else args.reasoning_effort),
+            performance_baseline=performance_baseline,
         )
         write_artifacts(args.output_dir, summary, result.records)
         print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
@@ -243,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             validate_gold=args.validate_gold,
             working_tree_dirty=working_tree_dirty,
+            reasoning_effort=args.reasoning_effort,
         )
         return 2
     except Exception as exc:
@@ -254,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             validate_gold=args.validate_gold,
             working_tree_dirty=working_tree_dirty,
+            reasoning_effort=args.reasoning_effort,
         )
         return 2
     return 2

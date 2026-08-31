@@ -39,6 +39,25 @@ class TableSchema(_SchemaModel):
 
     aliases: list[str] = Field(default_factory=list)
     columns: dict[str, ColumnSchema]
+    output_aliases: dict[str, list[str]] = Field(
+        default_factory=dict,
+        alias="outputAliases",
+        exclude=True,
+    )
+
+    @model_validator(mode="after")
+    def validate_output_aliases(self) -> Self:
+        """output alias가 실제 컬럼만 가리키고 중복되지 않게 한다."""
+        unknown_columns = set(self.output_aliases) - set(self.columns)
+        if unknown_columns:
+            names = ", ".join(sorted(unknown_columns))
+            raise ValueError(f"Output aliases reference unknown columns: {names}")
+        aliases = [alias for values in self.output_aliases.values() for alias in values]
+        if any(not alias.strip() for alias in aliases) or len(aliases) != len(
+            set(aliases)
+        ):
+            raise ValueError("Output aliases must be non-empty and unique per table.")
+        return self
 
 
 class JoinSchema(_SchemaModel):

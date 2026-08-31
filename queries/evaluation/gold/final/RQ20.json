@@ -1,0 +1,26 @@
+[
+  {
+    "workOrderId": 17747,
+    "productId": 802,
+    "productName": "LL Fork",
+    "scrappedQty": 54,
+    "scrapReasonId": 8,
+    "scrapReasonName": "Paint process failed",
+    "routingOperationKey": "17747-802-1",
+    "sequence": 1,
+    "locationId": 10,
+    "locationName": "Frame Forming"
+  },
+  {
+    "workOrderId": 17747,
+    "productId": 802,
+    "productName": "LL Fork",
+    "scrappedQty": 54,
+    "scrapReasonId": 8,
+    "scrapReasonName": "Paint process failed",
+    "routingOperationKey": "17747-802-6",
+    "sequence": 6,
+    "locationId": 50,
+    "locationName": "Subassembly"
+  }
+]

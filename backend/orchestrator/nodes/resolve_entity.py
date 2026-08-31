@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -25,10 +26,13 @@ _SYSTEM_PROMPT = (
     "엔티티 종류 표현 없이 나타날 수 있으며, 그 이름이 조회·집계 범위를 "
     "한정하면 extract_entity를 호출한다. 예를 들어 'A에 포함된 대상 수'처럼 "
     "이름 A가 범위를 한정하면 A를 추출한다. "
+    "'Fasteners 제품 몇 개'처럼 분류명이 제품 앞에 오면 productCategory로 추출한다. "
     "이름에 쉼표로 이어지는 색상·크기 등 수식어가 있으면 잘라내지 않고 "
     "쉼표 이후 부분까지 이름 전체를 통째로 추출한다. 질의에 서로 다른 고유 "
     "이름이 여러 개 있으면 이름마다 extract_entity를 한 번씩 호출하고 질문에 "
-    "등장한 순서를 유지한다."
+    "등장한 순서를 유지한다. 'Orion Frame과 Alloy Sheet 사이 경로'처럼 두 이름이 "
+    "관계의 양 끝이면 product 호출을 두 번 만든다."
+    "숫자 ID는 이름으로 추출하지 않는다."
 )
 
 
@@ -43,6 +47,7 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
         "type": "function",
         "function": {
             "name": "extract_entity",
+            "strict": True,
             "description": (
                 "자연어 질의에서 특정 대상을 지칭하는 이름과 그 종류를 추출한다. "
                 "질의가 특정 대상을 가리키지 않으면 호출하지 않는다."
@@ -61,11 +66,12 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
                             "질의에 등장하는 이름 문자열 그대로. 쉼표로 이어지는 "
                             "색상·크기 등 수식어가 있으면 잘라내지 말고 쉼표 이후 "
                             "부분까지 포함해 통째로 추출한다 "
-                            "(예: 'Touring-1000 Yellow, 54')."
+                            "(예: 'Aurora Frame, 52')."
                         ),
                     },
                 },
                 "required": ["entityType", "entityName"],
+                "additionalProperties": False,
             },
         },
     }
@@ -73,7 +79,7 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict:
 
 async def _extract_entities(
     query: str, openai_client: Any, extract_tool: dict
-) -> list[tuple[str, str]]:
+) -> tuple[list[tuple[str, str]], bool]:
     """LLM Function Calling으로 질의의 모든 이름 엔티티를 추출한다."""
     response = await openai_client.chat.completions.create(
         model=os.environ["OPENAI_MODEL"],
@@ -86,7 +92,7 @@ async def _extract_entities(
     )
     tool_calls = response.choices[0].message.tool_calls
     if not tool_calls:
-        return []
+        return [], False
 
     extractions: list[tuple[str, str]] = []
     for tool_call in tool_calls:
@@ -96,7 +102,14 @@ async def _extract_entities(
                 tool_call.function.name,
             )
             continue
-        arguments = json.loads(tool_call.function.arguments)
+        try:
+            arguments = json.loads(tool_call.function.arguments)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                "resolve_entity: extract_entity 인자 JSON 오류 %r",
+                tool_call.function.arguments,
+            )
+            continue
         if not isinstance(arguments, dict):
             logger.warning(
                 "resolve_entity: extract_entity 인자 형식 오류 %r", arguments
@@ -113,7 +126,7 @@ async def _extract_entities(
         extraction = (entity_type, entity_name)
         if extraction not in extractions:
             extractions.append(extraction)
-    return extractions
+    return extractions, True
 
 
 def _entity_type_config(
@@ -126,13 +139,69 @@ def _entity_type_config(
     raise ValueError(f"Unknown entity type: {entity_type}")
 
 
-def _is_entity_type_alias(name: str, entity_types: list[NamedEntityType]) -> bool:
+def _is_entity_type_alias(name: str, type_aliases: tuple[str, ...]) -> bool:
     """추출된 이름이 고유 이름이 아닌 엔티티 종류 표현인지 확인한다."""
     normalized_name = " ".join(name.casefold().split())
     return any(
-        normalized_name == " ".join(alias.casefold().split())
-        for entity in entity_types
-        for alias in entity.aliases
+        normalized_name == " ".join(alias.casefold().split()) for alias in type_aliases
+    )
+
+
+def _strip_edge_type_alias(name: str, config: NamedEntityType) -> tuple[str, bool]:
+    normalized = name.strip()
+    folded = normalized.casefold()
+    for alias in sorted(config.aliases, key=len, reverse=True):
+        alias_folded = alias.casefold()
+        if folded.startswith(f"{alias_folded} "):
+            return normalized[len(alias) :].strip(), True
+        if folded.endswith(f" {alias_folded}"):
+            return normalized[: -len(alias)].strip(), True
+    return normalized, False
+
+
+def _is_generic_descriptor(name: str) -> bool:
+    folded = name.casefold()
+    return any(
+        marker in folded
+        for marker in (
+            "전체",
+            "모든",
+            "현재",
+            "활성",
+            "같은",
+            "공통",
+            "가장",
+            "제일",
+            "많이",
+            "안 ",
+            "끝난",
+            "등록",
+            "다섯",
+            "열 ",
+            " 개",
+            " 건",
+            "top ",
+        )
+    )
+
+
+def _is_non_name_identifier(name: str, aliases: tuple[str, ...]) -> bool:
+    normalized = " ".join(name.casefold().split())
+    if re.fullmatch(r"#?\d+", normalized):
+        return True
+    return any(
+        normalized.startswith(f"{alias} ") or normalized.endswith(f" {alias}")
+        for alias in (" ".join(value.casefold().split()) for value in aliases)
+    )
+
+
+def _is_type_alias_fragment(name: str, config: NamedEntityType) -> bool:
+    normalized = " ".join(name.casefold().split())
+    if len(normalized) < 2:
+        return False
+    return any(
+        alias.startswith(normalized) or normalized in alias.split()
+        for alias in (" ".join(item.casefold().split()) for item in config.aliases)
     )
 
 
@@ -156,6 +225,199 @@ async def _find_entity_by_name(
     if row is None:
         return None
     return {config.id_field: row[0], config.name_field: row[1]}
+
+
+async def _find_leading_category_modifier(
+    query: str,
+    entity_types: list[NamedEntityType],
+    pool: AsyncConnectionPool,
+) -> dict | None:
+    config = next(
+        (entity for entity in entity_types if entity.entity_type == "productCategory"),
+        None,
+    )
+    if config is None:
+        return None
+
+    normalized = query.strip()
+    if not any(
+        marker in normalized.casefold()
+        for marker in ("제품", "품목", "분류", "카테고리", "category")
+    ):
+        return None
+
+    async with pool.connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT {config.id_column}, {config.name_column} "
+            f"FROM {config.table} "
+            f"WHERE lower(%s) LIKE lower({config.name_column}) || '%%' "
+            f"ORDER BY char_length({config.name_column}) DESC LIMIT 1",
+            (normalized,),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+
+    name = str(row[1])
+    if not normalized.casefold().startswith(name.casefold()):
+        return None
+    suffix = normalized[len(name) :].lstrip().casefold()
+    if not suffix.startswith(("제품", "품목", "분류", "카테고리", "category")):
+        return None
+    return {config.id_field: row[0], config.name_field: row[1]}
+
+
+async def _find_leading_name(
+    query: str,
+    config: NamedEntityType,
+    pool: AsyncConnectionPool,
+) -> tuple[dict, str] | None:
+    normalized = query.strip()
+    async with pool.connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT {config.id_column}, {config.name_column} "
+            f"FROM {config.table} "
+            f"WHERE lower(%s) LIKE lower({config.name_column}) || '%%' "
+            f"ORDER BY char_length({config.name_column}) DESC LIMIT 1",
+            (normalized,),
+        )
+        row = await cursor.fetchone()
+    if row is None:
+        return None
+
+    name = str(row[1])
+    if not normalized.casefold().startswith(name.casefold()):
+        return None
+    return ({config.id_field: row[0], config.name_field: row[1]}, name)
+
+
+async def _find_leading_named_fact_entity(
+    query: str,
+    entity_types: list[NamedEntityType],
+    pool: AsyncConnectionPool,
+) -> dict | None:
+    markers = {
+        "product": (
+            "재고",
+            "부족",
+            "원가",
+            "가격",
+            "정가",
+            "색상",
+            "부품",
+            "경로",
+            "생산",
+            "stock",
+            "inventory",
+            "cost",
+            "price",
+            "shortage",
+            "component",
+            "path",
+        ),
+        "supplier": (
+            "공급",
+            "부품",
+            "완제품",
+            "경로",
+            "영향",
+            "재고",
+            "supplier",
+            "vendor",
+        ),
+    }
+    folded = query.casefold()
+
+    def has_name_prefix(config: NamedEntityType) -> bool:
+        fact_markers = markers[config.entity_type]
+        offsets = [folded.find(marker) for marker in fact_markers if marker in folded]
+        if not offsets:
+            return False
+        prefix = folded[: min(offsets)].strip(" ,.:;!?()[]{}")
+        if not prefix or prefix.startswith(
+            ("그 ", "해당 ", "현재 ", "활성 ", "전체 ", "모든 ", "각 ")
+        ):
+            return False
+        return not any(alias.casefold() in prefix for alias in config.aliases)
+
+    configs = [
+        config
+        for config in entity_types
+        if config.entity_type in markers and has_name_prefix(config)
+    ]
+    if not configs:
+        return None
+    matches = await asyncio.gather(
+        *(_find_leading_name(query, config, pool) for config in configs)
+    )
+    found = [match for match in matches if match is not None]
+    if not found:
+        return None
+    longest_length = max(len(match[1]) for match in found)
+    longest = [match for match in found if len(match[1]) == longest_length]
+    if len(longest) != 1:
+        return None
+    return longest[0][0]
+
+
+async def _find_product_relation_endpoints(
+    query: str,
+    entity_types: list[NamedEntityType],
+    pool: AsyncConnectionPool,
+) -> list[dict]:
+    folded = query.casefold()
+    if not any(
+        marker in folded
+        for marker in (
+            "사이",
+            "공통",
+            "연결",
+            "모두 들어",
+            "둘 다",
+            "between",
+            "both",
+            "common",
+        )
+    ):
+        return []
+    config = next(
+        (entity for entity in entity_types if entity.entity_type == "product"), None
+    )
+    if config is None:
+        return []
+
+    async with pool.connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT {config.id_column}, {config.name_column} "
+            f"FROM {config.table} "
+            f"WHERE strpos(lower(%s), lower({config.name_column})) > 0 "
+            f"ORDER BY char_length({config.name_column}) DESC LIMIT 10",
+            (query,),
+        )
+        rows = await cursor.fetchall()
+
+    selected: list[tuple[int, int, dict]] = []
+    for product_id, product_name in rows:
+        name = str(product_name)
+        start = folded.find(name.casefold())
+        if start < 0:
+            continue
+        end = start + len(name)
+        if any(
+            start < other_end and other_start < end
+            for other_start, other_end, _ in selected
+        ):
+            continue
+        selected.append(
+            (
+                start,
+                end,
+                {config.id_field: product_id, config.name_field: product_name},
+            )
+        )
+    if len(selected) < 2:
+        return []
+    return [entity for _, _, entity in sorted(selected)]
 
 
 async def _find_similar_entities(
@@ -255,6 +517,22 @@ def make_resolve_entity_node(
 ) -> Callable[[OrchestratorState], Any]:
     """OpenAI 클라이언트/PostgreSQL 풀/그래프 스키마를 주입받은 resolve_entity 노드를 만든다."""
     entity_types = list_resolvable_entity_types(graph_schema)
+    type_aliases = tuple(
+        dict.fromkeys(
+            alias
+            for aliases in (
+                *(entity.aliases for entity in entity_types),
+                *(node.aliases for node in graph_schema.nodes.values()),
+            )
+            for alias in aliases
+        )
+    )
+    identifier_only_aliases = tuple(
+        alias
+        for node in graph_schema.nodes.values()
+        if "name" not in node.properties
+        for alias in node.aliases
+    )
     extract_tool = _build_extract_entity_tool(entity_types)
 
     async def resolve_entity(state: OrchestratorState) -> dict:
@@ -282,10 +560,29 @@ def make_resolve_entity_node(
                     candidate_entity,
                 )
 
-        extractions = await _extract_entities(
+        extractions, had_tool_calls = await _extract_entities(
             state["query"], openai_client, extract_tool
         )
         if not extractions:
+            if not had_tool_calls:
+                category, relation_products = await asyncio.gather(
+                    _find_leading_category_modifier(state["query"], entity_types, pool),
+                    _find_product_relation_endpoints(
+                        state["query"], entity_types, pool
+                    ),
+                )
+            else:
+                category = None
+                relation_products = await _find_product_relation_endpoints(
+                    state["query"], entity_types, pool
+                )
+            if relation_products:
+                return {"entity": _collapse_entities(relation_products)}
+            fallback = category or await _find_leading_named_fact_entity(
+                state["query"], entity_types, pool
+            )
+            if fallback is not None and fallback not in valid_confirmed:
+                valid_confirmed.append(fallback)
             if valid_confirmed:
                 return {"entity": _collapse_entities(valid_confirmed)}
             logger.info(
@@ -293,9 +590,11 @@ def make_resolve_entity_node(
             )
             return {"entity": None}
 
-        lookups: list[tuple[str, str, NamedEntityType]] = []
+        lookups: list[tuple[str, str, NamedEntityType, bool]] = []
         for entity_type, entity_name in extractions:
-            if _is_entity_type_alias(entity_name, entity_types):
+            if _is_non_name_identifier(entity_name, identifier_only_aliases):
+                continue
+            if _is_entity_type_alias(entity_name, type_aliases):
                 logger.info(
                     "resolve_entity: query=%r -> entityName=%r 종류 표현이므로 무시",
                     state["query"],
@@ -313,34 +612,88 @@ def make_resolve_entity_node(
                 )
                 continue
 
-            lookups.append((entity_type, entity_name, config))
+            if entity_type == "productCategory" and not any(
+                marker in state["query"].casefold()
+                for marker in (
+                    "제품",
+                    "품목",
+                    "분류",
+                    "카테고리",
+                    "product",
+                    "category",
+                )
+            ):
+                continue
 
-        # 이름별 조회는 서로 독립적이라 asyncio.gather로 동시에 실행해
-        # 지연시간과 풀 점유시간을 줄인다. gather는 입력 순서를 그대로
-        # 보존한 리스트를 반환하므로, 아래에서 "질문에 등장한 순서대로
-        # 처리하고 첫 실패에서 raise"하는 기존 동작은 그대로 유지된다.
+            lookup_name, had_type_label = _strip_edge_type_alias(entity_name, config)
+            if _is_entity_type_alias(lookup_name, type_aliases):
+                continue
+            lookups.append(
+                (
+                    entity_type,
+                    lookup_name,
+                    config,
+                    had_type_label
+                    and _is_generic_descriptor(lookup_name)
+                    or _is_type_alias_fragment(lookup_name, config),
+                )
+            )
+
+        if not lookups:
+            fallback = await _find_leading_named_fact_entity(
+                state["query"], entity_types, pool
+            )
+            if fallback is not None and fallback not in valid_confirmed:
+                valid_confirmed.append(fallback)
+            return {"entity": _collapse_entities(valid_confirmed)}
+
         found_entities = await asyncio.gather(
-            *(_find_entity_by_name(config, name, pool) for _, name, config in lookups)
+            *(
+                _find_entity_by_name(config, name, pool)
+                for _, name, config, _ in lookups
+            )
+        )
+        relation_products = await _find_product_relation_endpoints(
+            state["query"], entity_types, pool
         )
         missing_indices = [
             index for index, entity in enumerate(found_entities) if entity is None
         ]
         candidates_by_index: dict[int, list[dict]] = {}
+        leading_fallback: dict | None = None
         if missing_indices:
-            candidates_list = await asyncio.gather(
+            candidates_task = asyncio.gather(
                 *(
                     _find_similar_entities(lookups[index][2], lookups[index][1], pool)
                     for index in missing_indices
                 )
             )
+            if len(lookups) == 1:
+                candidates_list, leading_fallback = await asyncio.gather(
+                    candidates_task,
+                    _find_leading_named_fact_entity(state["query"], entity_types, pool),
+                )
+            else:
+                candidates_list = await candidates_task
             candidates_by_index = dict(
                 zip(missing_indices, candidates_list, strict=True)
             )
 
         resolved: list[dict] = []
-        for index, (entity_type, entity_name, _config) in enumerate(lookups):
+        for index, (
+            entity_type,
+            entity_name,
+            _config,
+            generic_descriptor,
+        ) in enumerate(lookups):
             entity = found_entities[index]
             if entity is None:
+                if leading_fallback is not None:
+                    if leading_fallback not in resolved:
+                        resolved.append(leading_fallback)
+                    continue
+                if generic_descriptor:
+                    continue
                 candidates = candidates_by_index[index]
                 confirmed_candidate = next(
                     (
@@ -374,6 +727,11 @@ def make_resolve_entity_node(
                 raise EntityNotFoundError()
             if entity not in resolved:
                 resolved.append(entity)
+
+        if relation_products:
+            resolved = relation_products + [
+                entity for entity in resolved if "productId" not in entity
+            ]
 
         result: dict | list[dict] | None
         if not resolved:

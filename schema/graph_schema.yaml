@@ -42,6 +42,9 @@ nodes:
     uniqueKey: productId
     constraintName: product_id
     source: {schema: production, table: product}
+    outputAliases:
+      productId: [productId, componentId, finishedProductId, rootProductId, finishedProductIdA, finishedProductIdB]
+      name: [productName, componentName, finishedProductName, rootProductName]
     properties:
       productId: {type: INTEGER, required: true, sourceColumn: productid, aliases: [제품 ID, 부품 ID, 완제품 ID]}
       name: {type: STRING, required: true, sourceColumn: name, aliases: [제품명, 부품명, 완제품명]}
@@ -54,6 +57,10 @@ nodes:
     uniqueKey: supplierId
     constraintName: supplier_id
     source: {schema: purchasing, table: vendor}
+    outputAliases:
+      supplierId: [supplierId, supplierIdA, supplierIdB]
+      name: [supplierName, supplierNameA, supplierNameB]
+      active: [active]
     properties:
       supplierId: {type: INTEGER, required: true, sourceColumn: businessentityid, aliases: [공급업체 ID, 업체 ID, 공급사 ID]}
       name: {type: STRING, required: true, sourceColumn: name, aliases: [공급업체명, 업체명, 공급사명]}
@@ -66,6 +73,8 @@ nodes:
     uniqueKey: workOrderId
     constraintName: work_order_id
     source: {schema: production, table: workorder}
+    outputAliases:
+      workOrderId: [workOrderId]
     properties:
       workOrderId: {type: INTEGER, required: true, sourceColumn: workorderid, aliases: [작업지시 ID]}
       sourceModifiedAt: {type: LOCAL_DATETIME, required: true, sourceColumn: modifieddate}
@@ -77,6 +86,9 @@ nodes:
     constraintName: routing_operation_key
     keyComposition: "workorderid + '-' + productid + '-' + operationsequence"
     source: {schema: production, table: workorderrouting}
+    outputAliases:
+      routingOperationKey: [routingOperationKey]
+      sequence: [sequence]
     properties:
       routingOperationKey: {type: STRING, required: true, synthetic: true, aliases: [공정 식별 키]}
       sequence: {type: INTEGER, required: true, sourceColumn: operationsequence, aliases: [공정 순서, 작업 순서]}
@@ -88,6 +100,9 @@ nodes:
     uniqueKey: locationId
     constraintName: location_id
     source: {schema: production, table: location}
+    outputAliases:
+      locationId: [locationId]
+      name: [locationName]
     properties:
       locationId: {type: INTEGER, required: true, sourceColumn: locationid, aliases: [작업장 ID, 공정 위치 ID]}
       name: {type: STRING, required: true, sourceColumn: name, aliases: [작업장명, 공정 위치명]}
@@ -99,6 +114,9 @@ nodes:
     uniqueKey: scrapReasonId
     constraintName: scrap_reason_id
     source: {schema: production, table: scrapreason}
+    outputAliases:
+      scrapReasonId: [scrapReasonId]
+      name: [scrapReasonName]
     properties:
       scrapReasonId: {type: INTEGER, required: true, sourceColumn: scrapreasonid, aliases: [폐기 사유 ID, 폐기사유 ID]}
       name: {type: STRING, required: true, sourceColumn: name, aliases: [폐기 사유명, 폐기사유명]}
@@ -122,6 +140,11 @@ relationships:
     to: Product     # 하위 부품(component)
     source: {schema: production, table: billofmaterials}
     loadCondition: "load all rows; filter validity at query time via bomAsOfDate"
+    outputAliases:
+      bomId: [bomId]
+      quantityPerAssembly: [quantityPerAssembly]
+      startDate: [startDate]
+      endDate: [endDate]
     properties:
       bomId: {type: INTEGER, required: true, sourceColumn: billofmaterialsid, aliases: [BOM ID]}
       quantityPerAssembly: {type: FLOAT, required: true, sourceColumn: perassemblyqty, aliases: [조립품 1개당 필요 수량, 단위당 필요 수량]}

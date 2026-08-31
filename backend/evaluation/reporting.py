@@ -2,16 +2,33 @@
 
 import json
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from evaluation.gates import build_regression_gate
+from evaluation.quality import build_quality_scorecard
 from evaluation.runner import EvaluationRun
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _ratio(passed: int, total: int) -> float:
     return round(passed / total, 6) if total else 0.0
+
+
+def _average(values: Sequence[int | float]) -> float:
+    return round(sum(values) / len(values), 3) if values else 0.0
+
+
+def _p95(values: Sequence[int | float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, (95 * len(ordered) + 99) // 100 - 1)
+    return round(float(ordered[index]), 3)
 
 
 def _pipeline_accuracy(records: list[dict[str, Any]]) -> float:
@@ -96,6 +113,9 @@ def _suite_score(records: list[dict[str, Any]]) -> dict[str, Any]:
 def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     """반복 실행과 suite를 섞지 않고 전체 및 세부 지표를 계산한다."""
     total = len(records)
+    source_only = bool(records) and all(
+        record.get("executionMode") == "source" for record in records
+    )
     non_error = [record for record in records if record.get("status") != "ERROR"]
     fully = [record for record in records if record.get("finalResultEvaluated")]
     final_applicable = [
@@ -110,17 +130,27 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         if record.get("route") == "HYBRID" and record.get("status") != "ERROR"
     ]
 
-    stage_accuracy: dict[str, float] = {}
+    stage_accuracy: dict[str, float | None] = {}
     for stage in (
         "entity",
         "routing",
         "split",
+        "requiredOutputs",
+        "requiredOutputsExact",
+        "binding",
         "generation",
+        "safety",
         "execution",
         "resultContract",
+        "composition",
         "result",
+        "finalResult",
     ):
         stage_accuracy[stage] = _check_accuracy(records, stage)
+    if source_only:
+        stage_accuracy["execution"] = None
+        stage_accuracy["composition"] = None
+        stage_accuracy["finalResult"] = None
 
     partials: dict[str, list[bool]] = {"sql": [], "graph": []}
     partial_attempted = {"sql": 0, "graph": 0}
@@ -238,8 +268,38 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         for record in records
         if record.get("supportStatus") == "FULLY_EVALUATED"
     }
+    first_attempt_applicable = [
+        record
+        for record in non_error
+        if isinstance(record.get("firstAttemptExecutionPass"), bool)
+    ]
+    retried = [
+        record
+        for record in non_error
+        if isinstance(record.get("attemptCount"), int)
+        and record["attemptCount"]
+        > sum(bool(item.get("attempts")) for item in record.get("subqueries", []))
+    ]
+    failure_stage_counts: dict[str, int] = defaultdict(int)
+    for record in non_error:
+        failure_stage = record.get("failureStage")
+        if isinstance(failure_stage, str):
+            failure_stage_counts[failure_stage] += 1
+    latencies = [
+        float(record["elapsedMs"])
+        for record in non_error
+        if isinstance(record.get("elapsedMs"), int | float)
+    ]
+    model_calls = [
+        int(record["modelCallCount"])
+        for record in non_error
+        if isinstance(record.get("modelCallCount"), int)
+        and not isinstance(record.get("modelCallCount"), bool)
+    ]
 
-    return {
+    metrics: dict[str, Any] = {
+        "executionMode": "source" if source_only else "orchestrator",
+        "promotionEligible": not source_only,
         "evaluatedRuns": total,
         "evaluationCoverage": _ratio(len(non_error), total),
         "queryPipelineAccuracy": _pipeline_accuracy(records),
@@ -273,6 +333,26 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "graphPartialAccuracy": _ratio(sum(partials["graph"]), len(partials["graph"])),
         "blockedPartialCount": partial_blocked,
+        "firstAttemptExecutionRate": _ratio(
+            sum(
+                record["firstAttemptExecutionPass"] is True
+                for record in first_attempt_applicable
+            ),
+            len(first_attempt_applicable),
+        ),
+        "retryRecoveryRate": _ratio(
+            sum(record.get("recoveredByRetry") is True for record in retried),
+            len(retried),
+        ),
+        "retryAttemptedRuns": len(retried),
+        "failureStageCounts": dict(sorted(failure_stage_counts.items())),
+        "averageLatencyMs": _average(latencies),
+        "p95LatencyMs": _p95(latencies),
+        "averageModelCallCount": _average(model_calls),
+        "maxModelCallCount": max(model_calls, default=0),
+        "requiredOutputsContractRate": _check_accuracy(records, "requiredOutputs"),
+        "requiredOutputsExactRate": _check_accuracy(records, "requiredOutputsExact"),
+        "bindingContractRate": _check_accuracy(records, "binding"),
         "stageAccuracy": stage_accuracy,
         "routingAccuracy": stage_accuracy["routing"],
         "routingAccuracyByRoute": routing_accuracy_by_route,
@@ -295,6 +375,26 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "fullyEvaluatedCount": len(fully_contracts),
         "suiteScores": suite_scores,
     }
+    if source_only:
+        for score in suite_scores.values():
+            for key in (
+                "finalResultEvaluationCoverage",
+                "finalResultAccuracy",
+                "verifiedFinalResultPassRate",
+            ):
+                if key in score:
+                    score[key] = None
+        for key in (
+            "firstAttemptExecutionRate",
+            "retryRecoveryRate",
+            "retryAttemptedRuns",
+            "finalResultCoverage",
+            "finalResultAccuracy",
+            "finalResultEvaluationCoverage",
+            "verifiedFinalResultPassRate",
+        ):
+            metrics[key] = None
+    return metrics
 
 
 def build_summary(
@@ -304,10 +404,14 @@ def build_summary(
     commit: str,
     validate_gold: bool,
     working_tree_dirty: bool | None = None,
+    reasoning_effort: str | None = None,
+    performance_baseline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    metrics = calculate_metrics(result.records) if not validate_gold else {}
+    summary: dict[str, Any] = {
         "generatedAt": datetime.now(UTC).isoformat(),
         "model": model,
+        "reasoningEffort": reasoning_effort,
         "commit": commit,
         "workingTreeDirty": working_tree_dirty,
         "goldValidationOnly": validate_gold,
@@ -322,9 +426,48 @@ def build_summary(
                 (int(record.get("run", 0)) for record in result.records), default=0
             ),
         },
-        "metrics": calculate_metrics(result.records) if not validate_gold else {},
+        "metrics": metrics,
         "infrastructureError": result.infrastructure_error,
     }
+    if not validate_gold:
+        if performance_baseline is not None:
+            errors: list[str] = []
+            if performance_baseline.get("workingTreeDirty") is not False:
+                errors.append("baseline working tree is not clean")
+            if performance_baseline.get("executionMode") != "orchestrator":
+                errors.append("baseline is not a production orchestrator run")
+            for key, current in (
+                ("model", model),
+                ("reasoningEffort", reasoning_effort),
+                ("snapshotSha256", result.snapshot.get("sha256")),
+            ):
+                if performance_baseline.get(key) != current:
+                    errors.append(f"baseline {key} mismatch")
+            current_cases = summary["evaluationSet"]["caseIds"]
+            if performance_baseline.get("caseIds") != current_cases:
+                errors.append("baseline case set mismatch")
+            for key in ("averageModelCallCount", "p95LatencyMs"):
+                value = performance_baseline.get(key)
+                if not isinstance(value, int | float) or value <= 0:
+                    errors.append(f"baseline {key} is unavailable")
+            performance_baseline = {
+                **performance_baseline,
+                "compatible": not errors,
+                "compatibilityErrors": errors,
+            }
+            summary["performanceBaseline"] = performance_baseline
+        summary["regressionGate"] = build_regression_gate(
+            result.records,
+            metrics,
+            performance_baseline,
+        )
+        summary["qualityScorecard"] = build_quality_scorecard(
+            result.records,
+            metrics,
+            working_tree_dirty=working_tree_dirty,
+            project_root=_PROJECT_ROOT,
+        )
+    return summary
 
 
 def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> str:
@@ -360,6 +503,9 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
 
     def score_row(label: str, passed: int, total: int) -> str:
         return f"| {label} | {passed}/{total} | {percentage(passed, total)} |"
+
+    def metric_percentage(value: Any) -> str:
+        return "N/A" if value is None else f"{float(value) * 100:.1f}%"
 
     def failure_reason(record: dict[str, Any]) -> str:
         reasons = [
@@ -441,6 +587,7 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
         "|---|---|",
         f"| 실행 시각 | {generated_at_label} |",
         f"| 모델 | {cell(model_label)} |",
+        f"| reasoning effort | {cell(summary.get('reasoningEffort') or '-')} |",
         f"| 커밋 | {cell(commit_label)} |",
         f"| 작업 상태 | {working_tree_label} |",
         f"| DB snapshot | {cell(snapshot_label)} |",
@@ -535,6 +682,34 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                 "> 채점 실행 완료는 정답률이 아니라 인프라 오류 없이 채점된 비율입니다.",
             ]
         )
+        metrics = summary.get("metrics", {})
+        failure_counts = metrics.get("failureStageCounts", {})
+        lines.extend(
+            [
+                "",
+                "## 실행 관측",
+                "",
+                "| 지표 | 값 |",
+                "|---|---:|",
+                f"| 평가 경로 | {cell(metrics.get('executionMode', 'orchestrator'))} |",
+                f"| 승격 지표 사용 | {'예' if metrics.get('promotionEligible') else '아니오'} |",
+                f"| 최초 실행 성공률 | {metric_percentage(metrics.get('firstAttemptExecutionRate'))} |",
+                f"| retry 복구율 | {metric_percentage(metrics.get('retryRecoveryRate'))} |",
+                f"| 평균 / p95 지연시간 | {metrics.get('averageLatencyMs', 0):.1f} / {metrics.get('p95LatencyMs', 0):.1f} ms |",
+                f"| 평균 / 최대 모델 호출 수 | {metrics.get('averageModelCallCount', 0):.2f} / {metrics.get('maxModelCallCount', 0)} |",
+                f"| required output coverage / exact | {metric_percentage(metrics.get('requiredOutputsContractRate'))} / {metric_percentage(metrics.get('requiredOutputsExactRate'))} |",
+                "",
+                "| 최초 실패 단계 | 건수 |",
+                "|---|---:|",
+            ]
+        )
+        if failure_counts:
+            lines.extend(
+                f"| {cell(stage)} | {count} |"
+                for stage, count in failure_counts.items()
+            )
+        else:
+            lines.append("| 없음 | 0 |")
         if runs > 1:
             trial_summary = summary.get("metrics", {}).get("caseTrialSummary", {})
             complete_trials = [
@@ -607,6 +782,50 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                     record.get("queryPipelinePass") is True for record in route_records
                 )
                 lines.append(score_row(route, route_passed, len(route_records)))
+
+        scorecard = summary.get("qualityScorecard")
+        if isinstance(scorecard, dict):
+            lines.extend(
+                [
+                    "",
+                    "## 품질 점수표",
+                    "",
+                    f"평균 {scorecard.get('averageScore', 0):.3f}/10, "
+                    f"gate {'PASS' if scorecard.get('passesThreshold') else 'FAIL'}",
+                    "",
+                    "| 영역 | 점수 | 미통과 control |",
+                    "|---|---:|---|",
+                ]
+            )
+            for area in scorecard.get("areas", []):
+                failed = [
+                    control.get("name", "-")
+                    for control in area.get("controls", [])
+                    if control.get("status") == "FAIL"
+                ]
+                lines.append(
+                    f"| {cell(area.get('name', '-'))} | "
+                    f"{float(area.get('score', 0)):.1f} | "
+                    f"{cell(', '.join(failed) or '-')} |"
+                )
+
+        regression_gate = summary.get("regressionGate")
+        if isinstance(regression_gate, dict):
+            failed_checks = [
+                item.get("name", "-")
+                for item in regression_gate.get("checks", [])
+                if item.get("status") == "FAIL"
+            ]
+            lines.extend(
+                [
+                    "",
+                    "## Regression gate",
+                    "",
+                    f"상태: {cell(regression_gate.get('status', 'FAIL'))}",
+                    "",
+                    f"미통과: {cell(', '.join(failed_checks) or '-')}",
+                ]
+            )
 
     lines.extend(
         [

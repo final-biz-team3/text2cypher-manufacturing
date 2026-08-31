@@ -15,6 +15,11 @@ _SQL_INSTRUCTIONS = """당신은 제조 데이터용 PostgreSQL 쿼리 생성기
 - 결과 alias는 한국어 표시명 대신 스키마 식별자 또는 의미가 분명한 영어
   lowerCamelCase를 사용합니다. 상위 N건은 사용자가 순위 번호를 요구한 경우에만
   별도 rank 컬럼을 만듭니다.
+- ORDER BY에서 반환 alias를 재사용하면 "totalRejectedQty"처럼 SELECT와 같은
+  대소문자를 유지해 double quote로 감쌉니다.
+- derived table이나 CTE의 quoted lowerCamelCase 열도 i."actualStock"처럼 exact
+  quote로 참조합니다. 가능하면 내부 alias는 actual_stock 같은 unquoted snake_case를
+  쓰고 required alias는 최종 SELECT에서만 "actualStock"으로 지정합니다.
 - 여러 행을 반환하면 관련 식별자를 기준으로 일관되게 정렬합니다.
 - 제공된 업무 규칙이 있으면 쿼리에 반영합니다.
 - 스키마에 없는 테이블이나 컬럼을 추측하지 않습니다.
@@ -27,6 +32,15 @@ _SQL_DOMAIN_RULES = (
     '"실제 재고"는 제품을 기준으로 productinventory를 LEFT JOIN한 뒤 '
     "COALESCE(SUM(quantity), 0)으로 계산하고, "
     '"부족 수량"은 GREATEST(safetystocklevel - 실제 재고, 0)이다.',
+    '질문이 "부족한" 제품만 요구하면 집계 후 실제 재고가 safetystocklevel보다 '
+    "작은 행만 반환한다.",
+    "totalRejectedQty는 SUM(rejectedqty)로 계산한 반려 수량 합계이며 구매주문 "
+    "건수가 아니다. required output에 totalRejectedQty가 있으면 공급업체별 "
+    "SUM(rejectedqty)를 내림차순으로 정렬하고 supplier ID를 오름차순 tie-break로 "
+    "사용한다. purchaseorderid 건수를 별도로 계산하거나 정렬 기준으로 쓰지 않는다.",
+    "inputBindings가 있으면 그 ID 배열이 이 subquery의 전체 대상이다. 모든 고유 ID를 "
+    "보존하고 선행 단계의 관계를 SQL에서 다시 탐색하거나 makeflag 등으로 행을 "
+    "제거하지 않는다.",
 )
 
 

@@ -53,8 +53,16 @@ class MockAsyncPostgresPool:
         rows_by_name: dict[str, tuple[Any, ...]],
         similar_rows_by_name: dict[str, list[tuple[Any, ...]]] | None = None,
         similarity_error: Exception | None = None,
+        rows_by_table_and_name: dict[tuple[str, str], tuple[Any, ...]] | None = None,
+        contained_rows_by_table_and_query: (
+            dict[tuple[str, str], list[tuple[Any, ...]]] | None
+        ) = None,
     ) -> None:
         self._rows_by_name = rows_by_name
+        self._rows_by_table_and_name = rows_by_table_and_name or {}
+        self._contained_rows_by_table_and_query = (
+            contained_rows_by_table_and_query or {}
+        )
         self._similar_rows_by_name = similar_rows_by_name or {}
         self._similarity_error = similarity_error
         self.last_query: tuple[str, tuple[Any, ...]] | None = None
@@ -72,10 +80,22 @@ class MockAsyncPostgresPool:
                 raise self._similarity_error
             name = params[0]
             return _MockAsyncCursor(None, self._similar_rows_by_name.get(name, []))
+        if "strpos(lower(" in query:
+            source_query = params[0]
+            for (
+                table,
+                candidate_query,
+            ), rows in self._contained_rows_by_table_and_query.items():
+                if candidate_query == source_query and f"FROM {table}" in query:
+                    return _MockAsyncCursor(None, rows)
+            return _MockAsyncCursor(None, [])
         if len(params) == 2:
             exists = params in self._rows_by_name.values()
             return _MockAsyncCursor((1,) if exists else None, [])
         name = params[0]
+        for (table, candidate_name), row in self._rows_by_table_and_name.items():
+            if candidate_name == name and f"FROM {table}" in query:
+                return _MockAsyncCursor(row, [])
         return _MockAsyncCursor(self._rows_by_name.get(name), [])
 
 

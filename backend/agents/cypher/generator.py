@@ -5,7 +5,11 @@ from typing import Any
 
 from agents.cypher.prompt import build_cypher_prompt
 from agents.cypher.schema.models import GraphQueryPolicy
-from agents.generator import generate_query
+from agents.generator import (
+    DEFAULT_REASONING_EFFORT,
+    ReasoningEffort,
+    generate_query,
+)
 
 
 async def generate_cypher(
@@ -20,6 +24,7 @@ async def generate_cypher(
     input_bindings: dict[str, list[Any]] | None = None,
     previous_query: str | None = None,
     previous_error: str | None = None,
+    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
 ) -> str:
     """Cypher 프롬프트를 구성해 LLM이 생성한 Neo4j 문을 반환한다.
     previous_query·previous_error는 이전 시도가 실패했을 때 self-correction
@@ -35,4 +40,6 @@ async def generate_cypher(
         previous_query=previous_query,
         previous_error=previous_error,
     )
-    return await generate_query(openai_client, messages)
+    return await generate_query(
+        openai_client, messages, reasoning_effort=reasoning_effort
+    )

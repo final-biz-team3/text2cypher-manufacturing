@@ -37,8 +37,10 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
-            "SELECT listprice FROM production.product WHERE productid = 956"
+            'SELECT listprice AS "listPrice" FROM production.product '
+            "WHERE productid = 956"
         ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
@@ -56,7 +58,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     # (Task 5), chat_module의 get_pool monkeypatch로는 못 가로챈다 -
     # graph_module.execute_sql 자체를 가짜로 바꿔야 실제 DB를 안 친다.
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [{"listprice": 2384.07}]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
 
@@ -77,16 +79,17 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
         "productName": "Touring-1000 Yellow, 54",
     }
     assert result["sql_query"] == (
-        "SELECT listprice FROM production.product WHERE productid = 956"
+        'SELECT listprice AS "listPrice" FROM production.product WHERE productid = 956'
     )
     assert result["sql_result"]["error"] is None
-    assert result["sql_result"]["result"] == [{"listprice": 2384.07}]
+    assert result["sql_result"]["result"] == [{"listPrice": 2384.07}]
     assert result["final_answer"] is not None
     assert result["final_answer"].startswith("COMPOSED: ")
     assert "composed_result" not in result
+    assert "resultTransform" not in result
     assert "subqueries" not in result
     assert "subquery_results" not in result
-    assert len(openai_client.calls) == 3
+    assert len(openai_client.calls) == 4
 
 
 async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,7 +97,10 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
-        make_content_response("SELECT listprice FROM production.product"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_content_response(
+            'SELECT listprice AS "listPrice" FROM production.product'
+        ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
     monkeypatch.setattr(
@@ -108,7 +114,7 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [{"listprice": 2384.07}]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
 
@@ -162,7 +168,10 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
-        make_content_response("SELECT listprice FROM production.product"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_content_response(
+            'SELECT listprice AS "listPrice" FROM production.product'
+        ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
     monkeypatch.setattr(
@@ -175,7 +184,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: _FailingWritePool())
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [{"listprice": 2384.07}]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
 
@@ -191,7 +200,9 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_query"] == "SELECT listprice FROM production.product"
+    assert (
+        result["sql_query"] == 'SELECT listprice AS "listPrice" FROM production.product'
+    )
 
 
 def test_chat_request_rejects_unknown_field() -> None:
@@ -224,7 +235,10 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
-        make_content_response("SELECT listprice FROM production.product"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_content_response(
+            'SELECT listprice AS "listPrice" FROM production.product'
+        ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
     monkeypatch.setattr(
@@ -233,7 +247,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: MockAsyncWritePool())
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [{"listprice": 2384.07}]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
     app = FastAPI()
@@ -256,8 +270,15 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response('["sql", "graph"]'),
-        make_content_response("SELECT listprice FROM production.product"),
-        make_content_response("MATCH (p:Product) RETURN p LIMIT 1"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_content_response('{"requiredOutputs":["productId"]}'),
+        make_content_response(
+            'SELECT listprice AS "listPrice" FROM production.product'
+        ),
+        make_content_response(
+            "MATCH (p:Product) RETURN p.productId AS productId, "
+            "p.name AS productName LIMIT 1"
+        ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
     monkeypatch.setattr(
@@ -271,17 +292,16 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [{"listprice": Decimal("2384.07")}]
+        return [{"listPrice": Decimal("2384.07")}]
 
     async def fake_execute_cypher(cypher: str) -> list[dict]:
         return [
             {
-                "p": {
-                    "productId": 956,
-                    "sourceModifiedAt": neo4j.time.DateTime(
-                        2014, 2, 8, 10, 1, 36, 827000000
-                    ),
-                }
+                "productId": 956,
+                "productName": "Touring-1000 Yellow, 54",
+                "sourceModifiedAt": neo4j.time.DateTime(
+                    2014, 2, 8, 10, 1, 36, 827000000
+                ),
             }
         ]
 
@@ -300,8 +320,8 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_result"]["result"] == [{"listprice": 2384.07}]
-    assert result["graph_result"]["result"][0]["p"]["sourceModifiedAt"] == (
+    assert result["sql_result"]["result"] == [{"listPrice": 2384.07}]
+    assert result["graph_result"]["result"][0]["sourceModifiedAt"] == (
         "2014-02-08T10:01:36.827000000"
     )
     # json.dumps가 그대로 통과해야 한다 - Decimal/neo4j.time.DateTime을
@@ -324,24 +344,30 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
           "tool": "sql",
           "question": "기준 사실을 조회한다.",
           "dependsOn": [],
-          "requiredOutputs": ["id"],
-          "joinKeys": ["id"]
+          "joinKeys": ["productId"],
+          "inputBindings": {}
         },
         {
           "id": "graph_followup",
           "tool": "graph",
           "question": "관련 경로를 조회한다.",
           "dependsOn": [],
-          "requiredOutputs": ["id"],
-          "joinKeys": ["id"]
+          "joinKeys": ["productId"],
+          "inputBindings": {}
         }
-      ]
+      ],
+      "resultTransform": null
     }"""
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response(route_plan),
-        make_content_response("SELECT 1 AS id"),
-        make_content_response("MATCH (p:Product) RETURN p.productId AS id LIMIT 1"),
+        make_content_response('{"requiredOutputs":["productId"]}'),
+        make_content_response('{"requiredOutputs":["productId"]}'),
+        make_content_response("SELECT 1 AS productId, 'SQL Product' AS productName"),
+        make_content_response(
+            "MATCH (p:Product) RETURN p.productId AS productId, "
+            "p.name AS productName LIMIT 1"
+        ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
     monkeypatch.setattr(
@@ -350,10 +376,16 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: MockAsyncWritePool())
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [{"id": 1, "sqlFact": "kept"}]
+        return [{"productId": 1, "productName": "SQL Product", "sqlFact": "kept"}]
 
     async def fake_execute_cypher(cypher: str) -> list[dict]:
-        return [{"id": 999, "graphFact": "kept"}]
+        return [
+            {
+                "productId": 999,
+                "productName": "Graph Product",
+                "graphFact": "kept",
+            }
+        ]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
     monkeypatch.setattr(graph_module, "execute_cypher", fake_execute_cypher)
@@ -364,10 +396,15 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_result"]["result"] == [{"id": 1, "sqlFact": "kept"}]
-    assert result["graph_result"]["result"] == [{"id": 999, "graphFact": "kept"}]
-    assert result["final_answer"].startswith("COMPOSED: ")
-    assert "바인딩 범위를 벗어났습니다" in result["final_answer"]
+    assert result["sql_result"]["result"] == [
+        {"productId": 1, "productName": "SQL Product", "sqlFact": "kept"}
+    ]
+    assert result["graph_result"]["result"] == [
+        {"productId": 999, "productName": "Graph Product", "graphFact": "kept"}
+    ]
+    assert "다시 시도" in result["final_answer"]
+    assert "바인딩 범위를 벗어났습니다" not in result["final_answer"]
     assert "composed_result" not in result
+    assert "resultTransform" not in result
     assert "subqueries" not in result
     assert "subquery_results" not in result

@@ -1,6 +1,17 @@
 tables:
   production.product:
     aliases: [제품]
+    outputAliases:
+      productid: [productId, componentId, finishedProductId, rootProductId, finishedProductIdA, finishedProductIdB]
+      name: [productName, componentName, finishedProductName, rootProductName]
+      productnumber: [productNumber]
+      makeflag: [makeFlag]
+      color: [color]
+      safetystocklevel: [safetyStockLevel]
+      standardcost: [standardCost]
+      listprice: [listPrice]
+      size: [size]
+      sellenddate: [sellEndDate]
     columns:
       productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [제품 ID]}
       name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [제품명]}
@@ -17,6 +28,12 @@ tables:
 
   production.productinventory:
     aliases: [제품 재고]
+    outputAliases:
+      productid: [productId, componentId]
+      locationid: [locationId]
+      shelf: [shelf]
+      bin: [bin]
+      quantity: [quantity]
     columns:
       productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
       locationid: {type: SMALLINT, primaryKey: true, nullable: false, aliases: []}
@@ -26,12 +43,19 @@ tables:
 
   production.location:
     aliases: [재고 위치, 작업장]
+    outputAliases:
+      locationid: [locationId]
+      name: [locationName]
     columns:
       locationid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [재고 위치 ID]}
       name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [재고 위치명, 작업장명]}
 
   purchasing.vendor:
     aliases: [공급업체]
+    outputAliases:
+      businessentityid: [supplierId]
+      name: [supplierName]
+      activeflag: [active]
     columns:
       businessentityid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [공급업체 ID]}
       name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [공급업체명]}
@@ -39,18 +63,28 @@ tables:
 
   purchasing.productvendor:
     aliases: [제품별 공급업체]
+    outputAliases:
+      productid: [productId, componentId]
+      businessentityid: [supplierId]
     columns:
       productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
       businessentityid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
 
   production.productcategory:
     aliases: [제품 분류]
+    outputAliases:
+      productcategoryid: [categoryId]
+      name: [categoryName]
     columns:
       productcategoryid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [제품 분류 ID]}
       name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [제품 분류명]}
 
   production.productsubcategory:
     aliases: [제품 하위 분류]
+    outputAliases:
+      productsubcategoryid: [subcategoryId]
+      productcategoryid: [categoryId]
+      name: [subcategoryName]
     columns:
       productsubcategoryid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [제품 하위 분류 ID]}
       productcategoryid: {type: INTEGER, primaryKey: false, nullable: false, aliases: []}
@@ -58,6 +92,13 @@ tables:
 
   production.billofmaterials:
     aliases: [BOM]
+    outputAliases:
+      billofmaterialsid: [bomId]
+      productassemblyid: [finishedProductId, rootProductId]
+      componentid: [componentId]
+      startdate: [startDate]
+      enddate: [endDate]
+      perassemblyqty: [quantityPerAssembly]
     columns:
       billofmaterialsid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [BOM ID]}
       productassemblyid: {type: INTEGER, primaryKey: false, nullable: true, aliases: [상위 조립품 ID]}
@@ -68,6 +109,11 @@ tables:
 
   sales.salesorderdetail:
     aliases: [판매 주문 상세]
+    outputAliases:
+      salesorderid: [salesOrderId]
+      salesorderdetailid: [salesOrderDetailId]
+      productid: [productId]
+      orderqty: [orderQty]
     columns:
       salesorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
       salesorderdetailid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
@@ -76,6 +122,10 @@ tables:
 
   purchasing.purchaseorderdetail:
     aliases: [구매 주문 상세]
+    outputAliases:
+      purchaseorderid: [purchaseOrderId]
+      purchaseorderdetailid: [purchaseOrderDetailId]
+      rejectedqty: [rejectedQty]
     columns:
       purchaseorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
       purchaseorderdetailid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
@@ -83,12 +133,20 @@ tables:
 
   purchasing.purchaseorderheader:
     aliases: [구매 주문]
+    outputAliases:
+      purchaseorderid: [purchaseOrderId]
+      vendorid: [supplierId]
     columns:
       purchaseorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
       vendorid: {type: INTEGER, primaryKey: false, nullable: false, aliases: []}
 
   production.workorder:
     aliases: [작업지시]
+    outputAliases:
+      workorderid: [workOrderId]
+      productid: [productId]
+      scrappedqty: [scrappedQty]
+      scrapreasonid: [scrapReasonId]
     columns:
       workorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [작업지시 ID]}
       productid: {type: INTEGER, primaryKey: false, nullable: false, aliases: []}
@@ -97,6 +155,11 @@ tables:
 
   production.workorderrouting:
     aliases: [작업지시 공정]
+    outputAliases:
+      workorderid: [workOrderId]
+      productid: [productId]
+      operationsequence: [sequence]
+      locationid: [locationId]
     columns:
       workorderid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
       productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
@@ -105,6 +168,9 @@ tables:
 
   production.scrapreason:
     aliases: [폐기사유, 폐기 사유]
+    outputAliases:
+      scrapreasonid: [scrapReasonId]
+      name: [scrapReasonName]
     columns:
       scrapreasonid: {type: INTEGER, primaryKey: true, nullable: false, aliases: [폐기사유 ID, 폐기 사유 ID]}
       name: {type: VARCHAR, primaryKey: false, nullable: false, aliases: [폐기사유명, 폐기 사유명]}

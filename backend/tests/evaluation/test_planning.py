@@ -2,7 +2,16 @@ from typing import Any
 
 import pytest
 
-from orchestrator.planning import parse_execution_plan, validate_subqueries
+from orchestrator.planning import (
+    BOM_SHORTAGE_GRAPH_OUTPUTS,
+    BOM_SHORTAGE_SQL_OUTPUTS,
+    parse_execution_plan,
+    parse_route_draft,
+    route_draft_json_schema,
+    validate_result_transform,
+    validate_route_subqueries,
+    validate_subqueries,
+)
 
 
 def _step(
@@ -85,6 +94,75 @@ def test_parse_execution_plan_keeps_legacy_tool_plan_with_one_subquery() -> None
     assert result["subqueries"][0]["question"] == "원래 질문"
 
 
+def test_route_binding_name_must_match_schema_identity_alias() -> None:
+    subqueries = [
+        {
+            "id": "graph_components",
+            "tool": "graph",
+            "question": "부품을 조회한다.",
+            "dependsOn": [],
+            "joinKeys": ["componentId"],
+        },
+        {
+            "id": "sql_stock",
+            "tool": "sql",
+            "question": "재고를 조회한다.",
+            "dependsOn": ["graph_components"],
+            "joinKeys": ["componentId"],
+            "inputBindings": {"productIds": "graph_components.componentId"},
+        },
+    ]
+
+    with pytest.raises(ValueError, match="binding 이름과 source alias"):
+        validate_route_subqueries(subqueries)
+
+
+def test_parse_route_draft_merges_binding_alias_into_both_join_keys() -> None:
+    content = """{
+      "tool_plan": ["graph", "sql"],
+      "subqueries": [
+        {
+          "id": "graph_supplier_impact",
+          "tool": "graph",
+          "question": "North Mill 공급 부품의 영향을 찾는다.",
+          "dependsOn": [],
+          "joinKeys": [],
+          "inputBindings": {}
+        },
+        {
+          "id": "sql_component_stock",
+          "tool": "sql",
+          "question": "앞 단계 부품의 재고를 찾는다.",
+          "dependsOn": ["graph_supplier_impact"],
+          "joinKeys": ["componentId"],
+          "inputBindings": {
+            "componentIds": "graph_supplier_impact.componentId"
+          }
+        }
+      ],
+      "resultTransform": null
+    }"""
+
+    result = parse_route_draft(content, "공급 중단 영향과 재고")
+
+    assert result["subqueries"][0]["joinKeys"] == ["componentId"]
+    assert result["subqueries"][1]["joinKeys"] == ["componentId"]
+
+
+def test_route_schema_restricts_binding_value_to_matching_identity_alias() -> None:
+    schema = route_draft_json_schema({"componentId", "productId"})
+    variants = schema["properties"]["subqueries"]["items"]["properties"][
+        "inputBindings"
+    ]["anyOf"]
+    component_variant = next(
+        item for item in variants if "componentIds" in item["properties"]
+    )
+
+    assert component_variant["properties"]["componentIds"]["pattern"] == (
+        r"^[^.\s]+\.componentId$"
+    )
+
+
 def test_parse_execution_plan_rejects_tool_order_before_its_dependency() -> None:
     content = """{
       "tool_plan": ["sql", "graph"],
@@ -122,7 +200,7 @@ def test_parse_execution_plan_rejects_more_than_one_subquery_for_same_tool() -> 
           "tool": "sql",
           "question": "가격을 찾는다.",
           "dependsOn": [],
-          "requiredOutputs": [],
+          "requiredOutputs": ["productId", "listPrice"],
           "joinKeys": []
         },
         {
@@ -130,7 +208,7 @@ def test_parse_execution_plan_rejects_more_than_one_subquery_for_same_tool() -> 
           "tool": "sql",
           "question": "재고를 찾는다.",
           "dependsOn": [],
-          "requiredOutputs": [],
+          "requiredOutputs": ["productId", "actualStock"],
           "joinKeys": []
         }
       ]
@@ -224,3 +302,75 @@ def test_validate_subqueries_keeps_single_and_legacy_hybrid_compatible() -> None
 
     assert single[0]["joinKeys"] == ["componentId"]
     assert [item["joinKeys"] for item in legacy["subqueries"]] == [[], []]
+
+
+def test_object_plan_requires_all_canonical_outputs_but_legacy_can_be_empty() -> None:
+    content = """{
+      "tool_plan": ["sql"],
+      "subqueries": [{
+        "id": "sql_stock",
+        "tool": "sql",
+        "question": "재고를 조회한다.",
+        "dependsOn": [],
+        "requiredOutputs": [],
+        "joinKeys": [],
+        "inputBindings": {}
+      }]
+    }"""
+
+    with pytest.raises(ValueError, match="requiredOutputs는 비어 있을 수 없습니다"):
+        parse_execution_plan(content, "재고")
+
+    assert (
+        parse_execution_plan('["sql"]', "재고")["subqueries"][0]["requiredOutputs"]
+        == []
+    )
+
+
+def _shortage_steps() -> list[dict[str, Any]]:
+    return [
+        _step(
+            "graph_bom",
+            outputs=sorted(BOM_SHORTAGE_GRAPH_OUTPUTS),
+            join_keys=["componentId"],
+        ),
+        _step(
+            "sql_stock",
+            tool="sql",
+            depends_on=["graph_bom"],
+            outputs=sorted(BOM_SHORTAGE_SQL_OUTPUTS),
+            join_keys=["componentId"],
+            bindings={"componentIds": "graph_bom.componentId"},
+        ),
+    ]
+
+
+def test_bom_shortage_transform_requires_exact_allowlisted_plan() -> None:
+    steps = validate_subqueries(_shortage_steps())
+
+    assert validate_result_transform(
+        {"type": "bom_shortage_v1", "productionQty": 10}, steps
+    ) == {"type": "bom_shortage_v1", "productionQty": 10}
+
+
+@pytest.mark.parametrize("production_qty", [True, 0, -1, float("inf"), float("nan")])
+def test_bom_shortage_transform_rejects_invalid_production_quantity(
+    production_qty: Any,
+) -> None:
+    steps = validate_subqueries(_shortage_steps())
+
+    with pytest.raises(ValueError, match="유한한 양수"):
+        validate_result_transform(
+            {"type": "bom_shortage_v1", "productionQty": production_qty}, steps
+        )
+
+
+def test_bom_shortage_transform_rejects_wrong_binding_contract() -> None:
+    steps = _shortage_steps()
+    steps[1]["inputBindings"] = {"componentIds": "graph_bom.componentName"}
+    validated = validate_subqueries(steps)
+
+    with pytest.raises(ValueError, match="componentIds binding"):
+        validate_result_transform(
+            {"type": "bom_shortage_v1", "productionQty": 10}, validated
+        )

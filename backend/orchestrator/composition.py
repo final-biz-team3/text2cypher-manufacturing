@@ -3,7 +3,12 @@
 from collections.abc import Mapping
 from typing import Any, cast
 
-from orchestrator.planning import Subquery
+from orchestrator.bom_shortage import calculate_bom_shortages
+from orchestrator.planning import (
+    BomShortageTransform,
+    Subquery,
+    validate_result_transform,
+)
 from orchestrator.state import (
     ComposedResult,
     ComposedSection,
@@ -15,31 +20,46 @@ from orchestrator.state import (
 _EMPTY_REASONS = {"NO_DATA", "INCONCLUSIVE"}
 
 
-def _failure(mode: CompositionMode, message: str) -> ComposedResult:
-    return {
+def _failure(
+    mode: CompositionMode,
+    message: str,
+    *,
+    transform: str | None = None,
+    truncated: bool = False,
+) -> ComposedResult:
+    result: ComposedResult = {
         "mode": mode,
         "rows": [],
         "sections": {},
         "error": message,
         "empty_reason": None,
         "total_count": 0,
-        "truncated": False,
+        "truncated": truncated,
     }
+    if transform is not None:
+        result["transform"] = transform
+    return result
 
 
 def _source_rows(
     subquery: Subquery,
     tool_results: Mapping[str, dict[str, Any] | None],
     mode: CompositionMode,
-) -> tuple[list[dict[str, Any]] | None, EmptyReason | None, ComposedResult | None]:
+) -> tuple[
+    list[dict[str, Any]] | None,
+    EmptyReason | None,
+    bool,
+    ComposedResult | None,
+]:
     source = tool_results.get(subquery["tool"])
     label = f"{subquery['id']}({subquery['tool']})"
     if source is None:
-        return None, None, _failure(mode, f"{label} 실행 결과가 없습니다.")
+        return None, None, False, _failure(mode, f"{label} 실행 결과가 없습니다.")
     if source.get("error") is not None:
         return (
             None,
             None,
+            False,
             _failure(
                 mode,
                 f"{label} 실행 오류로 결과를 조합할 수 없습니다: {source['error']}",
@@ -48,16 +68,26 @@ def _source_rows(
 
     rows = source.get("result")
     if rows is None:
-        return None, None, _failure(mode, f"{label} result가 None입니다.")
+        return None, None, False, _failure(mode, f"{label} result가 None입니다.")
     if not isinstance(rows, list):
-        return None, None, _failure(mode, f"{label} result는 배열이어야 합니다.")
+        return None, None, False, _failure(mode, f"{label} result는 배열이어야 합니다.")
     for row_index, row in enumerate(rows):
         if not isinstance(row, dict):
             return (
                 None,
                 None,
+                False,
                 _failure(mode, f"{label}의 {row_index}번 행이 객체가 아닙니다."),
             )
+
+    raw_truncated = source.get("truncated", False)
+    if not isinstance(raw_truncated, bool):
+        return (
+            None,
+            None,
+            False,
+            _failure(mode, f"{label} truncated는 bool이어야 합니다."),
+        )
 
     raw_empty_reason = source.get("empty_reason")
     if raw_empty_reason is None:
@@ -68,6 +98,7 @@ def _source_rows(
         return (
             None,
             None,
+            False,
             _failure(
                 mode,
                 f"{label} empty_reason이 지원되지 않습니다: {raw_empty_reason!r}",
@@ -77,6 +108,7 @@ def _source_rows(
         return (
             None,
             None,
+            False,
             _failure(
                 mode,
                 f"{label}의 result가 비어 있지 않아 empty_reason을 지정할 수 없습니다.",
@@ -85,16 +117,17 @@ def _source_rows(
     return (
         cast(list[dict[str, Any]], rows),
         empty_reason,
+        raw_truncated,
         None,
     )
 
 
 def _overall_empty_reason(
-    rows_and_reasons: list[tuple[list[dict[str, Any]], EmptyReason | None]],
+    sources: list[tuple[list[dict[str, Any]], EmptyReason | None, bool]],
 ) -> EmptyReason | None:
-    if any(rows for rows, _ in rows_and_reasons):
+    if any(rows for rows, _, _ in sources):
         return None
-    if any(reason == "INCONCLUSIVE" for _, reason in rows_and_reasons):
+    if any(reason == "INCONCLUSIVE" for _, reason, _ in sources):
         return "INCONCLUSIVE"
     return "NO_DATA"
 
@@ -149,13 +182,19 @@ def _merge_rows(
 
 def _compose_joined(
     subqueries: list[Subquery],
-    sources: list[tuple[list[dict[str, Any]], EmptyReason | None]],
+    sources: list[tuple[list[dict[str, Any]], EmptyReason | None, bool]],
     *,
     row_limit: int,
 ) -> ComposedResult:
     mode: CompositionMode = "joined"
-    left_rows, left_reason = sources[0]
-    right_rows, right_reason = sources[1]
+    left_rows, left_reason, left_truncated = sources[0]
+    right_rows, right_reason, right_truncated = sources[1]
+    if left_truncated or right_truncated:
+        return _failure(
+            mode,
+            "source 결과가 행 상한을 초과해 완전한 join을 보장할 수 없습니다.",
+            truncated=True,
+        )
     join_keys = subqueries[0]["joinKeys"]
     left_keyed: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     left_domain: set[tuple[Any, ...]] = set()
@@ -235,11 +274,66 @@ def _compose_joined(
     }
 
 
+def _compose_bom_shortage(
+    sources: list[tuple[list[dict[str, Any]], EmptyReason | None, bool]],
+    transform: BomShortageTransform,
+    *,
+    row_limit: int,
+) -> ComposedResult:
+    mode: CompositionMode = "joined"
+    graph_rows, graph_reason, graph_truncated = sources[0]
+    sql_rows, sql_reason, sql_truncated = sources[1]
+    transform_name = transform["type"]
+    if graph_truncated or sql_truncated:
+        return _failure(
+            mode,
+            "source 결과가 행 상한을 초과해 완전한 BOM 부족량을 계산할 수 없습니다.",
+            transform=transform_name,
+            truncated=True,
+        )
+    if not graph_rows and not sql_rows:
+        empty_reason: EmptyReason = (
+            "INCONCLUSIVE"
+            if "INCONCLUSIVE" in (graph_reason, sql_reason)
+            else "NO_DATA"
+        )
+        return {
+            "mode": mode,
+            "transform": transform_name,
+            "rows": [],
+            "sections": {},
+            "error": None,
+            "empty_reason": empty_reason,
+            "total_count": 0,
+            "truncated": False,
+        }
+    try:
+        final_rows = calculate_bom_shortages(
+            graph_rows,
+            sql_rows,
+            production_qty=transform["productionQty"],
+        )
+    except ValueError as exc:
+        return _failure(mode, str(exc), transform=transform_name)
+    stored_rows = final_rows[:row_limit]
+    return {
+        "mode": mode,
+        "transform": transform_name,
+        "rows": stored_rows,
+        "sections": {},
+        "error": None,
+        "empty_reason": "NO_DATA" if not final_rows else None,
+        "total_count": len(final_rows),
+        "truncated": len(stored_rows) < len(final_rows),
+    }
+
+
 def compose_results(
     subqueries: list[Subquery],
     tool_results: Mapping[str, dict[str, Any] | None],
     *,
     row_limit: int,
+    result_transform: BomShortageTransform | None = None,
 ) -> ComposedResult:
     """실행 계획 순서와 join 계약에 따라 source 결과를 조합한다.
 
@@ -263,18 +357,41 @@ def compose_results(
     else:
         return _failure("joined", "HYBRID joinKeys 계약이 일치하지 않습니다.")
     if row_limit < 0:
-        return _failure(mode, "결과 행 상한은 0 이상이어야 합니다.")
+        transform_name = (
+            result_transform["type"] if result_transform is not None else None
+        )
+        return _failure(
+            mode,
+            "결과 행 상한은 0 이상이어야 합니다.",
+            transform=transform_name,
+        )
 
-    sources: list[tuple[list[dict[str, Any]], EmptyReason | None]] = []
+    try:
+        validated_transform = validate_result_transform(result_transform, subqueries)
+    except ValueError as exc:
+        return _failure(mode, str(exc), transform="bom_shortage_v1")
+
+    sources: list[tuple[list[dict[str, Any]], EmptyReason | None, bool]] = []
     for subquery in subqueries:
-        rows, empty_reason, failure = _source_rows(subquery, tool_results, mode)
+        rows, empty_reason, truncated, failure = _source_rows(
+            subquery, tool_results, mode
+        )
         if failure is not None:
+            if validated_transform is not None:
+                failure["transform"] = validated_transform["type"]
             return failure
         assert rows is not None
-        sources.append((rows, empty_reason))
+        sources.append((rows, empty_reason, truncated))
+
+    if validated_transform is not None:
+        return _compose_bom_shortage(
+            sources,
+            validated_transform,
+            row_limit=row_limit,
+        )
 
     if mode == "single":
-        rows, empty_reason = sources[0]
+        rows, empty_reason, truncated = sources[0]
         return {
             "mode": mode,
             "rows": rows,
@@ -284,12 +401,12 @@ def compose_results(
                 empty_reason if not rows and empty_reason is not None else None
             ),
             "total_count": len(rows),
-            "truncated": False,
+            "truncated": truncated,
         }
 
     if mode == "separate":
         sections: dict[str, ComposedSection] = {}
-        for subquery, (rows, empty_reason) in zip(subqueries, sources, strict=True):
+        for subquery, (rows, empty_reason, _) in zip(subqueries, sources, strict=True):
             sections[subquery["id"]] = {
                 "tool": cast(ToolName, subquery["tool"]),
                 "rows": rows,
@@ -301,8 +418,8 @@ def compose_results(
             "sections": sections,
             "error": None,
             "empty_reason": _overall_empty_reason(sources),
-            "total_count": sum(len(rows) for rows, _ in sources),
-            "truncated": False,
+            "total_count": sum(len(rows) for rows, _, _ in sources),
+            "truncated": any(truncated for _, _, truncated in sources),
         }
 
     return _compose_joined(subqueries, sources, row_limit=row_limit)

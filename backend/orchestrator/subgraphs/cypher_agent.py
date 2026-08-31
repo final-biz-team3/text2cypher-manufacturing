@@ -1,6 +1,7 @@
 """Cypher를 생성·실행하고, 실패 시 self-correction(재시도)을 수행하는 SubGraph를 만든다."""
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -17,6 +18,7 @@ from neo4j.exceptions import (
 
 from agents.cypher.generator import generate_cypher
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
+from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
 from orchestrator.guards.cypher_guard import make_cypher_guard
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
@@ -89,11 +91,40 @@ _EMPTY_RESULT_FEEDBACK = (
 )
 
 
+def _required_output_error(cypher: str, required_outputs: list[str]) -> str | None:
+    if not required_outputs:
+        return None
+    returns = list(re.finditer(r"(?i)\bRETURN\b", cypher))
+    if not returns:
+        return "필수 alias를 검증할 RETURN 절이 없습니다."
+    projection = cypher[returns[-1].end() :]
+    projection = re.split(
+        r"(?i)\bORDER\s+BY\b|\bSKIP\b|\bLIMIT\b", projection, maxsplit=1
+    )[0]
+    missing: list[str] = []
+    for alias in required_outputs:
+        escaped = re.escape(alias)
+        explicit = re.search(
+            rf'(?i:\bAS\s+)(?:`{escaped}`|"{escaped}"|{escaped}\b)', projection
+        )
+        bare = re.search(
+            rf'(?i:(?:^|,)\s*(?:DISTINCT\s+)?)(?:`{escaped}`|"{escaped}"|'
+            rf"{escaped})\s*(?=,|$)",
+            projection,
+        )
+        if explicit is None and bare is None:
+            missing.append(alias)
+    if not missing:
+        return None
+    return "RETURN에 필수 alias가 없습니다: " + ", ".join(missing)
+
+
 def make_cypher_agent_subgraph(
     openai_client: Any,
     execute_cypher: Callable[[str], Awaitable[Any]],
     query_policy: GraphQueryPolicy,
     graph_schema: GraphSchema,
+    reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
 ) -> CompiledStateGraph:
     """Cypher 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_cypher 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
@@ -111,6 +142,7 @@ def make_cypher_agent_subgraph(
             input_bindings=state.get("input_bindings"),
             previous_query=previous_query,
             previous_error=previous_error,
+            reasoning_effort=reasoning_effort,
         )
 
     return make_retry_agent_subgraph(
@@ -122,4 +154,5 @@ def make_cypher_agent_subgraph(
         retryable_exceptions=_RETRYABLE_EXCEPTIONS,
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
         guard=make_cypher_guard(graph_schema),
+        query_contract_error=_required_output_error,
     )

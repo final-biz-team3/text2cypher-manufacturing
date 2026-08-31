@@ -14,11 +14,11 @@ async def test_execute_cypher_returns_data_records() -> None:
     """session.execute_read(Query(timeout=...)) -> result.data() 결과를 그대로 반환한다."""
     driver = MockAsyncNeo4jDriver(records=[{"n": {"productId": 492}}])
 
-    rows = await execute_cypher_with_driver(
+    batch = await execute_cypher_with_driver(
         driver, "MATCH (n:Product) RETURN n", timeout_sec=5.0, row_limit=10
     )
 
-    assert rows == [{"n": {"productId": 492}}]
+    assert batch == {"rows": [{"n": {"productId": 492}}], "truncated": False}
 
 
 async def test_execute_cypher_truncates_to_row_limit() -> None:
@@ -26,11 +26,12 @@ async def test_execute_cypher_truncates_to_row_limit() -> None:
     자른다(SQL 쪽 execute_sql_with_pool의 fetchmany(N+1) 패턴과 동일)."""
     driver = MockAsyncNeo4jDriver(records=[{"id": i} for i in range(10)])
 
-    rows = await execute_cypher_with_driver(
+    batch = await execute_cypher_with_driver(
         driver, "MATCH (n) RETURN n", timeout_sec=5.0, row_limit=3
     )
 
-    assert len(rows) == 3
+    assert len(batch["rows"]) == 3
+    assert batch["truncated"] is True
 
 
 async def test_execute_cypher_passes_timeout_to_query() -> None:

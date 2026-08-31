@@ -13,6 +13,7 @@ SUPPORTED_STATUSES = {
     "FULLY_EVALUATED",
     "QUERY_EVALUATED_FINAL_JOIN_PENDING",
 }
+SUPPORTED_COMPOSITION_MODES = {"single", "joined", "separate"}
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,17 @@ class ExpectedSubquery:
 
 
 @dataclass(frozen=True)
+class FinalResultContract:
+    mode: str
+    transform: str | None
+    required_outputs: tuple[str, ...]
+    ordering: tuple[str, ...]
+    row_count: int
+    sha256: str
+    gold_file: Path
+
+
+@dataclass(frozen=True)
 class EvaluationContract:
     id: str
     route: str
@@ -52,6 +64,7 @@ class EvaluationContract:
     support_status: str
     tool_plan: tuple[str, ...]
     subqueries: tuple[ExpectedSubquery, ...]
+    final_result: FinalResultContract | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +226,53 @@ def _load_contract(
             f"HYBRID 계약 {contract_id}에는 SQL과 GRAPH가 필요합니다."
         )
 
+    raw_final = raw.get("finalResult")
+    final_result: FinalResultContract | None = None
+    if raw_final is not None:
+        context = f"contracts.{contract_id}.finalResult"
+        if not isinstance(raw_final, dict):
+            raise ConfigurationError(f"{context}는 객체여야 합니다.")
+        mode = _require_string(raw_final, "mode", context)
+        if mode not in SUPPORTED_COMPOSITION_MODES:
+            raise ConfigurationError(f"{context}.mode가 잘못됐습니다: {mode}")
+        transform = raw_final.get("transform")
+        if transform not in {None, "bom_shortage_v1"}:
+            raise ConfigurationError(f"{context}.transform이 잘못됐습니다.")
+        required_outputs = _string_tuple(
+            raw_final.get("requiredOutputs"), f"{context}.requiredOutputs"
+        )
+        if not required_outputs or len(required_outputs) != len(set(required_outputs)):
+            raise ConfigurationError(
+                f"{context}.requiredOutputs는 중복 없는 비어 있지 않은 배열이어야 합니다."
+            )
+        row_count = raw_final.get("rowCount")
+        if (
+            not isinstance(row_count, int)
+            or isinstance(row_count, bool)
+            or row_count < 0
+        ):
+            raise ConfigurationError(f"{context}.rowCount가 잘못됐습니다.")
+        sha256 = _require_string(raw_final, "sha256", context)
+        if len(sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in sha256
+        ):
+            raise ConfigurationError(f"{context}.sha256이 잘못됐습니다.")
+        gold_relative = _require_string(raw_final, "gold", context)
+        gold_file = (manifest_dir / gold_relative).resolve()
+        if not gold_file.is_file():
+            raise ConfigurationError(f"Final Gold 파일을 찾을 수 없습니다: {gold_file}")
+        final_result = FinalResultContract(
+            mode=mode,
+            transform=transform,
+            required_outputs=required_outputs,
+            ordering=_string_tuple(
+                raw_final.get("ordering", []), f"{context}.ordering"
+            ),
+            row_count=row_count,
+            sha256=sha256,
+            gold_file=gold_file,
+        )
+
     return EvaluationContract(
         id=contract_id,
         route=route,
@@ -220,6 +280,7 @@ def _load_contract(
         support_status=support_status,
         tool_plan=tool_plan,
         subqueries=subqueries,
+        final_result=final_result,
     )
 
 

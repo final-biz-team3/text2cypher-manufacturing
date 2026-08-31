@@ -1,0 +1,42 @@
+[
+  {
+    "locationId": 10,
+    "locationName": "Frame Forming",
+    "productId": 945,
+    "productName": "Front Derailleur",
+    "workOrderCount": 1105,
+    "totalScrappedQty": 174
+  },
+  {
+    "locationId": 10,
+    "locationName": "Frame Forming",
+    "productId": 802,
+    "productName": "LL Fork",
+    "workOrderCount": 832,
+    "totalScrappedQty": 140
+  },
+  {
+    "locationId": 10,
+    "locationName": "Frame Forming",
+    "productId": 811,
+    "productName": "LL Road Handlebars",
+    "workOrderCount": 821,
+    "totalScrappedQty": 63
+  },
+  {
+    "locationId": 10,
+    "locationName": "Frame Forming",
+    "productId": 810,
+    "productName": "HL Mountain Handlebars",
+    "workOrderCount": 944,
+    "totalScrappedQty": 46
+  },
+  {
+    "locationId": 10,
+    "locationName": "Frame Forming",
+    "productId": 804,
+    "productName": "HL Fork",
+    "workOrderCount": 1104,
+    "totalScrappedQty": 38
+  }
+]

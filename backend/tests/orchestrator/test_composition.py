@@ -1,13 +1,19 @@
 """실행 결과의 단일·결합·분리 조합 계약을 테스트한다."""
 
 from copy import deepcopy
+from decimal import Decimal
 from typing import Any
 
 import pytest
 
 from orchestrator.composition import compose_results
 from orchestrator.nodes.compose_results import make_compose_results_node
-from orchestrator.planning import Subquery
+from orchestrator.planning import (
+    BOM_SHORTAGE_GRAPH_OUTPUTS,
+    BOM_SHORTAGE_SQL_OUTPUTS,
+    BomShortageTransform,
+    Subquery,
+)
 from orchestrator.state import OrchestratorState
 
 
@@ -33,12 +39,14 @@ def _source(
     *,
     error: str | None = None,
     empty_reason: Any = None,
+    truncated: Any = False,
 ) -> dict[str, Any]:
     return {
         "result": rows,
         "error": error,
         "attempts": [],
         "empty_reason": empty_reason,
+        "truncated": truncated,
     }
 
 
@@ -99,6 +107,36 @@ def test_single_result_is_normalized_without_changing_rows(tool: str) -> None:
         "total_count": 2,
         "truncated": False,
     }
+
+
+def test_single_result_preserves_source_truncation() -> None:
+    result = compose_results(
+        [_step("only", "sql")],
+        {"sql": _source([{"value": 1}], truncated=True)},
+        row_limit=200,
+    )
+
+    assert result["rows"] == [{"value": 1}]
+    assert result["total_count"] == 1
+    assert result["truncated"] is True
+
+
+def test_join_rejects_truncated_source_instead_of_returning_partial_answer() -> None:
+    result = compose_results(
+        [
+            _step("graph_base", "graph", join_keys=["id"]),
+            _step("sql_followup", "sql", join_keys=["id"]),
+        ],
+        {
+            "graph": _source([{"id": 1}], truncated=True),
+            "sql": _source([{"id": 1}]),
+        },
+        row_limit=200,
+    )
+
+    assert result["rows"] == []
+    assert result["truncated"] is True
+    assert "완전한 join" in str(result["error"])
 
 
 @pytest.mark.parametrize("tool", ["sql", "graph"])
@@ -506,3 +544,184 @@ async def test_compose_results_node_uses_injected_row_limit() -> None:
     assert composed["rows"] == [{"id": 1, "path": "a", "stock": 10}]
     assert composed["total_count"] == 4
     assert composed["truncated"] is True
+
+
+def _shortage_steps() -> list[Subquery]:
+    return [
+        {
+            "id": "graph_bom",
+            "tool": "graph",
+            "question": "BOM 경로",
+            "dependsOn": [],
+            "requiredOutputs": sorted(BOM_SHORTAGE_GRAPH_OUTPUTS),
+            "joinKeys": ["componentId"],
+        },
+        {
+            "id": "sql_stock",
+            "tool": "sql",
+            "question": "재고",
+            "dependsOn": ["graph_bom"],
+            "requiredOutputs": sorted(BOM_SHORTAGE_SQL_OUTPUTS),
+            "joinKeys": ["componentId"],
+            "inputBindings": {"componentIds": "graph_bom.componentId"},
+        },
+    ]
+
+
+def _graph_shortage_row(
+    component_id: int,
+    component_name: str,
+    path: list[int],
+    quantities: list[int | float],
+    *,
+    supplier_id: int | None = None,
+    supplier_name: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "finishedProductId": 1,
+        "finishedProductName": "Finished",
+        "componentId": component_id,
+        "componentName": component_name,
+        "depth": len(quantities),
+        "pathProductIds": path,
+        "quantityPerAssembly": quantities,
+        "supplierId": supplier_id,
+        "supplierName": supplier_name,
+    }
+
+
+def _shortage_transform() -> BomShortageTransform:
+    return {"type": "bom_shortage_v1", "productionQty": 10}
+
+
+def test_bom_shortage_deduplicates_supplier_paths_and_sums_distinct_paths() -> None:
+    first_path_supplier_two = _graph_shortage_row(
+        10, "External", [1, 2, 10], [2, 3], supplier_id=2, supplier_name="Second"
+    )
+    graph_rows = [
+        first_path_supplier_two,
+        deepcopy(first_path_supplier_two),
+        _graph_shortage_row(
+            10,
+            "External",
+            [1, 2, 10],
+            [2, 3],
+            supplier_id=1,
+            supplier_name="First",
+        ),
+        _graph_shortage_row(10, "External", [1, 3, 10], [1, 4]),
+        _graph_shortage_row(20, "Enough", [1, 20], [5]),
+        _graph_shortage_row(30, "Internal", [1, 30], [9]),
+    ]
+    sql_rows = [
+        {"componentId": 10, "makeFlag": False, "actualStock": 30},
+        {"componentId": 20, "makeFlag": False, "actualStock": 60},
+        {"componentId": 30, "makeFlag": True, "actualStock": 0},
+    ]
+    originals = deepcopy((graph_rows, sql_rows))
+
+    result = compose_results(
+        _shortage_steps(),
+        {"graph": _source(graph_rows), "sql": _source(sql_rows)},
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result == {
+        "mode": "joined",
+        "transform": "bom_shortage_v1",
+        "rows": [
+            {
+                "finishedProductId": 1,
+                "finishedProductName": "Finished",
+                "productionQty": Decimal("10.000000"),
+                "componentId": 10,
+                "componentName": "External",
+                "requiredQty": Decimal("100.000000"),
+                "actualStock": Decimal("30.000000"),
+                "shortageQty": Decimal("70.000000"),
+                "suppliers": [
+                    {"supplierId": 1, "supplierName": "First"},
+                    {"supplierId": 2, "supplierName": "Second"},
+                ],
+            }
+        ],
+        "sections": {},
+        "error": None,
+        "empty_reason": None,
+        "total_count": 1,
+        "truncated": False,
+    }
+    assert (graph_rows, sql_rows) == originals
+
+
+def test_bom_shortage_validates_all_rows_before_applying_row_limit() -> None:
+    graph_rows = [
+        _graph_shortage_row(10, "First", [1, 10], [2]),
+        _graph_shortage_row(20, "Broken", [1, 20], [3]),
+    ]
+    del graph_rows[1]["quantityPerAssembly"]
+    sql_rows = [
+        {"componentId": 10, "makeFlag": False, "actualStock": 0},
+        {"componentId": 20, "makeFlag": False, "actualStock": 0},
+    ]
+
+    result = compose_results(
+        _shortage_steps(),
+        {"graph": _source(graph_rows), "sql": _source(sql_rows)},
+        row_limit=1,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["rows"] == []
+    assert "quantityPerAssembly" in str(result["error"])
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda graph, sql: sql.append(dict(sql[0])), "행이 중복"),
+        (lambda graph, sql: sql.clear(), "component domain"),
+        (
+            lambda graph, sql: graph[0].update({"supplierId": 1}),
+            "함께 null",
+        ),
+        (
+            lambda graph, sql: graph[0].update({"pathProductIds": [10, 1]}),
+            "path 방향",
+        ),
+    ],
+)
+def test_bom_shortage_rejects_source_contract_conflicts(
+    mutate: Any, message: str
+) -> None:
+    graph_rows = [_graph_shortage_row(10, "Part", [1, 10], [2])]
+    sql_rows = [{"componentId": 10, "makeFlag": False, "actualStock": 0}]
+    mutate(graph_rows, sql_rows)
+
+    result = compose_results(
+        _shortage_steps(),
+        {"graph": _source(graph_rows), "sql": _source(sql_rows)},
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["rows"] == []
+    assert message in str(result["error"])
+
+
+def test_bom_shortage_preserves_inconclusive_empty_source_contract() -> None:
+    result = compose_results(
+        _shortage_steps(),
+        {
+            "graph": _source([], empty_reason="NO_DATA"),
+            "sql": _source([], empty_reason="INCONCLUSIVE"),
+        },
+        row_limit=200,
+        result_transform=_shortage_transform(),
+    )
+
+    assert result["transform"] == "bom_shortage_v1"
+    assert result["rows"] == []
+    assert result["error"] is None
+    assert result["empty_reason"] == "INCONCLUSIVE"

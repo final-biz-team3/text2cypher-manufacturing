@@ -1,5 +1,6 @@
-"""검증된 하위 질의 계획의 순차 실행과 의존성 처리를 테스트한다."""
+"""검증된 하위 질의 계획의 병렬 wave 실행과 의존성 처리를 테스트한다."""
 
+import asyncio
 import json
 from datetime import date
 from decimal import Decimal
@@ -105,8 +106,45 @@ async def test_execute_plan_keeps_single_tool_result_fields(
     assert result["cypher_query" if unused_tool == "graph" else "sql_query"] is None
 
 
+async def test_execute_plan_runs_independent_subqueries_concurrently() -> None:
+    """dependsOn이 없는 SQL과 GRAPH는 같은 실행 wave에서 시작한다."""
+    both_started = asyncio.Event()
+    started: list[str] = []
+
+    class _ConcurrentAgent:
+        def __init__(self, name: str, query: str) -> None:
+            self.name = name
+            self.query = query
+
+        async def ainvoke(self, state: dict[str, Any]) -> dict[str, Any]:
+            started.append(self.name)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=0.2)
+            return _result(self.query, [{"source": self.name}])
+
+    result = await make_execute_plan_node(
+        sql_agent=_ConcurrentAgent("sql", "SELECT 1"),
+        cypher_agent=_ConcurrentAgent("graph", "RETURN 1"),
+        sql_schema_text="SQL SCHEMA",
+        cypher_schema_text="GRAPH SCHEMA",
+    )(
+        {
+            "query": "독립 복합 질문",
+            "subqueries": [
+                _step("sql_facts", "sql", "수치를 조회한다."),
+                _step("graph_paths", "graph", "경로를 조회한다."),
+            ],
+        }
+    )
+
+    assert started == ["sql", "graph"]
+    assert result["sql_query"] == "SELECT 1"
+    assert result["cypher_query"] == "RETURN 1"
+
+
 async def test_execute_plan_passes_subquery_context_and_aligned_bindings() -> None:
-    """하위 질문·entity·alias와 행 순서/중복을 보존한 binding을 전달한다."""
+    """하위 질문·entity·alias와 최초 등장 순서의 고유 binding을 전달한다."""
     graph_agent = _FakeAgent(
         _result(
             "MATCH path",
@@ -152,11 +190,11 @@ async def test_execute_plan_passes_subquery_context_and_aligned_bindings() -> No
         "supplierId",
     ]
     assert sql_agent.calls[0]["query"] == "찾은 부품의 재고를 조회한다."
-    assert sql_agent.calls[0]["entity"] == entity
+    assert sql_agent.calls[0]["entity"] is None
     assert sql_agent.calls[0]["required_outputs"] == ["componentId"]
     assert sql_agent.calls[0]["input_bindings"] == {
-        "componentIds": [7, 7, 9],
-        "supplierIds": [2, 3, 3],
+        "componentIds": [7, 9],
+        "supplierIds": [2, 3],
     }
     assert result["cypher_query"] == "MATCH path"
     assert result["sql_query"] == "SELECT stock"
@@ -227,7 +265,7 @@ async def test_execute_plan_serializes_sql_scalars_for_graph_generation() -> Non
         if message["role"] == "user"
     )
     assert json.loads(graph_user_message)["inputBindings"] == {
-        "prices": ["12.50", "12.50"],
+        "prices": ["12.50"],
         "asOfDates": ["2026-08-28", "2026-08-29"],
     }
     assert result["cypher_query"] == "MATCH (p:Product) RETURN p"

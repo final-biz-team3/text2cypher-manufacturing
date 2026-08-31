@@ -57,6 +57,28 @@ def test_single_output_uses_the_only_column_when_alias_is_unambiguous() -> None:
     assert normalized == [{"purchasedProductCount": 265}]
 
 
+def test_strict_required_outputs_rejects_single_column_alias_fallback() -> None:
+    with pytest.raises(ResultContractError, match="필수 결과 필드"):
+        normalize_rows(
+            [{"externalPartCount": 265}],
+            required_outputs=("purchasedProductCount",),
+            aliases={},
+            ordering=(),
+            strict_required_outputs=True,
+        )
+
+
+def test_strict_required_outputs_rejects_case_only_alias_match() -> None:
+    with pytest.raises(ResultContractError, match="필수 결과 필드"):
+        normalize_rows(
+            [{"productid": 10}],
+            required_outputs=("productId",),
+            aliases={},
+            ordering=(),
+            strict_required_outputs=True,
+        )
+
+
 def test_rejects_missing_required_field_when_multiple_columns_are_ambiguous() -> None:
     with pytest.raises(ResultContractError, match="필수 결과 필드"):
         normalize_rows(

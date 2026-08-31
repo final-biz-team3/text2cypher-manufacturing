@@ -1,0 +1,42 @@
+[
+  {
+    "componentId": 482,
+    "componentName": "Metal Sheet 2",
+    "minDepth": 2,
+    "safetyStockLevel": 1000,
+    "actualStock": 924,
+    "shortageQty": 76
+  },
+  {
+    "componentId": 485,
+    "componentName": "Metal Sheet 4",
+    "minDepth": 2,
+    "safetyStockLevel": 1000,
+    "actualStock": 924,
+    "shortageQty": 76
+  },
+  {
+    "componentId": 492,
+    "componentName": "Paint - Black",
+    "minDepth": 1,
+    "safetyStockLevel": 60,
+    "actualStock": 47,
+    "shortageQty": 13
+  },
+  {
+    "componentId": 487,
+    "componentName": "Metal Sheet 6",
+    "minDepth": 3,
+    "safetyStockLevel": 1000,
+    "actualStock": 992,
+    "shortageQty": 8
+  },
+  {
+    "componentId": 484,
+    "componentName": "Metal Sheet 7",
+    "minDepth": 2,
+    "safetyStockLevel": 1000,
+    "actualStock": 997,
+    "shortageQty": 3
+  }
+]

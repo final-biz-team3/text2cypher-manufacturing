@@ -1,0 +1,1263 @@
+[
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 749,
+    "finishedProductName": "Road-150 Red, 62",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      749
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 750,
+    "finishedProductName": "Road-150 Red, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      750
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 751,
+    "finishedProductName": "Road-150 Red, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      751
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 752,
+    "finishedProductName": "Road-150 Red, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      752
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 753,
+    "finishedProductName": "Road-150 Red, 56",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      753
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 754,
+    "finishedProductName": "Road-450 Red, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      754
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 755,
+    "finishedProductName": "Road-450 Red, 60",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      755
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 756,
+    "finishedProductName": "Road-450 Red, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      756
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 757,
+    "finishedProductName": "Road-450 Red, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      757
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 758,
+    "finishedProductName": "Road-450 Red, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      758
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 759,
+    "finishedProductName": "Road-650 Red, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      759
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 760,
+    "finishedProductName": "Road-650 Red, 60",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      760
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 761,
+    "finishedProductName": "Road-650 Red, 62",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      761
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 762,
+    "finishedProductName": "Road-650 Red, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      762
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 763,
+    "finishedProductName": "Road-650 Red, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      763
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 764,
+    "finishedProductName": "Road-650 Red, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      764
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 765,
+    "finishedProductName": "Road-650 Black, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      765
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 766,
+    "finishedProductName": "Road-650 Black, 60",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      766
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 767,
+    "finishedProductName": "Road-650 Black, 62",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      767
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 768,
+    "finishedProductName": "Road-650 Black, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      768
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 769,
+    "finishedProductName": "Road-650 Black, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      769
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 770,
+    "finishedProductName": "Road-650 Black, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      770
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 771,
+    "finishedProductName": "Mountain-100 Silver, 38",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      771
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 772,
+    "finishedProductName": "Mountain-100 Silver, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      772
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 773,
+    "finishedProductName": "Mountain-100 Silver, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      773
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 774,
+    "finishedProductName": "Mountain-100 Silver, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      774
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 775,
+    "finishedProductName": "Mountain-100 Black, 38",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      775
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 776,
+    "finishedProductName": "Mountain-100 Black, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      776
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 777,
+    "finishedProductName": "Mountain-100 Black, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      777
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 778,
+    "finishedProductName": "Mountain-100 Black, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      778
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 779,
+    "finishedProductName": "Mountain-200 Silver, 38",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      779
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 780,
+    "finishedProductName": "Mountain-200 Silver, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      780
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 781,
+    "finishedProductName": "Mountain-200 Silver, 46",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      781
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 782,
+    "finishedProductName": "Mountain-200 Black, 38",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      782
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 783,
+    "finishedProductName": "Mountain-200 Black, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      783
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 784,
+    "finishedProductName": "Mountain-200 Black, 46",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      516,
+      784
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 785,
+    "finishedProductName": "Mountain-300 Black, 38",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      515,
+      785
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 786,
+    "finishedProductName": "Mountain-300 Black, 40",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      515,
+      786
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 787,
+    "finishedProductName": "Mountain-300 Black, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      515,
+      787
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 788,
+    "finishedProductName": "Mountain-300 Black, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      515,
+      788
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 789,
+    "finishedProductName": "Road-250 Red, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      789
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 790,
+    "finishedProductName": "Road-250 Red, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      790
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 791,
+    "finishedProductName": "Road-250 Red, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      791
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 792,
+    "finishedProductName": "Road-250 Red, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      792
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 793,
+    "finishedProductName": "Road-250 Black, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      793
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 794,
+    "finishedProductName": "Road-250 Black, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      794
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 795,
+    "finishedProductName": "Road-250 Black, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      795
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 796,
+    "finishedProductName": "Road-250 Black, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      519,
+      796
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 797,
+    "finishedProductName": "Road-550-W Yellow, 38",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      797
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 798,
+    "finishedProductName": "Road-550-W Yellow, 40",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      798
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 799,
+    "finishedProductName": "Road-550-W Yellow, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      799
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 800,
+    "finishedProductName": "Road-550-W Yellow, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      800
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 801,
+    "finishedProductName": "Road-550-W Yellow, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      801
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 953,
+    "finishedProductName": "Touring-2000 Blue, 60",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      521,
+      953
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 954,
+    "finishedProductName": "Touring-1000 Yellow, 46",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      954
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 955,
+    "finishedProductName": "Touring-1000 Yellow, 50",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      955
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 956,
+    "finishedProductName": "Touring-1000 Yellow, 54",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      956
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 957,
+    "finishedProductName": "Touring-1000 Yellow, 60",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      957
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 958,
+    "finishedProductName": "Touring-3000 Blue, 54",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      958
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 959,
+    "finishedProductName": "Touring-3000 Blue, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      959
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 960,
+    "finishedProductName": "Touring-3000 Blue, 62",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      960
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 961,
+    "finishedProductName": "Touring-3000 Yellow, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      961
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 962,
+    "finishedProductName": "Touring-3000 Yellow, 50",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      962
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 963,
+    "finishedProductName": "Touring-3000 Yellow, 54",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      963
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 964,
+    "finishedProductName": "Touring-3000 Yellow, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      964
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 965,
+    "finishedProductName": "Touring-3000 Yellow, 62",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      965
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 966,
+    "finishedProductName": "Touring-1000 Blue, 46",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      966
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 967,
+    "finishedProductName": "Touring-1000 Blue, 50",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      967
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 968,
+    "finishedProductName": "Touring-1000 Blue, 54",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      968
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 969,
+    "finishedProductName": "Touring-1000 Blue, 60",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      522,
+      969
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 970,
+    "finishedProductName": "Touring-2000 Blue, 46",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      521,
+      970
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 971,
+    "finishedProductName": "Touring-2000 Blue, 50",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      521,
+      971
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 972,
+    "finishedProductName": "Touring-2000 Blue, 54",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      521,
+      972
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 973,
+    "finishedProductName": "Road-350-W Yellow, 40",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      973
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 974,
+    "finishedProductName": "Road-350-W Yellow, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      974
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 975,
+    "finishedProductName": "Road-350-W Yellow, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      975
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 976,
+    "finishedProductName": "Road-350-W Yellow, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      518,
+      976
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 977,
+    "finishedProductName": "Road-750 Black, 58",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      977
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 978,
+    "finishedProductName": "Touring-3000 Blue, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      978
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 979,
+    "finishedProductName": "Touring-3000 Blue, 50",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      520,
+      979
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 980,
+    "finishedProductName": "Mountain-400-W Silver, 38",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      980
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 981,
+    "finishedProductName": "Mountain-400-W Silver, 40",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      981
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 982,
+    "finishedProductName": "Mountain-400-W Silver, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      982
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 983,
+    "finishedProductName": "Mountain-400-W Silver, 46",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      983
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 984,
+    "finishedProductName": "Mountain-500 Silver, 40",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      984
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 985,
+    "finishedProductName": "Mountain-500 Silver, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      985
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 986,
+    "finishedProductName": "Mountain-500 Silver, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      986
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 987,
+    "finishedProductName": "Mountain-500 Silver, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      987
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 988,
+    "finishedProductName": "Mountain-500 Silver, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      988
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 989,
+    "finishedProductName": "Mountain-500 Black, 40",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      989
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 990,
+    "finishedProductName": "Mountain-500 Black, 42",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      990
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 991,
+    "finishedProductName": "Mountain-500 Black, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      991
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 992,
+    "finishedProductName": "Mountain-500 Black, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      992
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 993,
+    "finishedProductName": "Mountain-500 Black, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      514,
+      993
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 997,
+    "finishedProductName": "Road-750 Black, 44",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      997
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 998,
+    "finishedProductName": "Road-750 Black, 48",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      998
+    ],
+    "actualStock": 780
+  },
+  {
+    "componentId": 530,
+    "componentName": "Seat Post",
+    "finishedProductId": 999,
+    "finishedProductName": "Road-750 Black, 52",
+    "depth": 2,
+    "pathProductIds": [
+      530,
+      517,
+      999
+    ],
+    "actualStock": 780
+  }
+]

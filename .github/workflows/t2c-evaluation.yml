@@ -22,6 +22,11 @@ on:
         description: OpenAI-compatible model
         type: string
         default: gpt-5.6-luna
+      reasoning-effort:
+        description: Route/query reasoning effort
+        type: choice
+        options: [medium, high]
+        default: medium
       runs:
         description: Trials per case
         type: choice
@@ -50,6 +55,8 @@ jobs:
       NEO4J_URI: ${{ secrets.NEO4J_URI }}
       NEO4J_USER: ${{ secrets.NEO4J_USER }}
       NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+      NEO4J_READER_USER: ${{ secrets.NEO4J_READER_USER }}
+      NEO4J_READER_PASSWORD: ${{ secrets.NEO4J_READER_PASSWORD }}
       NEO4J_DATABASE: ${{ secrets.NEO4J_DATABASE }}
 
     steps:
@@ -85,6 +92,7 @@ jobs:
             --routes "${EVAL_ROUTES}"
             --runs "${EVAL_RUNS}"
             --model "${OPENAI_MODEL}"
+            --reasoning-effort "${{ inputs['reasoning-effort'] }}"
             --output-dir artifacts/t2c-eval
           )
           if [[ "${EVAL_VALIDATE_GOLD}" == "true" ]]; then

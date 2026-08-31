@@ -54,11 +54,14 @@ async def test_execute_sql_returns_dict_rows_and_rolls_back() -> None:
 
     pool = _MockPool()
 
-    rows = await execute_sql_with_pool(
+    batch = await execute_sql_with_pool(
         pool, "SELECT productid, name FROM production.product", row_limit=10
     )
 
-    assert rows == [{"productid": 492, "name": "Paint - Black"}]
+    assert batch == {
+        "rows": [{"productid": 492, "name": "Paint - Black"}],
+        "truncated": False,
+    }
     assert pool.conn.rollback_called is True
 
 
@@ -96,9 +99,10 @@ async def test_execute_sql_truncates_to_row_limit() -> None:
         def connection(self) -> _ConnContext:
             return _ConnContext()
 
-    rows = await execute_sql_with_pool(_MockPool(), "SELECT 1", row_limit=3)
+    batch = await execute_sql_with_pool(_MockPool(), "SELECT 1", row_limit=3)
 
-    assert len(rows) == 3
+    assert len(batch["rows"]) == 3
+    assert batch["truncated"] is True
 
 
 async def test_execute_sql_propagates_original_exception_without_wrapping() -> None:
