@@ -12,6 +12,8 @@ import {
 import { Button } from '@/components/ui/button'
 import {
   fetchProcessOverview,
+  getProcessGranularityOptions,
+  resolveProcessGranularity,
   type DashboardKpi,
   type ProcessGranularity,
   type ProcessOverview,
@@ -34,11 +36,13 @@ type Preset = '7d' | '30d' | '90d' | 'all'
 function GranularityToggle({
   label,
   value,
+  options,
   disabled,
   onChange,
 }: {
   label: string
   value: ProcessGranularity
+  options: ProcessGranularity[]
   disabled: boolean
   onChange: (granularity: ProcessGranularity) => void
 }) {
@@ -48,13 +52,7 @@ function GranularityToggle({
       role="group"
       aria-label={label}
     >
-      {(
-        [
-          ['day', '일'],
-          ['month', '월'],
-          ['year', '년'],
-        ] as const
-      ).map(([granularity, text]) => (
+      {options.map((granularity) => (
         <button
           key={granularity}
           type="button"
@@ -63,7 +61,7 @@ function GranularityToggle({
           aria-pressed={value === granularity}
           className="min-w-8 rounded-[3px] px-2 py-1.5 text-[10.5px] font-medium text-text-muted transition-colors hover:text-text aria-pressed:bg-accent-bg aria-pressed:text-info disabled:opacity-50"
         >
-          {text}
+          {{ day: '일', month: '월', year: '년' }[granularity]}
         </button>
       ))}
     </div>
@@ -116,10 +114,12 @@ function ProcessMetric({ kpi }: { kpi: DashboardKpi }) {
 
 function WorkOrderTrendChart({
   data,
+  granularityOptions,
   loading,
   onGranularityChange,
 }: {
   data: ProcessOverview
+  granularityOptions: ProcessGranularity[]
   loading: boolean
   onGranularityChange: (granularity: ProcessGranularity) => void
 }) {
@@ -159,6 +159,7 @@ function WorkOrderTrendChart({
           <GranularityToggle
             label="작업지시 추이 집계 기준"
             value={data.period.granularity}
+            options={granularityOptions}
             disabled={loading}
             onChange={onGranularityChange}
           />
@@ -258,10 +259,12 @@ function WorkOrderTrendChart({
 
 function ScrapTrendChart({
   data,
+  granularityOptions,
   loading,
   onGranularityChange,
 }: {
   data: ProcessOverview
+  granularityOptions: ProcessGranularity[]
   loading: boolean
   onGranularityChange: (granularity: ProcessGranularity) => void
 }) {
@@ -285,6 +288,7 @@ function ScrapTrendChart({
         <GranularityToggle
           label="폐기수량 추이 집계 기준"
           value={data.period.granularity}
+          options={granularityOptions}
           disabled={loading}
           onChange={onGranularityChange}
         />
@@ -470,6 +474,14 @@ export function ProcessOverviewSection() {
     return null
   }, [data, fromDate, toDate])
 
+  const granularityOptions = useMemo(
+    () =>
+      data
+        ? getProcessGranularityOptions(data.period.from, data.period.to)
+        : (['day'] as ProcessGranularity[]),
+    [data],
+  )
+
   const applyPreset = (preset: Preset) => {
     if (!data) return
     const to = data.availableRange.to
@@ -477,16 +489,23 @@ export function ProcessOverviewSection() {
       preset === 'all'
         ? data.availableRange.from
         : addDays(to, -(preset === '7d' ? 6 : preset === '30d' ? 29 : 89))
+    const boundedFrom = from < data.availableRange.from ? data.availableRange.from : from
     load({
-      from: from < data.availableRange.from ? data.availableRange.from : from,
+      from: boundedFrom,
       to,
-      granularity,
+      granularity: resolveProcessGranularity(granularity, boundedFrom, to),
     })
   }
 
   const submitPeriod = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (fromDate && toDate) load({ from: fromDate, to: toDate, granularity })
+    if (fromDate && toDate) {
+      load({
+        from: fromDate,
+        to: toDate,
+        granularity: resolveProcessGranularity(granularity, fromDate, toDate),
+      })
+    }
   }
 
   const applyGranularity = (nextGranularity: ProcessGranularity) => {
@@ -598,10 +617,16 @@ export function ProcessOverviewSection() {
           <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(280px,0.7fr)]">
             <WorkOrderTrendChart
               data={data}
+              granularityOptions={granularityOptions}
               loading={loading}
               onGranularityChange={applyGranularity}
             />
-            <ScrapTrendChart data={data} loading={loading} onGranularityChange={applyGranularity} />
+            <ScrapTrendChart
+              data={data}
+              granularityOptions={granularityOptions}
+              loading={loading}
+              onGranularityChange={applyGranularity}
+            />
             <LocationRanking data={data} />
           </div>
         </div>

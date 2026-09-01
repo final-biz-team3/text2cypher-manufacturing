@@ -3,6 +3,25 @@ import { api } from './api'
 
 export type ProcessGranularity = 'day' | 'month' | 'year'
 
+export function getProcessGranularityOptions(from: string, to: string): ProcessGranularity[] {
+  const dayCount =
+    Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1
+
+  if (dayCount <= 31) return ['day']
+  if (dayCount <= 93) return ['day', 'month']
+  if (dayCount <= 730) return ['month']
+  return ['month', 'year']
+}
+
+export function resolveProcessGranularity(
+  current: ProcessGranularity,
+  from: string,
+  to: string,
+): ProcessGranularity {
+  const options = getProcessGranularityOptions(from, to)
+  return options.includes(current) ? current : options[0]
+}
+
 const DashboardKpiSchema = z.object({
   key: z.string(),
   label: z.string(),

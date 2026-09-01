@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { DashboardOverviewSchema, EntityDetailSchema, ProcessOverviewSchema } from './dashboard'
+import {
+  DashboardOverviewSchema,
+  EntityDetailSchema,
+  getProcessGranularityOptions,
+  ProcessOverviewSchema,
+  resolveProcessGranularity,
+} from './dashboard'
 
 describe('DashboardOverviewSchema', () => {
   it('accepts partial failure without discarding ready cards', () => {
@@ -93,4 +99,20 @@ describe('ProcessOverviewSchema', () => {
       expect(parsed.locations[0].operationCount).toBe(4)
     },
   )
+})
+
+describe('process granularity policy', () => {
+  it.each([
+    ['2014-06-01', '2014-06-07', ['day']],
+    ['2014-04-01', '2014-06-28', ['day', 'month']],
+    ['2014-01-01', '2014-06-28', ['month']],
+    ['2011-06-03', '2014-06-28', ['month', 'year']],
+  ] as const)('returns date-range options for %s through %s', (from, to, expected) => {
+    expect(getProcessGranularityOptions(from, to)).toEqual(expected)
+  })
+
+  it('falls back when the current granularity does not fit the selected range', () => {
+    expect(resolveProcessGranularity('year', '2014-06-01', '2014-06-28')).toBe('day')
+    expect(resolveProcessGranularity('day', '2011-06-03', '2014-06-28')).toBe('month')
+  })
 })
