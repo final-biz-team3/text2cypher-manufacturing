@@ -9,6 +9,11 @@ interface AnalysisCardProps {
   onOpenAll: (trigger: HTMLElement) => void
   onAsk: () => void
   onSelectRow: (row: Record<string, unknown>, trigger: HTMLElement) => void
+  barColumn?: string
+  barTone?: 'info' | 'warn' | 'fail'
+  minHeightClassName?: string
+  responsiveHiddenColumns?: string[]
+  displayTitle?: string
 }
 
 export function AnalysisCard({
@@ -17,15 +22,22 @@ export function AnalysisCard({
   onOpenAll,
   onAsk,
   onSelectRow,
+  barColumn,
+  barTone,
+  minHeightClassName = 'min-h-[300px]',
+  responsiveHiddenColumns,
+  displayTitle,
 }: AnalysisCardProps) {
   return (
-    <section className="flex min-h-72 min-w-0 flex-col overflow-hidden rounded-md border border-border bg-panel shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <h2 className="truncate text-[13px] font-semibold text-text">{card.title}</h2>
-          <span
-            className={`size-1.5 rounded-full ${card.status === 'ready' ? 'bg-info' : 'bg-fail'}`}
-          />
+    <section
+      className={`flex min-w-0 flex-col overflow-hidden rounded-[5px] border border-border bg-panel ${minHeightClassName}`}
+    >
+      <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <h2 className="truncate text-[13px] font-semibold text-text">
+            {displayTitle ?? card.title}
+          </h2>
+          {card.status === 'error' ? <span className="size-1.5 rounded-full bg-fail" /> : null}
         </div>
         <span className="text-[10.5px] text-text-faint">총 {card.total.toLocaleString()}건</span>
       </div>
@@ -42,6 +54,9 @@ export function AnalysisCard({
             entityIdField={card.entityIdField}
             selectedId={selectedEntityId}
             onRowSelect={card.entityType ? onSelectRow : undefined}
+            barColumn={barColumn}
+            barTone={barTone}
+            responsiveHiddenColumns={responsiveHiddenColumns}
           />
         )}
       </div>

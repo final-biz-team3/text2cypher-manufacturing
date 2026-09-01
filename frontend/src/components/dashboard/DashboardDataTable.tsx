@@ -12,6 +12,9 @@ interface DashboardDataTableProps {
   sort?: string
   direction?: 'asc' | 'desc'
   compact?: boolean
+  barColumn?: string
+  barTone?: 'info' | 'warn' | 'fail'
+  responsiveHiddenColumns?: string[]
 }
 
 function isNumericColumn(column: string) {
@@ -29,7 +32,13 @@ export function DashboardDataTable({
   sort,
   direction,
   compact = false,
+  barColumn,
+  barTone = 'info',
+  responsiveHiddenColumns = [],
 }: DashboardDataTableProps) {
+  const barMaximum = barColumn
+    ? Math.max(0, ...rows.map((row) => (typeof row[barColumn] === 'number' ? row[barColumn] : 0)))
+    : 0
   const activateRow = (
     row: Record<string, unknown>,
     target: EventTarget | null,
@@ -42,14 +51,14 @@ export function DashboardDataTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-[11.5px]">
+      <table className="w-full border-collapse text-[12.5px]">
         <thead>
           <tr className="border-b border-border bg-panel-2/65 text-text-muted">
-            <th className="w-10 px-3 py-2 text-right font-medium">순위</th>
+            <th className="h-10 w-10 px-3 text-right text-[11.5px] font-semibold">순위</th>
             {columns.map((column) => (
               <th
                 key={column}
-                className={`px-3 py-2 font-medium whitespace-nowrap ${isNumericColumn(column) ? 'text-right' : 'text-left'}`}
+                className={`h-10 px-3 text-[11.5px] font-semibold whitespace-nowrap ${responsiveHiddenColumns.includes(column) ? 'hidden 2xl:table-cell' : ''} ${isNumericColumn(column) ? 'text-right' : 'text-left'}`}
               >
                 {onSort && sortableColumns?.includes(column) ? (
                   <button
@@ -89,18 +98,44 @@ export function DashboardDataTable({
                     : ''
                 } ${isSelected ? 'bg-accent-bg text-info' : 'text-text'}`}
               >
-                <td className="px-3 py-2 text-right text-text-faint">{index + 1}</td>
-                {columns.map((column) => (
-                  <td
-                    key={column}
-                    className={`max-w-60 px-3 ${compact ? 'py-2' : 'py-2.5'} whitespace-nowrap ${
-                      isNumericColumn(column) ? 'text-right tabular-nums' : 'truncate text-left'
-                    } ${column === 'shortageQty' || column === 'scrappedQty' ? 'font-semibold text-fail' : ''}`}
-                    title={formatDashboardValue(column, row[column])}
-                  >
-                    {formatDashboardValue(column, row[column])}
-                  </td>
-                ))}
+                <td className="h-11 px-3 text-right text-text-faint">{index + 1}</td>
+                {columns.map((column) => {
+                  const value = row[column]
+                  const showBar =
+                    column === barColumn && typeof value === 'number' && barMaximum > 0
+                  return (
+                    <td
+                      key={column}
+                      className={`h-11 max-w-60 px-3 ${responsiveHiddenColumns.includes(column) ? 'hidden 2xl:table-cell' : ''} ${compact ? '' : 'py-0.5'} whitespace-nowrap ${
+                        isNumericColumn(column) ? 'text-right tabular-nums' : 'truncate text-left'
+                      } ${column === 'shortageQty' || column === 'scrappedQty' ? 'font-semibold text-fail' : ''}`}
+                      title={formatDashboardValue(column, value)}
+                    >
+                      {showBar ? (
+                        <span className="flex min-w-24 items-center justify-end gap-2.5">
+                          <span className="min-w-10">{formatDashboardValue(column, value)}</span>
+                          <span
+                            className="h-1.5 w-14 overflow-hidden bg-panel-2 sm:w-16"
+                            aria-hidden="true"
+                          >
+                            <span
+                              className={`block h-full ${
+                                barTone === 'warn'
+                                  ? 'bg-warn'
+                                  : barTone === 'fail'
+                                    ? 'bg-fail'
+                                    : 'bg-info'
+                              }`}
+                              style={{ width: `${Math.max(8, (value / barMaximum) * 100)}%` }}
+                            />
+                          </span>
+                        </span>
+                      ) : (
+                        formatDashboardValue(column, value)
+                      )}
+                    </td>
+                  )
+                })}
                 {selectedId !== undefined ? (
                   <td className="px-2 text-[10px] font-semibold whitespace-nowrap">
                     {isSelected ? '선택됨' : ''}
