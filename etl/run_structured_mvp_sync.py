@@ -245,6 +245,46 @@ def validate_after_load(
     return []
 
 
+def prepare_pg_connection(driver: Driver) -> psycopg2.extensions.connection:
+    """PG env 확인 → 접속 → 대상 DB 존재 확인. 실패 시 driver까지 닫고 sys.exit.
+
+    driver를 받는 이유: 준비 단계에서 중단할 때 이미 열어둔 Neo4j 드라이버도
+    같이 정리해야 하는데, 이 시점은 아직 main()의 try/finally 밖이라서다.
+    """
+    missing_pg_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
+    if missing_pg_vars:
+        driver.close()
+        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_pg_vars)}")
+
+    pg_host = os.environ["POSTGRES_HOST"]
+    pg_port = os.environ["POSTGRES_PORT"]
+    pg_db = os.environ["POSTGRES_DB"]
+    pg_user = os.environ["POSTGRES_USER"]
+    pg_password = os.environ.get("POSTGRES_PASSWORD", "")
+    print(f"PostgreSQL 대상: {pg_host}:{pg_port}/{pg_db}")
+
+    pg_conn = psycopg2.connect(
+        host=pg_host, port=pg_port, dbname=pg_db, user=pg_user, password=pg_password
+    )
+    if not target_database_exists(pg_conn, pg_db):
+        pg_conn.close()
+        driver.close()
+        sys.exit(f"'{pg_db}' 데이터베이스가 {pg_host}:{pg_port}에 없습니다.")
+    return pg_conn
+
+
+def prepare_sync_context(driver: Driver) -> tuple[str, str]:
+    """sync_run_id 생성 + 승격 경합 검사용 기준 기본 DB 이름 기록. (id, 기준default) 반환."""
+    sync_run_id = generate_sync_run_id()
+    print(f"syncRunId = {sync_run_id}")
+
+    expected_default = get_default_database(driver)
+    print(
+        f"   현재 기본 데이터베이스: '{expected_default}' (승격 직전 재확인용으로 기록)"
+    )
+    return sync_run_id, expected_default
+
+
 def main() -> None:
     from dotenv import load_dotenv
 
@@ -275,33 +315,8 @@ def main() -> None:
             driver.close()
         return
 
-    missing_pg_vars = [name for name in REQUIRED_ENV_VARS if not os.environ.get(name)]
-    if missing_pg_vars:
-        driver.close()
-        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_pg_vars)}")
-
-    pg_host = os.environ["POSTGRES_HOST"]
-    pg_port = os.environ["POSTGRES_PORT"]
-    pg_db = os.environ["POSTGRES_DB"]
-    pg_user = os.environ["POSTGRES_USER"]
-    pg_password = os.environ.get("POSTGRES_PASSWORD", "")
-    print(f"PostgreSQL 대상: {pg_host}:{pg_port}/{pg_db}")
-
-    pg_conn = psycopg2.connect(
-        host=pg_host, port=pg_port, dbname=pg_db, user=pg_user, password=pg_password
-    )
-    if not target_database_exists(pg_conn, pg_db):
-        pg_conn.close()
-        driver.close()
-        sys.exit(f"'{pg_db}' 데이터베이스가 {pg_host}:{pg_port}에 없습니다.")
-
-    sync_run_id = generate_sync_run_id()
-    print(f"syncRunId = {sync_run_id}")
-
-    expected_default = get_default_database(driver)
-    print(
-        f"   현재 기본 데이터베이스: '{expected_default}' (승격 직전 재확인용으로 기록)"
-    )
+    pg_conn = prepare_pg_connection(driver)
+    sync_run_id, expected_default = prepare_sync_context(driver)
 
     try:
         print("1) PostgreSQL에서 노드·관계 전체 추출 (Neo4j는 아직 안 건드림)")
