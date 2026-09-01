@@ -21,7 +21,8 @@ import {
 
 const CHART_WIDTH = 720
 const CHART_HEIGHT = 236
-const CHART_PADDING = { top: 18, right: 18, bottom: 34, left: 44 }
+const CHART_PADDING = { top: 24, right: 18, bottom: 38, left: 54 }
+const AXIS_INTERVALS = 4
 
 const KPI_ICONS = {
   startedWorkOrderCount: PlayCircle,
@@ -94,6 +95,56 @@ function tickIndexes(length: number): number[] {
   return Array.from(new Set([0, 1, 2, 3, 4].map((index) => Math.round((index * (length - 1)) / 4))))
 }
 
+function getAxisScale(value: number): { max: number; ticks: number[] } {
+  const target = Math.max(1, value)
+  const roughStep = target / AXIS_INTERVALS
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep))
+  const normalized = roughStep / magnitude
+  const step = (normalized < 2 ? 1 : normalized < 2.5 ? 2 : normalized < 5 ? 2.5 : 5) * magnitude
+  const max = Math.ceil(target / step) * step
+  const intervalCount = Math.round(max / step)
+  return {
+    max,
+    ticks: Array.from({ length: intervalCount + 1 }, (_, index) => max - index * step),
+  }
+}
+
+function ChartTooltip({
+  left,
+  date,
+  granularity,
+  values,
+}: {
+  left: number
+  date: string
+  granularity: ProcessGranularity
+  values: { label: string; value: number; unit: string; color: string }[]
+}) {
+  return (
+    <div
+      className="pointer-events-none absolute top-1 z-10 min-w-36 -translate-x-1/2 rounded-[4px] border border-border bg-panel/95 px-3 py-2 shadow-lg backdrop-blur-sm"
+      style={{ left: `${Math.min(86, Math.max(14, left))}%` }}
+      role="status"
+    >
+      <p className="text-[10.5px] font-medium text-text">{formatPeriodDate(date, granularity)}</p>
+      <div className="mt-1.5 grid gap-1">
+        {values.map((item) => (
+          <p key={item.label} className="flex items-center justify-between gap-4 text-[10px]">
+            <span className="flex items-center gap-1.5 text-text-muted">
+              <span className="size-1.5 rounded-full" style={{ backgroundColor: item.color }} />
+              {item.label}
+            </span>
+            <strong className="font-semibold tabular-nums text-text">
+              {item.value.toLocaleString()}
+              {item.unit}
+            </strong>
+          </p>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ProcessMetric({ kpi }: { kpi: DashboardKpi }) {
   const Icon = KPI_ICONS[kpi.key as keyof typeof KPI_ICONS] ?? Factory
   const isRisk = kpi.key === 'scrappedWorkOrderCount' || kpi.key === 'scrappedQty'
@@ -123,20 +174,24 @@ function WorkOrderTrendChart({
   loading: boolean
   onGranularityChange: (granularity: ProcessGranularity) => void
 }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const rows = data.trend
   const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
-  const maxValue = Math.max(
+  const dataMax = Math.max(
     1,
     ...rows.flatMap((row) => [row.startedWorkOrderCount, row.completedWorkOrderCount]),
   )
+  const axis = getAxisScale(dataMax)
   const x = (index: number) =>
     CHART_PADDING.left +
     (rows.length <= 1 ? plotWidth / 2 : (index / (rows.length - 1)) * plotWidth)
-  const y = (value: number) => CHART_PADDING.top + plotHeight - (value / maxValue) * plotHeight
+  const y = (value: number) => CHART_PADDING.top + plotHeight - (value / axis.max) * plotHeight
   const points = (key: 'startedWorkOrderCount' | 'completedWorkOrderCount') =>
     rows.map((row, index) => `${x(index)},${y(row[key])}`).join(' ')
   const ticks = tickIndexes(rows.length)
+  const activeRow = activeIndex === null ? null : rows[activeIndex]
+  const activeLeft = activeIndex === null ? 50 : (x(activeIndex) / CHART_WIDTH) * 100
 
   return (
     <section className="min-w-0 rounded-[5px] border border-border bg-panel p-4">
@@ -150,10 +205,10 @@ function WorkOrderTrendChart({
         <div className="flex flex-wrap items-center justify-end gap-3">
           <div className="flex gap-3 text-[10.5px] text-text-muted" aria-hidden="true">
             <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-info" /> 시작
+              <span className="w-3 border-t-2 border-info" /> 시작
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-success" /> 완료
+              <span className="w-3 border-t-2 border-dashed border-success" /> 완료
             </span>
           </div>
           <GranularityToggle
@@ -165,32 +220,55 @@ function WorkOrderTrendChart({
           />
         </div>
       </div>
-      <div className="mt-3 aspect-[720/236] w-full overflow-hidden">
+      <div className="relative mt-3 aspect-[720/236] w-full overflow-hidden">
+        {activeRow ? (
+          <ChartTooltip
+            left={activeLeft}
+            date={activeRow.date}
+            granularity={data.period.granularity}
+            values={[
+              {
+                label: '시작',
+                value: activeRow.startedWorkOrderCount,
+                unit: '건',
+                color: 'var(--info)',
+              },
+              {
+                label: '완료',
+                value: activeRow.completedWorkOrderCount,
+                unit: '건',
+                color: 'var(--success)',
+              },
+            ]}
+          />
+        ) : null}
         <svg
           className="block size-full"
           viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
           role="img"
           aria-label={`선택 기간의 작업지시 시작 및 완료 ${granularityLabel(data.period.granularity)} 추이`}
         >
-          {[0, 0.5, 1].map((ratio) => {
-            const gridY = CHART_PADDING.top + plotHeight * ratio
-            const value = Math.round(maxValue * (1 - ratio))
+          <text x="8" y="13" fill="var(--text-muted)" fontSize="11">
+            단위: 건
+          </text>
+          {axis.ticks.map((value, index) => {
+            const gridY = CHART_PADDING.top + (plotHeight * index) / (axis.ticks.length - 1)
             return (
-              <g key={ratio}>
+              <g key={value}>
                 <line
                   x1={CHART_PADDING.left}
                   x2={CHART_WIDTH - CHART_PADDING.right}
                   y1={gridY}
                   y2={gridY}
                   stroke="var(--border)"
-                  strokeWidth="1"
+                  strokeWidth={value === 0 ? '1.2' : '1'}
                 />
                 <text
                   x={CHART_PADDING.left - 8}
                   y={gridY + 4}
                   textAnchor="end"
                   fill="var(--text-muted)"
-                  fontSize="10"
+                  fontSize="11"
                 >
                   {value.toLocaleString()}
                 </text>
@@ -204,33 +282,61 @@ function WorkOrderTrendChart({
                 fill="none"
                 stroke="var(--info)"
                 strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
               <polyline
                 points={points('completedWorkOrderCount')}
                 fill="none"
                 stroke="var(--success)"
                 strokeWidth="2.5"
+                strokeDasharray="6 4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
+              {activeIndex !== null ? (
+                <line
+                  x1={x(activeIndex)}
+                  x2={x(activeIndex)}
+                  y1={CHART_PADDING.top}
+                  y2={CHART_PADDING.top + plotHeight}
+                  stroke="var(--text-muted)"
+                  strokeWidth="1"
+                  strokeDasharray="3 4"
+                  opacity="0.65"
+                />
+              ) : null}
               {rows.map((row, index) => (
                 <g key={row.date}>
                   <circle
                     cx={x(index)}
                     cy={y(row.startedWorkOrderCount)}
-                    r="3"
+                    r={activeIndex === index ? '4.5' : '3'}
                     fill="var(--info)"
-                    tabIndex={0}
-                  >
-                    <title>{`${row.date} 시작 ${row.startedWorkOrderCount.toLocaleString()}건`}</title>
-                  </circle>
+                    stroke="var(--panel)"
+                    strokeWidth="1.5"
+                  />
                   <circle
                     cx={x(index)}
                     cy={y(row.completedWorkOrderCount)}
-                    r="3"
+                    r={activeIndex === index ? '4.5' : '3'}
                     fill="var(--success)"
+                    stroke="var(--panel)"
+                    strokeWidth="1.5"
+                  />
+                  <rect
+                    x={x(index) - Math.max(7, plotWidth / Math.max(rows.length, 1) / 2)}
+                    y={CHART_PADDING.top}
+                    width={Math.max(14, plotWidth / Math.max(rows.length, 1))}
+                    height={plotHeight}
+                    fill="transparent"
                     tabIndex={0}
-                  >
-                    <title>{`${row.date} 완료 ${row.completedWorkOrderCount.toLocaleString()}건`}</title>
-                  </circle>
+                    aria-label={`${row.date}, 시작 ${row.startedWorkOrderCount.toLocaleString()}건, 완료 ${row.completedWorkOrderCount.toLocaleString()}건`}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onMouseLeave={() => setActiveIndex(null)}
+                    onFocus={() => setActiveIndex(index)}
+                    onBlur={() => setActiveIndex(null)}
+                  />
                 </g>
               ))}
             </>
@@ -245,7 +351,7 @@ function WorkOrderTrendChart({
                 y={CHART_HEIGHT - 8}
                 textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}
                 fill="var(--text-muted)"
-                fontSize="10"
+                fontSize="11"
               >
                 {formatPeriodDate(row.date, data.period.granularity)}
               </text>
@@ -268,13 +374,24 @@ function ScrapTrendChart({
   loading: boolean
   onGranularityChange: (granularity: ProcessGranularity) => void
 }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const rows = data.trend
   const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
-  const maxValue = Math.max(1, ...rows.map((row) => row.scrappedQty))
+  const dataMax = Math.max(1, ...rows.map((row) => row.scrappedQty))
+  const axis = getAxisScale(dataMax)
   const slotWidth = rows.length > 0 ? plotWidth / rows.length : plotWidth
   const barWidth = Math.max(2, Math.min(18, slotWidth * 0.62))
   const ticks = tickIndexes(rows.length)
+  const average = rows.length
+    ? rows.reduce((sum, row) => sum + row.scrappedQty, 0) / rows.length
+    : 0
+  const y = (value: number) => CHART_PADDING.top + plotHeight - (value / axis.max) * plotHeight
+  const activeRow = activeIndex === null ? null : rows[activeIndex]
+  const activeCenterX =
+    activeIndex === null
+      ? CHART_WIDTH / 2
+      : CHART_PADDING.left + slotWidth * activeIndex + slotWidth / 2
 
   return (
     <section className="min-w-0 rounded-[5px] border border-border bg-panel p-4">
@@ -293,53 +410,100 @@ function ScrapTrendChart({
           onChange={onGranularityChange}
         />
       </div>
-      <div className="mt-3 aspect-[720/236] w-full overflow-hidden">
+      <div className="relative mt-3 aspect-[720/236] w-full overflow-hidden">
+        {activeRow ? (
+          <ChartTooltip
+            left={(activeCenterX / CHART_WIDTH) * 100}
+            date={activeRow.date}
+            granularity={data.period.granularity}
+            values={[
+              { label: '폐기수량', value: activeRow.scrappedQty, unit: '개', color: 'var(--warn)' },
+            ]}
+          />
+        ) : null}
         <svg
           className="block size-full"
           viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
           role="img"
           aria-label={`선택 기간의 ${granularityLabel(data.period.granularity)} 폐기수량 추이`}
         >
-          {[0, 0.5, 1].map((ratio) => {
-            const gridY = CHART_PADDING.top + plotHeight * ratio
+          <text x="8" y="13" fill="var(--text-muted)" fontSize="11">
+            단위: 개
+          </text>
+          {axis.ticks.map((value, index) => {
+            const gridY = CHART_PADDING.top + (plotHeight * index) / (axis.ticks.length - 1)
             return (
-              <g key={ratio}>
+              <g key={value}>
                 <line
                   x1={CHART_PADDING.left}
                   x2={CHART_WIDTH - CHART_PADDING.right}
                   y1={gridY}
                   y2={gridY}
                   stroke="var(--border)"
-                  strokeWidth="1"
+                  strokeWidth={value === 0 ? '1.2' : '1'}
                 />
                 <text
                   x={CHART_PADDING.left - 8}
                   y={gridY + 4}
                   textAnchor="end"
                   fill="var(--text-muted)"
-                  fontSize="10"
+                  fontSize="11"
                 >
-                  {Math.round(maxValue * (1 - ratio)).toLocaleString()}
+                  {value.toLocaleString()}
                 </text>
               </g>
             )
           })}
+          {average > 0 ? (
+            <g>
+              <line
+                x1={CHART_PADDING.left}
+                x2={CHART_WIDTH - CHART_PADDING.right}
+                y1={y(average)}
+                y2={y(average)}
+                stroke="var(--text-muted)"
+                strokeWidth="1"
+                strokeDasharray="4 4"
+              />
+              <text
+                x={CHART_WIDTH - CHART_PADDING.right}
+                y={y(average) - 5}
+                textAnchor="end"
+                fill="var(--text-muted)"
+                fontSize="10"
+              >
+                평균 {average.toFixed(1)}
+              </text>
+            </g>
+          ) : null}
           {rows.map((row, index) => {
-            const height = (row.scrappedQty / maxValue) * plotHeight
+            const height = (row.scrappedQty / axis.max) * plotHeight
             const centerX = CHART_PADDING.left + slotWidth * index + slotWidth / 2
             return (
-              <rect
-                key={row.date}
-                x={centerX - barWidth / 2}
-                y={CHART_PADDING.top + plotHeight - height}
-                width={barWidth}
-                height={height}
-                rx="1.5"
-                fill="var(--warn)"
-                tabIndex={0}
-              >
-                <title>{`${row.date} 폐기 ${row.scrappedQty.toLocaleString()}개`}</title>
-              </rect>
+              <g key={row.date}>
+                <rect
+                  x={centerX - barWidth / 2}
+                  y={CHART_PADDING.top + plotHeight - height}
+                  width={barWidth}
+                  height={height}
+                  rx="2"
+                  fill="var(--warn)"
+                  opacity={activeIndex === null || activeIndex === index ? '1' : '0.42'}
+                />
+                <rect
+                  x={CHART_PADDING.left + slotWidth * index}
+                  y={CHART_PADDING.top}
+                  width={slotWidth}
+                  height={plotHeight}
+                  fill="transparent"
+                  tabIndex={0}
+                  aria-label={`${row.date}, 폐기수량 ${row.scrappedQty.toLocaleString()}개`}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseLeave={() => setActiveIndex(null)}
+                  onFocus={() => setActiveIndex(index)}
+                  onBlur={() => setActiveIndex(null)}
+                />
+              </g>
             )
           })}
           {ticks.map((index) => {
@@ -353,7 +517,7 @@ function ScrapTrendChart({
                 y={CHART_HEIGHT - 8}
                 textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}
                 fill="var(--text-muted)"
-                fontSize="10"
+                fontSize="11"
               >
                 {formatPeriodDate(row.date, data.period.granularity)}
               </text>
