@@ -1,5 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Maximize2, Minus, Plus, RotateCcw, Search, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import {
   SigmaContainer,
   useCamera,
@@ -12,7 +13,9 @@ import noverlap from 'graphology-layout-noverlap'
 import { createEdgeArrowProgram } from 'sigma/rendering'
 import type { MultiDirectedGraph } from 'graphology'
 import { Button } from '@/components/ui/button'
+import { EntityDetailContent } from '@/components/dashboard/EntityDetailContent'
 import { createGraphologyGraph } from '@/lib/graph/createGraphologyGraph'
+import { fetchEntityDetail, type EntityDetail } from '@/lib/dashboard'
 import type { GraphAttributes, GraphEdgeAttributes, GraphNodeAttributes } from '@/types/graph'
 
 type SigmaGraphologyGraph = MultiDirectedGraph<
@@ -48,6 +51,26 @@ interface CategorySummary {
   category: string
   color: string
   total: number
+}
+
+function resolveGraphEntity(attributes: GraphNodeAttributes | null) {
+  if (!attributes) return null
+  const definitions = {
+    Product: ['product', ['productId', 'componentId', 'finishedProductId', 'rootProductId']],
+    Supplier: ['supplier', ['supplierId']],
+    WorkOrder: ['work-order', ['workOrderId']],
+    RoutingOperation: ['routing-operation', ['routingOperationKey']],
+    Location: ['location', ['locationId']],
+    ScrapReason: ['scrap-reason', ['scrapReasonId']],
+  } as const
+  const definition = definitions[attributes.category as keyof typeof definitions]
+  if (!definition) return null
+  const [type, fields] = definition
+  for (const field of fields) {
+    const id = attributes.properties[field]
+    if (typeof id === 'string' || typeof id === 'number') return { type, id }
+  }
+  return null
 }
 
 interface GraphRuntimeProps {
@@ -465,11 +488,17 @@ function buildCategorySummaries(graph: SigmaGraphologyGraph): CategorySummary[] 
 }
 
 function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
+  const navigate = useNavigate()
   const [selectedNodeIds, setSelectedNodeIds] = useState<ReadonlySet<string>>(() => new Set())
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
   const [hiddenCategories, setHiddenCategories] = useState<ReadonlySet<string>>(() => new Set())
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResultNodeId, setSearchResultNodeId] = useState<string | null>(null)
+  const [entityDetailState, setEntityDetailState] = useState<{
+    key: string
+    detail: EntityDetail | null
+    error: string | null
+  }>({ key: '', detail: null, error: null })
   const deferredSearchQuery = useDeferredValue(searchQuery)
   const searchIndex = useMemo(() => buildSearchIndex(graph), [graph])
   const categories = useMemo(() => buildCategorySummaries(graph), [graph])
@@ -539,6 +568,36 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
   const selectedNode = selectedNodeIds.values().next().value ?? null
   const selectedAttributes =
     selectedNode && graph.hasNode(selectedNode) ? graph.getNodeAttributes(selectedNode) : null
+
+  const selectedEntity = resolveGraphEntity(selectedAttributes)
+  const selectedEntityType = selectedEntity?.type ?? null
+  const selectedEntityId = selectedEntity?.id ?? null
+  const selectedEntityKey =
+    selectedEntityType && selectedEntityId !== null
+      ? `${selectedEntityType}:${String(selectedEntityId)}`
+      : ''
+  const entityDetail = entityDetailState.key === selectedEntityKey ? entityDetailState.detail : null
+  const entityDetailError =
+    entityDetailState.key === selectedEntityKey ? entityDetailState.error : null
+
+  useEffect(() => {
+    if (!selectedEntityType || selectedEntityId === null) return
+    const controller = new AbortController()
+    const requestKey = `${selectedEntityType}:${String(selectedEntityId)}`
+    fetchEntityDetail(selectedEntityType, selectedEntityId, controller.signal)
+      .then((detail) => setEntityDetailState({ key: requestKey, detail, error: null }))
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          console.error('Sigma entity detail failed:', error)
+          setEntityDetailState({
+            key: requestKey,
+            detail: null,
+            error: '상세 API를 불러오지 못해 그래프 속성만 표시합니다.',
+          })
+        }
+      })
+    return () => controller.abort()
+  }, [selectedEntityId, selectedEntityType])
 
   return (
     <section
@@ -612,6 +671,36 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
           <SelectionSummary total={graph.order} selected={selectedNodeIds.size} />
           <CameraControls onResetInteraction={handleResetInteraction} />
         </SigmaContainer>
+        {selectedAttributes ? (
+          <aside className="absolute inset-y-0 right-0 z-30 flex w-full max-w-[420px] flex-col border-l border-border bg-panel shadow-[-10px_0_28px_rgba(15,23,42,0.12)]">
+            <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+              <div className="min-w-0">
+                <p className="truncate text-[11.5px] font-semibold text-text">선택 노드 상세</p>
+                <p className="truncate text-[9.5px] text-text-faint">
+                  {selectedAttributes.category}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => handleSelectedNodeChange(null)}
+                aria-label="노드 상세 닫기"
+              >
+                <X />
+              </Button>
+            </div>
+            <EntityDetailContent
+              detail={entityDetail}
+              loading={selectedEntity !== null && !entityDetail && !entityDetailError}
+              error={
+                entityDetailError ?? (selectedEntity ? null : '상세 API 식별자가 없는 노드입니다.')
+              }
+              fallbackProperties={selectedAttributes.properties}
+              onAsk={(question) => navigate('/chat', { state: { draftQuestion: question } })}
+            />
+          </aside>
+        ) : null}
       </div>
       {issueCount > 0 ? (
         <p className="border-t border-border px-3 py-1.5 text-[10.5px] text-warn">
