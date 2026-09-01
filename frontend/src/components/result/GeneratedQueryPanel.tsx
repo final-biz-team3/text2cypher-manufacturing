@@ -56,7 +56,7 @@ export function GeneratedQueryPanel({
           </span>
         </div>
       ) : (
-        <div className="flex flex-1 flex-col overflow-y-auto">
+        <div className="flex flex-1 flex-col overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {hasTimeline ? (
             <div className="flex flex-col gap-3 border-b border-border p-4">
               <p className="text-[12.5px] font-semibold text-text">자기수정 타임라인</p>
