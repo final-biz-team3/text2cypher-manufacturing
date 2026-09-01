@@ -1,6 +1,7 @@
 """검증된 하위 질의를 의존성 wave 순서로 실행한다."""
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -9,6 +10,8 @@ from orchestrator.planning import Subquery
 from orchestrator.query_failures import make_query_failure
 from orchestrator.state import OrchestratorState
 from orchestrator.subgraphs.retry_agent import INCONCLUSIVE, NO_DATA
+
+logger = logging.getLogger(__name__)
 
 _TOOL_OUTPUT_FIELDS = {
     "sql": ("sql_query", "sql_result"),
@@ -90,10 +93,20 @@ def _dependency_empty(empty_reasons: list[str | None]) -> dict[str, Any]:
     }
 
 
+def _input_binding_failure() -> dict[str, Any]:
+    return {
+        "result": None,
+        "error": "하위 질의 입력 계획이 유효하지 않아 실행하지 않았습니다.",
+        "attempts": [],
+        "empty_reason": None,
+        "truncated": False,
+    }
+
+
 def _extract_input_bindings(
     subquery: Subquery, outcomes: dict[str, dict[str, Any]]
 ) -> dict[str, list[Any]]:
-    """선행 결과에서 최초 등장 순서로 고유 binding 배열을 만든다."""
+    """선행 결과 행의 순서와 중복을 그대로 binding 배열에 투영한다."""
     return collect_input_bindings(
         subquery.get("inputBindings", {}),
         {
@@ -178,7 +191,15 @@ def make_execute_plan_node(
                 )
                 return query_field, result_field, None, summary
 
-            input_bindings = _extract_input_bindings(subquery, outcomes)
+            try:
+                input_bindings = _extract_input_bindings(subquery, outcomes)
+            except ValueError as exc:
+                logger.error(
+                    "input binding 검증 실패: subquery_id=%r error=%s",
+                    subquery["id"],
+                    exc,
+                )
+                return query_field, result_field, None, _input_binding_failure()
             result = await agents[subquery["tool"]].ainvoke(
                 _initial_state(
                     subquery=subquery,

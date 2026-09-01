@@ -1,0 +1,149 @@
+{
+  "snapshot": {
+    "syncRunId": "20260822T015245Z-89db8d74",
+    "label": "AdventureWorks 전체 데이터 스냅샷",
+    "scope": "특정 하루가 아닌 전체 스냅샷 집계",
+    "syncedAt": "2026-08-22T01:52:45Z",
+    "bomAsOfDate": "2014-08-08"
+  },
+  "kpis": {
+    "product_count": {
+      "label": "전체 제품",
+      "unit": "개",
+      "sql": "SELECT COUNT(*)::int AS value FROM production.product"
+    },
+    "active_supplier_count": {
+      "label": "활성 공급업체",
+      "unit": "곳",
+      "sql": "SELECT COUNT(*)::int AS value FROM purchasing.vendor WHERE activeflag = true"
+    },
+    "purchased_product_count": {
+      "label": "외부 구매 제품",
+      "unit": "개",
+      "sql": "SELECT COUNT(*)::int AS value FROM production.product WHERE makeflag = false"
+    },
+    "low_stock_product_count": {
+      "label": "안전재고 미달",
+      "unit": "개",
+      "sql": "WITH inventory AS (SELECT productid, SUM(quantity)::int AS actual_stock FROM production.productinventory GROUP BY productid) SELECT COUNT(*)::int AS value FROM production.product p LEFT JOIN inventory i ON i.productid = p.productid WHERE COALESCE(i.actual_stock, 0) < p.safetystocklevel"
+    },
+    "work_order_count": {
+      "label": "전체 작업지시",
+      "unit": "건",
+      "sql": "SELECT COUNT(*)::int AS value FROM production.workorder"
+    },
+    "scrapped_work_order_count": {
+      "label": "폐기 발생 작업지시",
+      "unit": "건",
+      "sql": "SELECT COUNT(*)::int AS value FROM production.workorder WHERE scrappedqty > 0"
+    }
+  },
+  "cards": {
+    "low_stock_top5": {
+      "title": "안전재고 미달 제품",
+      "kind": "table",
+      "columns": ["productId", "productName", "productNumber", "safetyStockLevel", "actualStock", "shortageQty"],
+      "entityType": "product",
+      "entityIdField": "productId",
+      "defaultSort": "shortageQty",
+      "allowedSorts": {
+        "shortageQty": "\"shortageQty\"",
+        "productId": "\"productId\"",
+        "productName": "\"productName\"",
+        "actualStock": "\"actualStock\""
+      },
+      "tieBreak": "\"productId\" ASC",
+      "sql": "WITH inventory AS (SELECT productid, SUM(quantity)::int AS actual_stock FROM production.productinventory GROUP BY productid) SELECT p.productid AS \"productId\", p.name AS \"productName\", p.productnumber AS \"productNumber\", p.safetystocklevel::int AS \"safetyStockLevel\", COALESCE(i.actual_stock, 0)::int AS \"actualStock\", (p.safetystocklevel - COALESCE(i.actual_stock, 0))::int AS \"shortageQty\" FROM production.product p LEFT JOIN inventory i ON i.productid = p.productid WHERE COALESCE(i.actual_stock, 0) < p.safetystocklevel"
+    },
+    "top_finished_sales": {
+      "title": "완제품 판매량",
+      "kind": "table",
+      "columns": ["productId", "productName", "productNumber", "totalOrderQty"],
+      "entityType": "product",
+      "entityIdField": "productId",
+      "defaultSort": "totalOrderQty",
+      "allowedSorts": {
+        "totalOrderQty": "\"totalOrderQty\"",
+        "productId": "\"productId\"",
+        "productName": "\"productName\""
+      },
+      "tieBreak": "\"productId\" ASC",
+      "sql": "SELECT p.productid AS \"productId\", p.name AS \"productName\", p.productnumber AS \"productNumber\", COALESCE(SUM(sod.orderqty), 0)::int AS \"totalOrderQty\" FROM production.product p JOIN sales.salesorderdetail sod ON sod.productid = p.productid WHERE p.finishedgoodsflag = true GROUP BY p.productid, p.name, p.productnumber"
+    },
+    "top_rejected_suppliers": {
+      "title": "공급업체 반려수량",
+      "kind": "table",
+      "columns": ["supplierId", "supplierName", "totalRejectedQty"],
+      "entityType": "supplier",
+      "entityIdField": "supplierId",
+      "defaultSort": "totalRejectedQty",
+      "allowedSorts": {
+        "totalRejectedQty": "\"totalRejectedQty\"",
+        "supplierId": "\"supplierId\"",
+        "supplierName": "\"supplierName\""
+      },
+      "tieBreak": "\"supplierId\" ASC",
+      "sql": "SELECT v.businessentityid AS \"supplierId\", v.name AS \"supplierName\", COALESCE(SUM(pod.rejectedqty), 0) AS \"totalRejectedQty\" FROM purchasing.vendor v JOIN purchasing.purchaseorderheader poh ON poh.vendorid = v.businessentityid JOIN purchasing.purchaseorderdetail pod ON pod.purchaseorderid = poh.purchaseorderid GROUP BY v.businessentityid, v.name"
+    },
+    "top_scrapped_work_orders": {
+      "title": "폐기 작업지시",
+      "kind": "table",
+      "columns": ["workOrderId", "productId", "productName", "scrappedQty", "scrapReasonId", "scrapReasonName"],
+      "entityType": "work-order",
+      "entityIdField": "workOrderId",
+      "defaultSort": "scrappedQty",
+      "allowedSorts": {
+        "scrappedQty": "\"scrappedQty\"",
+        "workOrderId": "\"workOrderId\"",
+        "productName": "\"productName\""
+      },
+      "tieBreak": "\"workOrderId\" ASC",
+      "sql": "SELECT wo.workorderid AS \"workOrderId\", wo.productid AS \"productId\", p.name AS \"productName\", wo.scrappedqty::int AS \"scrappedQty\", sr.scrapreasonid AS \"scrapReasonId\", sr.name AS \"scrapReasonName\" FROM production.workorder wo JOIN production.product p ON p.productid = wo.productid LEFT JOIN production.scrapreason sr ON sr.scrapreasonid = wo.scrapreasonid WHERE wo.scrappedqty > 0"
+    },
+    "busiest_locations": {
+      "title": "작업지시가 많은 작업장",
+      "kind": "table",
+      "columns": ["locationId", "locationName", "workOrderCount", "operationCount"],
+      "entityType": "location",
+      "entityIdField": "locationId",
+      "defaultSort": "workOrderCount",
+      "allowedSorts": {
+        "workOrderCount": "\"workOrderCount\"",
+        "operationCount": "\"operationCount\"",
+        "locationId": "\"locationId\"",
+        "locationName": "\"locationName\""
+      },
+      "tieBreak": "\"locationId\" ASC",
+      "sql": "SELECT l.locationid AS \"locationId\", l.name AS \"locationName\", COUNT(DISTINCT wor.workorderid)::int AS \"workOrderCount\", COUNT(*)::int AS \"operationCount\" FROM production.location l JOIN production.workorderrouting wor ON wor.locationid = l.locationid GROUP BY l.locationid, l.name"
+    },
+    "category_price_summary": {
+      "title": "분류별 제품·정가",
+      "kind": "table",
+      "columns": ["categoryId", "categoryName", "productCount", "averageListPrice"],
+      "defaultSort": "averageListPrice",
+      "allowedSorts": {
+        "averageListPrice": "\"averageListPrice\"",
+        "productCount": "\"productCount\"",
+        "categoryId": "\"categoryId\"",
+        "categoryName": "\"categoryName\""
+      },
+      "tieBreak": "\"categoryId\" ASC",
+      "sql": "SELECT pc.productcategoryid AS \"categoryId\", pc.name AS \"categoryName\", COUNT(p.productid)::int AS \"productCount\", ROUND(AVG(p.listprice), 2) AS \"averageListPrice\" FROM production.productcategory pc JOIN production.productsubcategory psc ON psc.productcategoryid = pc.productcategoryid JOIN production.product p ON p.productsubcategoryid = psc.productsubcategoryid GROUP BY pc.productcategoryid, pc.name"
+    },
+    "top_suppliers_by_product_count": {
+      "title": "공급 제품이 많은 활성 공급업체",
+      "kind": "table",
+      "columns": ["supplierId", "supplierName", "suppliedProductCount"],
+      "entityType": "supplier",
+      "entityIdField": "supplierId",
+      "defaultSort": "suppliedProductCount",
+      "allowedSorts": {
+        "suppliedProductCount": "\"suppliedProductCount\"",
+        "supplierId": "\"supplierId\"",
+        "supplierName": "\"supplierName\""
+      },
+      "tieBreak": "\"supplierId\" ASC",
+      "sql": "SELECT v.businessentityid AS \"supplierId\", v.name AS \"supplierName\", COUNT(DISTINCT pv.productid)::int AS \"suppliedProductCount\" FROM purchasing.vendor v JOIN purchasing.productvendor pv ON pv.businessentityid = v.businessentityid WHERE v.activeflag = true GROUP BY v.businessentityid, v.name"
+    }
+  }
+}

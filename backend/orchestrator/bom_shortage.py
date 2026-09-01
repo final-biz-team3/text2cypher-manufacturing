@@ -24,7 +24,7 @@ def _name(value: Any, label: str) -> str:
 
 
 def _decimal(value: Any, label: str, *, positive: bool = False) -> Decimal:
-    if isinstance(value, bool) or not isinstance(value, int | float | Decimal):
+    if isinstance(value, bool) or not isinstance(value, int | float | Decimal | str):
         raise ValueError(f"{label}는 숫자여야 합니다.")
     try:
         result = Decimal(str(value))
@@ -58,6 +58,7 @@ def calculate_bom_shortages(
     graph_domain: set[int] = set()
     supplier_names: dict[int, str] = {}
     finished_products: set[tuple[int, str]] = set()
+    path_quantities: dict[tuple[int, tuple[int, ...]], tuple[Decimal, ...]] = {}
 
     for row_index, row in enumerate(graph_rows):
         label = f"GRAPH {row_index}번 행"
@@ -135,7 +136,13 @@ def calculate_bom_shortages(
         )
         if identity != (finished_id, finished_name, component_name):
             raise ValueError(f"componentId {component_id}의 식별 정보가 충돌합니다.")
-        path_key = (component_id, path, quantities)
+        path_key = (component_id, path)
+        prior_quantities = path_quantities.setdefault(path_key, quantities)
+        if prior_quantities != quantities:
+            raise ValueError(
+                "동일 BOM 경로에 서로 다른 quantityPerAssembly가 있습니다: "
+                f"componentId={component_id}, pathProductIds={list(path)}"
+            )
         path_required = production
         for quantity in quantities:
             path_required *= quantity

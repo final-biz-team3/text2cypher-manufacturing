@@ -118,14 +118,14 @@ def test_passed_upstream_values_are_forwarded_to_sql_generation_and_gold() -> No
     )
 
     assert [record["status"] for record in records] == ["PASS", "PASS"]
-    assert records[1]["upstreamInputs"] == {"componentIds": [530]}
+    assert records[1]["upstreamInputs"] == {"componentIds": [530, 530]}
     sql_generate = next(
         call
         for call in calls
         if call["kind"] == "generate" and call["id"] == "sql_stock"
     )
-    assert sql_generate["inputs"] == {"componentIds": [530]}
+    assert sql_generate["inputs"] == {"componentIds": [530, 530]}
     sql_gold = next(
         call for call in calls if call["kind"] == "gold" and call["id"] == "sql_stock"
     )
-    assert sql_gold["parameters"]["componentIds"] == [530]
+    assert sql_gold["parameters"]["componentIds"] == [530, 530]

@@ -134,7 +134,7 @@ def test_build_cypher_prompt_adds_neo4j_policy_and_dynamic_context() -> None:
             "앞 단계 부품들에서 도달 가능한 완제품을 찾아줘.",
             None,
             ["componentId", "finishedProductId"],
-            {"componentIds": [8601, 8602]},
+            {"componentIds": [8601, 8601, 8602]},
         ),
     ],
     ids=(
@@ -178,4 +178,5 @@ def test_cypher_prompt_keeps_synthetic_query_family_contracts(
     assert all(f"- {alias}" in system_content for alias in required_outputs)
     if input_bindings is not None:
         assert "Input bindings" in system_content
-        assert user_content["inputBindings"] == {"componentIds": [8601, 8602]}
+        assert user_content["inputBindings"] == {"componentIds": [8601, 8601, 8602]}
+        assert "UNWIND한 뒤 WITH DISTINCT로 ID를 집합화" in system_content

@@ -40,7 +40,11 @@ _SQL_DOMAIN_RULES = (
     "사용한다. purchaseorderid 건수를 별도로 계산하거나 정렬 기준으로 쓰지 않는다.",
     "inputBindings가 있으면 그 ID 배열이 이 subquery의 전체 대상이다. 모든 고유 ID를 "
     "보존하고 선행 단계의 관계를 SQL에서 다시 탐색하거나 makeflag 등으로 행을 "
-    "제거하지 않는다.",
+    "제거하지 않는다. binding 배열의 중복은 선행 결과의 행 multiplicity이지 SQL "
+    "집계 대상을 반복하라는 뜻이 아니다. 단일 ID 배열을 필터로 사용할 때는 "
+    "= ANY(...) 또는 SELECT DISTINCT로 ID를 집합화한 뒤 조인한다. entity별 한 행을 "
+    "반환하는 집계에서 WITH ORDINALITY의 순번을 GROUP BY해 중복 ID 결과를 만들지 "
+    "않는다.",
 )
 
 

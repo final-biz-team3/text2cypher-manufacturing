@@ -33,6 +33,9 @@ def test_build_sql_prompt_adds_postgresql_policy_and_dynamic_context() -> None:
     )
     assert "실제 재고가 safetystocklevel보다 작은 행만" in system_content
     assert "ID 배열이 이 subquery의 전체 대상" in system_content
+    assert "중복은 선행 결과의 행 multiplicity" in system_content
+    assert "SELECT DISTINCT로 ID를 집합화" in system_content
+    assert "WITH ORDINALITY의 순번을 GROUP BY" in system_content
     assert "shelf·bin별 원본 quantity" in system_content
     assert "locationid, shelf, bin 순" in system_content
     assert "LEFT JOIN" in system_content

@@ -27,6 +27,10 @@ export interface DisplayResult {
   cypher: string | null
   columns: ResultColumn[]
   rows: Record<string, string>[]
+  hasGraphResult: boolean
+  graphRows: Record<string, unknown>[]
+  graphError: string | null
+  graphEmptyReason: string | null
   sqlAttempts: RetryAttempt[]
   cypherAttempts: RetryAttempt[]
 }

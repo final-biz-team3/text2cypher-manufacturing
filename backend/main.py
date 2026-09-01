@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse, Response
 
 from api.auth import router as auth_router
 from api.chat import router as chat_router
+from api.dashboard import router as dashboard_router
+from api.entities import router as entities_router
 from api.health import router as health_router
 from api.history import router as history_router
 from core.auth import check_jwt_secret
@@ -96,6 +98,8 @@ app.include_router(health_router, tags=["System"])
 app.include_router(auth_router, tags=["Auth"])
 app.include_router(chat_router, tags=["Chat"])
 app.include_router(history_router, tags=["History"])
+app.include_router(dashboard_router, tags=["Dashboard"])
+app.include_router(entities_router, tags=["Entities"])
 
 
 @app.exception_handler(AppError)
