@@ -44,4 +44,14 @@ describe('toDisplayResult', () => {
     expect(result.hasGraphResult).toBe(false)
     expect(result.graphRows).toEqual([])
   })
+
+  it('does not present legacy COMPOSED dumps as an AI answer', () => {
+    const result = toDisplayResult({
+      query: '재고가 부족한 제품을 알려줘',
+      final_answer: "COMPOSED: {'mode': 'single', 'rows': [{'productId': 680}]}",
+    })
+
+    expect(result.answer).not.toContain('COMPOSED:')
+    expect(result.answer).toContain('현재 LLM')
+  })
 })

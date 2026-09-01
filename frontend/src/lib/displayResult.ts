@@ -1,6 +1,16 @@
 import type { ChatResponse, HistoryEntry } from './schemas'
 import type { DisplayResult, ResultColumn } from '@/types/query'
 
+const LEGACY_COMPOSED_ANSWER = /^\s*COMPOSED:\s*/i
+
+function toDisplayAnswer(answer: string | null | undefined): string {
+  if (!answer) return '답변을 생성하지 못했습니다.'
+  if (LEGACY_COMPOSED_ANSWER.test(answer)) {
+    return '이 기록은 AI 정리 답변 기능이 적용되기 전에 저장된 결과입니다. 동일한 질문을 다시 실행하면 현재 LLM이 조회 결과를 정리해 답변합니다.'
+  }
+  return answer
+}
+
 // /chat 응답과 저장된 대화기록을 동일한 화면 모델로 정규화한다.
 export function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
   const rowsRaw = response.sql_result?.result ?? response.graph_result?.result ?? []
@@ -14,7 +24,7 @@ export function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayR
 
   return {
     query: response.query,
-    answer: response.final_answer ?? '답변을 생성하지 못했습니다.',
+    answer: toDisplayAnswer(response.final_answer),
     sql: response.sql_query ?? null,
     cypher: response.cypher_query ?? null,
     columns,

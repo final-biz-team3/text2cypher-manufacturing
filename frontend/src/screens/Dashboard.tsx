@@ -6,9 +6,8 @@ import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
 import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnswerBox'
 import { ClarificationPrompt } from '@/components/query/ClarificationPrompt'
-import { ResultsTable } from '@/components/result/ResultsTable'
 import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
-import { PathGraphCanvas } from '@/components/graph/PathGraphCanvas'
+import { ResultEvidencePanel } from '@/components/result/ResultEvidencePanel'
 import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useHealthStore } from '@/store/useHealthStore'
@@ -272,16 +271,7 @@ export function Dashboard() {
             <div className="flex flex-col gap-4">
               {queryInputBar}
               <NaturalLanguageAnswerBox answer={result.answer} />
-              {result.hasGraphResult ? (
-                <PathGraphCanvas
-                  rows={result.graphRows}
-                  error={result.graphError}
-                  emptyReason={result.graphEmptyReason}
-                />
-              ) : null}
-              {result.columns.length > 0 ? (
-                <ResultsTable columns={result.columns} rows={result.rows} />
-              ) : null}
+              <ResultEvidencePanel key={result.query} {...result} />
             </div>
           )}
         </main>
