@@ -5,7 +5,9 @@ import {
   CheckCircle2,
   Factory,
   LoaderCircle,
+  Minus,
   PlayCircle,
+  Plus,
   RotateCcw,
   Trash2,
 } from 'lucide-react'
@@ -15,6 +17,9 @@ import { fetchProcessOverview, type DashboardKpi, type ProcessOverview } from '@
 const CHART_WIDTH = 720
 const CHART_HEIGHT = 236
 const CHART_PADDING = { top: 18, right: 18, bottom: 34, left: 44 }
+const CHART_MIN_ZOOM = 100
+const CHART_MAX_ZOOM = 200
+const CHART_ZOOM_STEP = 10
 
 const KPI_ICONS = {
   startedWorkOrderCount: PlayCircle,
@@ -25,6 +30,55 @@ const KPI_ICONS = {
 }
 
 type Preset = '7d' | '30d' | '90d' | 'all'
+
+function ChartZoomControls({
+  label,
+  zoomPercent,
+  onZoomChange,
+}: {
+  label: string
+  zoomPercent: number
+  onZoomChange: (zoomPercent: number) => void
+}) {
+  return (
+    <div
+      className="flex items-center rounded-[4px] border border-border bg-panel-2 p-0.5"
+      aria-label={`${label} 확대 및 축소`}
+      role="group"
+    >
+      <button
+        type="button"
+        onClick={() => onZoomChange(Math.max(CHART_MIN_ZOOM, zoomPercent - CHART_ZOOM_STEP))}
+        disabled={zoomPercent <= CHART_MIN_ZOOM}
+        className="grid size-6 place-items-center rounded-[3px] text-text-muted transition-colors hover:bg-panel hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info disabled:opacity-35"
+        aria-label={`${label} 축소`}
+        title="축소"
+      >
+        <Minus className="size-3" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        onClick={() => onZoomChange(CHART_MIN_ZOOM)}
+        disabled={zoomPercent === CHART_MIN_ZOOM}
+        className="h-6 min-w-11 rounded-[3px] px-1.5 text-[10px] font-medium tabular-nums text-text-muted transition-colors hover:bg-panel hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info disabled:opacity-70"
+        aria-label={`${label} 배율 100%로 초기화`}
+        title="100%로 초기화"
+      >
+        {zoomPercent}%
+      </button>
+      <button
+        type="button"
+        onClick={() => onZoomChange(Math.min(CHART_MAX_ZOOM, zoomPercent + CHART_ZOOM_STEP))}
+        disabled={zoomPercent >= CHART_MAX_ZOOM}
+        className="grid size-6 place-items-center rounded-[3px] text-text-muted transition-colors hover:bg-panel hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info disabled:opacity-35"
+        aria-label={`${label} 확대`}
+        title="확대"
+      >
+        <Plus className="size-3" aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
 
 function addDays(value: string, days: number): string {
   const next = new Date(`${value}T00:00:00Z`)
@@ -66,8 +120,10 @@ function ProcessMetric({ kpi }: { kpi: DashboardKpi }) {
 }
 
 function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
+  const [zoomPercent, setZoomPercent] = useState(CHART_MIN_ZOOM)
   const rows = data.trend
-  const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
+  const chartWidth = (CHART_WIDTH * zoomPercent) / 100
+  const plotWidth = chartWidth - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
   const maxValue = Math.max(
     1,
@@ -90,108 +146,123 @@ function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
             {data.period.granularity === 'day' ? '일별 집계' : '월별 집계'}
           </p>
         </div>
-        <div className="flex gap-3 text-[10.5px] text-text-muted" aria-hidden="true">
-          <span className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-info" /> 시작
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-success" /> 완료
-          </span>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex gap-3 text-[10.5px] text-text-muted" aria-hidden="true">
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-info" /> 시작
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-success" /> 완료
+            </span>
+          </div>
+          <ChartZoomControls
+            label="작업지시 추이 차트"
+            zoomPercent={zoomPercent}
+            onZoomChange={setZoomPercent}
+          />
         </div>
       </div>
-      <svg
-        className="mt-3 h-auto w-full overflow-visible"
-        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-        role="img"
-        aria-label="선택 기간의 작업지시 시작 및 완료 추이"
+      <div
+        className="mt-3 aspect-[720/236] overflow-x-auto overflow-y-hidden overscroll-x-contain"
+        data-testid="work-order-trend-chart-viewport"
       >
-        {[0, 0.5, 1].map((ratio) => {
-          const gridY = CHART_PADDING.top + plotHeight * ratio
-          const value = Math.round(maxValue * (1 - ratio))
-          return (
-            <g key={ratio}>
-              <line
-                x1={CHART_PADDING.left}
-                x2={CHART_WIDTH - CHART_PADDING.right}
-                y1={gridY}
-                y2={gridY}
-                stroke="var(--border)"
-                strokeWidth="1"
+        <svg
+          className="h-auto max-w-none overflow-visible transition-[width] duration-150 motion-reduce:transition-none"
+          style={{ width: `${zoomPercent}%` }}
+          viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}
+          role="img"
+          aria-label={`선택 기간의 작업지시 시작 및 완료 추이, ${zoomPercent}% 확대`}
+        >
+          {[0, 0.5, 1].map((ratio) => {
+            const gridY = CHART_PADDING.top + plotHeight * ratio
+            const value = Math.round(maxValue * (1 - ratio))
+            return (
+              <g key={ratio}>
+                <line
+                  x1={CHART_PADDING.left}
+                  x2={chartWidth - CHART_PADDING.right}
+                  y1={gridY}
+                  y2={gridY}
+                  stroke="var(--border)"
+                  strokeWidth="1"
+                />
+                <text
+                  x={CHART_PADDING.left - 8}
+                  y={gridY + 4}
+                  textAnchor="end"
+                  fill="var(--text-muted)"
+                  fontSize="10"
+                >
+                  {value.toLocaleString()}
+                </text>
+              </g>
+            )
+          })}
+          {rows.length > 0 ? (
+            <>
+              <polyline
+                points={points('startedWorkOrderCount')}
+                fill="none"
+                stroke="var(--info)"
+                strokeWidth="2.5"
               />
+              <polyline
+                points={points('completedWorkOrderCount')}
+                fill="none"
+                stroke="var(--success)"
+                strokeWidth="2.5"
+              />
+              {rows.map((row, index) => (
+                <g key={row.date}>
+                  <circle
+                    cx={x(index)}
+                    cy={y(row.startedWorkOrderCount)}
+                    r="3"
+                    fill="var(--info)"
+                    tabIndex={0}
+                  >
+                    <title>{`${row.date} 시작 ${row.startedWorkOrderCount.toLocaleString()}건`}</title>
+                  </circle>
+                  <circle
+                    cx={x(index)}
+                    cy={y(row.completedWorkOrderCount)}
+                    r="3"
+                    fill="var(--success)"
+                    tabIndex={0}
+                  >
+                    <title>{`${row.date} 완료 ${row.completedWorkOrderCount.toLocaleString()}건`}</title>
+                  </circle>
+                </g>
+              ))}
+            </>
+          ) : null}
+          {ticks.map((index) => {
+            const row = rows[index]
+            if (!row) return null
+            return (
               <text
-                x={CHART_PADDING.left - 8}
-                y={gridY + 4}
-                textAnchor="end"
+                key={row.date}
+                x={x(index)}
+                y={CHART_HEIGHT - 8}
+                textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}
                 fill="var(--text-muted)"
                 fontSize="10"
               >
-                {value.toLocaleString()}
+                {formatPeriodDate(row.date, data.period.granularity)}
               </text>
-            </g>
-          )
-        })}
-        {rows.length > 0 ? (
-          <>
-            <polyline
-              points={points('startedWorkOrderCount')}
-              fill="none"
-              stroke="var(--info)"
-              strokeWidth="2.5"
-            />
-            <polyline
-              points={points('completedWorkOrderCount')}
-              fill="none"
-              stroke="var(--success)"
-              strokeWidth="2.5"
-            />
-            {rows.map((row, index) => (
-              <g key={row.date}>
-                <circle
-                  cx={x(index)}
-                  cy={y(row.startedWorkOrderCount)}
-                  r="3"
-                  fill="var(--info)"
-                  tabIndex={0}
-                >
-                  <title>{`${row.date} 시작 ${row.startedWorkOrderCount.toLocaleString()}건`}</title>
-                </circle>
-                <circle
-                  cx={x(index)}
-                  cy={y(row.completedWorkOrderCount)}
-                  r="3"
-                  fill="var(--success)"
-                  tabIndex={0}
-                >
-                  <title>{`${row.date} 완료 ${row.completedWorkOrderCount.toLocaleString()}건`}</title>
-                </circle>
-              </g>
-            ))}
-          </>
-        ) : null}
-        {ticks.map((index) => {
-          const row = rows[index]
-          if (!row) return null
-          return (
-            <text
-              key={row.date}
-              x={x(index)}
-              y={CHART_HEIGHT - 8}
-              textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}
-              fill="var(--text-muted)"
-              fontSize="10"
-            >
-              {formatPeriodDate(row.date, data.period.granularity)}
-            </text>
-          )
-        })}
-      </svg>
+            )
+          })}
+        </svg>
+      </div>
     </section>
   )
 }
 
 function ScrapTrendChart({ data }: { data: ProcessOverview }) {
+  const [zoomPercent, setZoomPercent] = useState(CHART_MIN_ZOOM)
   const rows = data.trend
-  const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
+  const chartWidth = (CHART_WIDTH * zoomPercent) / 100
+  const plotWidth = chartWidth - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
   const maxValue = Math.max(1, ...rows.map((row) => row.scrappedQty))
   const slotWidth = rows.length > 0 ? plotWidth / rows.length : plotWidth
@@ -200,76 +271,89 @@ function ScrapTrendChart({ data }: { data: ProcessOverview }) {
 
   return (
     <section className="min-w-0 rounded-[5px] border border-border bg-panel p-4">
-      <div>
-        <h3 className="text-[13px] font-semibold text-text">폐기수량 추이</h3>
-        <p className="mt-0.5 text-[10.5px] text-text-muted">작업지시 완료일 기준</p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-[13px] font-semibold text-text">폐기수량 추이</h3>
+          <p className="mt-0.5 text-[10.5px] text-text-muted">작업지시 완료일 기준</p>
+        </div>
+        <ChartZoomControls
+          label="폐기수량 추이 차트"
+          zoomPercent={zoomPercent}
+          onZoomChange={setZoomPercent}
+        />
       </div>
-      <svg
-        className="mt-3 h-auto w-full overflow-visible"
-        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-        role="img"
-        aria-label="선택 기간의 폐기수량 추이"
+      <div
+        className="mt-3 aspect-[720/236] overflow-x-auto overflow-y-hidden overscroll-x-contain"
+        data-testid="scrap-trend-chart-viewport"
       >
-        {[0, 0.5, 1].map((ratio) => {
-          const gridY = CHART_PADDING.top + plotHeight * ratio
-          return (
-            <g key={ratio}>
-              <line
-                x1={CHART_PADDING.left}
-                x2={CHART_WIDTH - CHART_PADDING.right}
-                y1={gridY}
-                y2={gridY}
-                stroke="var(--border)"
-                strokeWidth="1"
-              />
+        <svg
+          className="h-auto max-w-none overflow-visible transition-[width] duration-150 motion-reduce:transition-none"
+          style={{ width: `${zoomPercent}%` }}
+          viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}
+          role="img"
+          aria-label={`선택 기간의 폐기수량 추이, ${zoomPercent}% 확대`}
+        >
+          {[0, 0.5, 1].map((ratio) => {
+            const gridY = CHART_PADDING.top + plotHeight * ratio
+            return (
+              <g key={ratio}>
+                <line
+                  x1={CHART_PADDING.left}
+                  x2={chartWidth - CHART_PADDING.right}
+                  y1={gridY}
+                  y2={gridY}
+                  stroke="var(--border)"
+                  strokeWidth="1"
+                />
+                <text
+                  x={CHART_PADDING.left - 8}
+                  y={gridY + 4}
+                  textAnchor="end"
+                  fill="var(--text-muted)"
+                  fontSize="10"
+                >
+                  {Math.round(maxValue * (1 - ratio)).toLocaleString()}
+                </text>
+              </g>
+            )
+          })}
+          {rows.map((row, index) => {
+            const height = (row.scrappedQty / maxValue) * plotHeight
+            const centerX = CHART_PADDING.left + slotWidth * index + slotWidth / 2
+            return (
+              <rect
+                key={row.date}
+                x={centerX - barWidth / 2}
+                y={CHART_PADDING.top + plotHeight - height}
+                width={barWidth}
+                height={height}
+                rx="1.5"
+                fill="var(--warn)"
+                tabIndex={0}
+              >
+                <title>{`${row.date} 폐기 ${row.scrappedQty.toLocaleString()}개`}</title>
+              </rect>
+            )
+          })}
+          {ticks.map((index) => {
+            const row = rows[index]
+            if (!row) return null
+            const centerX = CHART_PADDING.left + slotWidth * index + slotWidth / 2
+            return (
               <text
-                x={CHART_PADDING.left - 8}
-                y={gridY + 4}
-                textAnchor="end"
+                key={row.date}
+                x={centerX}
+                y={CHART_HEIGHT - 8}
+                textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}
                 fill="var(--text-muted)"
                 fontSize="10"
               >
-                {Math.round(maxValue * (1 - ratio)).toLocaleString()}
+                {formatPeriodDate(row.date, data.period.granularity)}
               </text>
-            </g>
-          )
-        })}
-        {rows.map((row, index) => {
-          const height = (row.scrappedQty / maxValue) * plotHeight
-          const centerX = CHART_PADDING.left + slotWidth * index + slotWidth / 2
-          return (
-            <rect
-              key={row.date}
-              x={centerX - barWidth / 2}
-              y={CHART_PADDING.top + plotHeight - height}
-              width={barWidth}
-              height={height}
-              rx="1.5"
-              fill="var(--warn)"
-              tabIndex={0}
-            >
-              <title>{`${row.date} 폐기 ${row.scrappedQty.toLocaleString()}개`}</title>
-            </rect>
-          )
-        })}
-        {ticks.map((index) => {
-          const row = rows[index]
-          if (!row) return null
-          const centerX = CHART_PADDING.left + slotWidth * index + slotWidth / 2
-          return (
-            <text
-              key={row.date}
-              x={centerX}
-              y={CHART_HEIGHT - 8}
-              textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}
-              fill="var(--text-muted)"
-              fontSize="10"
-            >
-              {formatPeriodDate(row.date, data.period.granularity)}
-            </text>
-          )
-        })}
-      </svg>
+            )
+          })}
+        </svg>
+      </div>
     </section>
   )
 }
