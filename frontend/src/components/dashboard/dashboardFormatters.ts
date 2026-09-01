@@ -37,6 +37,16 @@ export const COLUMN_LABELS: Record<string, string> = {
 
 const CURRENCY_KEYS = new Set(['listPrice', 'standardCost', 'averageListPrice'])
 
+export function formatSnapshotDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '미등록'
+  return new Intl.DateTimeFormat('ko-KR', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Seoul',
+  }).format(date)
+}
+
 export function formatDashboardValue(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '미등록'
   if (typeof value === 'boolean') {

@@ -19,7 +19,7 @@ export function AnalysisCard({
   onSelectRow,
 }: AnalysisCardProps) {
   return (
-    <section className="flex min-h-72 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-panel shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+    <section className="flex min-h-72 min-w-0 flex-col overflow-hidden rounded-md border border-border bg-panel shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <h2 className="truncate text-[13px] font-semibold text-text">{card.title}</h2>

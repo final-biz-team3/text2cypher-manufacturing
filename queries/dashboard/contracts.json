@@ -1,7 +1,10 @@
 {
   "snapshot": {
     "syncRunId": "20260822T015245Z-89db8d74",
-    "label": "AdventureWorks 데이터 스냅샷"
+    "label": "AdventureWorks 전체 데이터 스냅샷",
+    "scope": "특정 하루가 아닌 전체 스냅샷 집계",
+    "syncedAt": "2026-08-22T01:52:45Z",
+    "bomAsOfDate": "2014-08-08"
   },
   "kpis": {
     "product_count": {

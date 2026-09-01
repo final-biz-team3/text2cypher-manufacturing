@@ -27,7 +27,13 @@ const DashboardCardSchema = z.object({
 })
 
 export const DashboardOverviewSchema = z.object({
-  snapshot: z.object({ syncRunId: z.string(), label: z.string() }),
+  snapshot: z.object({
+    syncRunId: z.string(),
+    label: z.string(),
+    scope: z.string(),
+    syncedAt: z.string(),
+    bomAsOfDate: z.string(),
+  }),
   kpis: z.array(DashboardKpiSchema),
   cards: z.array(DashboardCardSchema),
   errors: z.array(z.object({ key: z.string(), code: z.string(), message: z.string() })),

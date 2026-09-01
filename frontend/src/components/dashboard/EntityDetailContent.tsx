@@ -24,7 +24,7 @@ function RecordTable({
     return <p className="py-2 text-[11.5px] text-text-faint">등록된 정보가 없습니다.</p>
   const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].slice(0, 6)
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="overflow-x-auto rounded-md border border-border">
       <table className="w-full text-[10.5px]">
         <thead className="bg-panel-2 text-text-muted">
           <tr>
@@ -191,7 +191,7 @@ export function EntityDetailContent({
           {fallbackProperties && Object.keys(fallbackProperties).length > 0 ? (
             <section>
               <h3 className="mb-2 text-[12px] font-semibold text-text">그래프 속성</h3>
-              <dl className="rounded-lg border border-border">
+              <dl className="rounded-md border border-border">
                 {Object.entries(fallbackProperties).map(([key, value]) => (
                   <div
                     key={key}
@@ -209,14 +209,14 @@ export function EntityDetailContent({
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
           <div
             role="alert"
-            className="rounded-lg border border-fail/30 bg-fail/5 px-3 py-2.5 text-[11.5px] text-fail"
+            className="rounded-md border border-fail/30 bg-fail/5 px-3 py-2.5 text-[11.5px] text-fail"
           >
             {error ?? '상세 정보를 표시할 수 없습니다.'}
           </div>
           {fallbackProperties && Object.keys(fallbackProperties).length > 0 ? (
             <section>
               <h3 className="mb-2 text-[12px] font-semibold text-text">그래프 속성</h3>
-              <dl className="rounded-lg border border-border">
+              <dl className="rounded-md border border-border">
                 {Object.entries(fallbackProperties).map(([key, value]) => (
                   <div
                     key={key}

@@ -4,7 +4,13 @@ import { DashboardOverviewSchema, EntityDetailSchema } from './dashboard'
 describe('DashboardOverviewSchema', () => {
   it('accepts partial failure without discarding ready cards', () => {
     const parsed = DashboardOverviewSchema.parse({
-      snapshot: { syncRunId: 'sync-1', label: 'AdventureWorks 데이터 스냅샷' },
+      snapshot: {
+        syncRunId: 'sync-1',
+        label: 'AdventureWorks 전체 데이터 스냅샷',
+        scope: '특정 하루가 아닌 전체 스냅샷 집계',
+        syncedAt: '2026-08-22T01:52:45Z',
+        bomAsOfDate: '2014-08-08',
+      },
       kpis: [
         { key: 'product_count', label: '전체 제품', value: null, unit: '개', status: 'error' },
       ],
