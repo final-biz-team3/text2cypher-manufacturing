@@ -6,6 +6,7 @@ from typing import Any
 
 from orchestrator.bindings import collect_input_bindings
 from orchestrator.planning import Subquery
+from orchestrator.query_failures import make_query_failure
 from orchestrator.state import OrchestratorState
 from orchestrator.subgraphs.retry_agent import INCONCLUSIVE, NO_DATA
 
@@ -13,6 +14,35 @@ _TOOL_OUTPUT_FIELDS = {
     "sql": ("sql_query", "sql_result"),
     "graph": ("cypher_query", "graph_result"),
 }
+
+_FAILURE_PRIORITY = {
+    "infrastructure": 3,
+    "internal": 2,
+    "user_correctable": 1,
+}
+
+
+def _prefer_failure(
+    current: dict[str, Any] | None, candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """가장 심각한 실제 실패를 보존하고 종속 실패는 최후순위로 둔다."""
+    if current is None:
+        return candidate
+    current_kind = current.get("kind")
+    candidate_kind = candidate.get("kind")
+    current_rank = (
+        _FAILURE_PRIORITY.get(current_kind, 0) if isinstance(current_kind, str) else 0,
+        not current.get("dependent_failure", False),
+    )
+    candidate_rank = (
+        (
+            _FAILURE_PRIORITY.get(candidate_kind, 0)
+            if isinstance(candidate_kind, str)
+            else 0
+        ),
+        not candidate.get("dependent_failure", False),
+    )
+    return candidate if candidate_rank > current_rank else current
 
 
 def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -23,6 +53,7 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         "attempts": result.get("attempts", []),
         "empty_reason": result.get("empty_reason"),
         "truncated": result.get("truncated", False),
+        "failure": result.get("failure"),
     }
 
 
@@ -34,6 +65,16 @@ def _dependency_failure(dependency_ids: list[str]) -> dict[str, Any]:
         "attempts": [],
         "empty_reason": None,
         "truncated": False,
+        "failure": make_query_failure(
+            code="DEPENDENCY_FAILED",
+            stage="dependency",
+            category="DEPENDENCY_FAILED",
+            kind="user_correctable",
+            retryable=False,
+            user_safe_reason="질의의 선행 조회가 완료되지 않아 후속 조회를 진행하지 못했습니다.",
+            suggested_action="조회 대상과 조건을 더 구체적으로 지정해 다시 질문해 주세요.",
+            dependent_failure=True,
+        ),
     }
 
 
@@ -45,6 +86,7 @@ def _dependency_empty(empty_reasons: list[str | None]) -> dict[str, Any]:
         "attempts": [],
         "empty_reason": empty_reason,
         "truncated": False,
+        "failure": None,
     }
 
 
@@ -82,6 +124,7 @@ def _initial_state(
         "empty_retried": False,
         "empty_reason": None,
         "truncated": False,
+        "failure": None,
     }
 
 
@@ -102,6 +145,7 @@ def make_execute_plan_node(
             "sql_result": None,
             "cypher_query": None,
             "graph_result": None,
+            "query_failure": None,
         }
         outcomes: dict[str, dict[str, Any]] = {}
 
@@ -167,6 +211,11 @@ def make_execute_plan_node(
                 ready, results, strict=True
             ):
                 outcomes[subquery["id"]] = summary
+                failure = summary.get("failure")
+                if isinstance(failure, dict):
+                    output["query_failure"] = _prefer_failure(
+                        output["query_failure"], failure
+                    )
                 if query_text is not None:
                     output[query_field] = query_text
                 output[result_field] = summary

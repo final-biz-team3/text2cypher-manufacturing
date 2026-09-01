@@ -1,9 +1,11 @@
 """도메인 예외 클래스의 status_code/code/message를 검증한다."""
 
 from orchestrator.errors import (
+    AnswerGenerationError,
     AppError,
     EntityAmbiguousError,
     EntityNotFoundError,
+    QueryInfrastructureError,
     RetryExceededError,
 )
 
@@ -33,3 +35,19 @@ def test_retry_exceeded_error_has_422_status() -> None:
 
     assert error.status_code == 422
     assert error.code == "RETRY_EXCEEDED"
+
+
+def test_answer_generation_error_has_safe_502_contract() -> None:
+    error = AnswerGenerationError()
+
+    assert error.status_code == 502
+    assert error.code == "ANSWER_GENERATION_FAILED"
+    assert "답변을 생성하지 못했습니다" in error.message
+
+
+def test_query_infrastructure_error_has_safe_503_contract() -> None:
+    error = QueryInfrastructureError()
+
+    assert error.status_code == 503
+    assert error.code == "QUERY_INFRASTRUCTURE_UNAVAILABLE"
+    assert "연결" in error.message

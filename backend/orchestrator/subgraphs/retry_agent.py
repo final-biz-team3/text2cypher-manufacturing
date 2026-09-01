@@ -13,9 +13,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from starlette.concurrency import run_in_threadpool
 
+from orchestrator.errors import QueryInfrastructureError
 from orchestrator.execution.result import QueryResultBatch
 from orchestrator.guards.audit import log_guard_decision
 from orchestrator.guards.result import GuardResult
+from orchestrator.query_conditions import missing_numeric_filter_literals
+from orchestrator.query_failures import make_query_failure
+from orchestrator.state import QueryFailure, ToolName
 
 # 원본 1회 + 재시도 2회 = 총 3회
 MAX_ATTEMPTS = 3
@@ -57,6 +61,7 @@ class RetryAgentState(TypedDict):
     truncated: NotRequired[bool]
     required_outputs: NotRequired[list[str]]
     input_bindings: NotRequired[dict[str, list[Any]]]
+    failure: NotRequired[QueryFailure | None]
 
 
 def _classify_empty_result(prior_attempts: list[dict]) -> str:
@@ -92,6 +97,8 @@ def make_retry_agent_subgraph(
     guard가 주어지면 execute 호출 직전에 쿼리를 검증하고, 차단 시 execute를
     호출하지 않은 채 재시도 대상으로 처리한다(attempt_count에 포함)."""
 
+    tool_name: ToolName = "sql" if label.startswith("sql") else "graph"
+
     def feedback_text(error: str | None) -> str | None:
         if error is None:
             return None
@@ -101,11 +108,19 @@ def make_retry_agent_subgraph(
 
     async def agent(state: RetryAgentState) -> dict:
         previous_message = state["messages"][-1] if state["messages"] else None
-        query_text = await generate(
-            state,
-            previous_message["content"] if previous_message else None,
-            feedback_text(state.get("error")),
-        )
+        try:
+            query_text = await generate(
+                state,
+                previous_message["content"] if previous_message else None,
+                feedback_text(state.get("error")),
+            )
+        except QueryInfrastructureError:
+            raise
+        except Exception as exc:
+            # 쿼리 생성 모델을 호출할 수 없는 상태에서 실패 설명 LLM을 다시
+            # 호출하지 않는다. 공개 503 계약으로 즉시 fail-closed한다.
+            logger.error("%s: 쿼리 생성 실패: %s", label, exc, exc_info=True)
+            raise QueryInfrastructureError() from exc
         return {
             "messages": [
                 *state["messages"],
@@ -123,13 +138,57 @@ def make_retry_agent_subgraph(
         query_text = state["messages"][-1]["content"]
         attempts = state.get("attempts", [])
 
-        def failure(message: str, *, retryable: bool) -> dict:
+        def failure(
+            message: str, *, retryable: bool, safe_failure: QueryFailure
+        ) -> dict:
             return {
                 "error": message,
                 "result": None,
                 "attempts": [*attempts, {"query": query_text, "error": message}],
                 "retryable": retryable,
+                "failure": safe_failure,
             }
+
+        try:
+            missing_filters = missing_numeric_filter_literals(
+                state["query"], query_text
+            )
+        except Exception as exc:
+            logger.error(
+                "%s: 숫자 필터 검증 중 예외(재시도 대상 아님, 안전망): %s",
+                label,
+                exc,
+                exc_info=True,
+            )
+            return failure(
+                "쿼리 검증 중 오류가 발생했습니다.",
+                retryable=False,
+                safe_failure=make_query_failure(
+                    code="QUERY_VALIDATION_INTERNAL_ERROR",
+                    stage="validation",
+                    category="INTERNAL_QUERY_FAILURE",
+                    kind="internal",
+                    retryable=False,
+                    user_safe_reason="질의를 검증하는 과정에서 내부 오류가 발생했습니다.",
+                    suggested_action="잠시 후 다시 시도해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
+        if missing_filters:
+            return failure(
+                "원본 질문의 명시적 숫자 필터가 생성 쿼리에서 누락되었습니다.",
+                retryable=True,
+                safe_failure=make_query_failure(
+                    code="QUERY_FILTER_DROPPED",
+                    stage="validation",
+                    category="QUERY_INVALID",
+                    kind="user_correctable",
+                    retryable=True,
+                    user_safe_reason="질문의 필터 조건을 모두 반영한 조회를 만들지 못했습니다.",
+                    suggested_action="필터 대상과 비교 조건을 더 명확하게 지정해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
 
         if guard is not None:
             try:
@@ -144,7 +203,20 @@ def make_retry_agent_subgraph(
                     exc,
                     exc_info=True,
                 )
-                return failure("쿼리 검증 중 오류가 발생했습니다.", retryable=False)
+                return failure(
+                    "쿼리 검증 중 오류가 발생했습니다.",
+                    retryable=False,
+                    safe_failure=make_query_failure(
+                        code="QUERY_VALIDATION_INTERNAL_ERROR",
+                        stage="validation",
+                        category="INTERNAL_QUERY_FAILURE",
+                        kind="internal",
+                        retryable=False,
+                        user_safe_reason="질의를 검증하는 과정에서 내부 오류가 발생했습니다.",
+                        suggested_action="잠시 후 다시 시도해 주세요.",
+                        failed_tool=tool_name,
+                    ),
+                )
 
             # 감사 로그 파일 쓰기(동기 I/O)가 이벤트 루프를 막지 않도록 스레드풀로 뺀다.
             # 감사 로그는 부가 기능이라 여기서 예외가 나도(디스크 풀/권한 문제 등)
@@ -174,6 +246,18 @@ def make_retry_agent_subgraph(
                     f"쿼리가 안전 정책에 의해 차단되었습니다({guard_result.reason_code}).",
                     retryable=guard_result.reason_code
                     not in _NON_RETRYABLE_GUARD_REASONS,
+                    safe_failure=make_query_failure(
+                        code="QUERY_POLICY_BLOCKED",
+                        stage="validation",
+                        category="POLICY_BLOCKED",
+                        kind="user_correctable",
+                        retryable=False,
+                        user_safe_reason="생성된 조회가 데이터 안전 정책을 통과하지 못했습니다.",
+                        suggested_action=(
+                            "데이터를 변경하지 않는 조회 요청으로 질문을 바꿔 주세요."
+                        ),
+                        failed_tool=tool_name,
+                    ),
                 )
 
         if query_contract_error is not None:
@@ -181,18 +265,69 @@ def make_retry_agent_subgraph(
                 query_text, state.get("required_outputs", [])
             )
             if contract_error is not None:
-                return failure(contract_error, retryable=True)
+                return failure(
+                    contract_error,
+                    retryable=True,
+                    safe_failure=make_query_failure(
+                        code="QUERY_CONTRACT_FAILED",
+                        stage="validation",
+                        category="QUERY_INVALID",
+                        kind="user_correctable",
+                        retryable=True,
+                        user_safe_reason="질문에 필요한 결과 형식을 만족하는 조회를 만들지 못했습니다.",
+                        suggested_action="필요한 항목과 조회 조건을 더 구체적으로 지정해 주세요.",
+                        failed_tool=tool_name,
+                    ),
+                )
 
         try:
             executed = await execute(query_text)
         except retryable_exceptions as exc:
             logger.warning("%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True)
-            return failure(str(exc), retryable=True)
+            is_timeout = (
+                "timeout" in type(exc).__name__.lower()
+                or "canceled" in type(exc).__name__.lower()
+            )
+            return failure(
+                str(exc),
+                retryable=True,
+                safe_failure=make_query_failure(
+                    code="QUERY_TIMEOUT" if is_timeout else "QUERY_EXECUTION_FAILED",
+                    stage="execution",
+                    category="TIMEOUT" if is_timeout else "QUERY_INVALID",
+                    kind="user_correctable",
+                    retryable=True,
+                    user_safe_reason=(
+                        "조회가 제한 시간 안에 완료되지 않았습니다."
+                        if is_timeout
+                        else "생성된 조회를 정상적으로 실행하지 못했습니다."
+                    ),
+                    suggested_action=(
+                        "조회 기간이나 대상 범위를 줄여 다시 질문해 주세요."
+                        if is_timeout
+                        else "조회 대상과 조건을 더 구체적으로 지정해 주세요."
+                    ),
+                    failed_tool=tool_name,
+                ),
+            )
         except connection_exceptions as exc:
             logger.error(
                 "%s: 접속 오류(재시도 대상 아님): %s", label, exc, exc_info=True
             )
-            return failure("접속 오류가 발생했습니다.", retryable=False)
+            return failure(
+                "접속 오류가 발생했습니다.",
+                retryable=False,
+                safe_failure=make_query_failure(
+                    code="INFRASTRUCTURE_UNAVAILABLE",
+                    stage="execution",
+                    category="CONNECTION_ERROR",
+                    kind="infrastructure",
+                    retryable=True,
+                    user_safe_reason="조회 시스템에 일시적으로 연결할 수 없습니다.",
+                    suggested_action="잠시 후 다시 시도해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
         except Exception as exc:
             # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망
             logger.error(
@@ -201,7 +336,20 @@ def make_retry_agent_subgraph(
                 exc,
                 exc_info=True,
             )
-            return failure(str(exc), retryable=False)
+            return failure(
+                str(exc),
+                retryable=False,
+                safe_failure=make_query_failure(
+                    code="INTERNAL_QUERY_FAILURE",
+                    stage="execution",
+                    category="INTERNAL_QUERY_FAILURE",
+                    kind="internal",
+                    retryable=False,
+                    user_safe_reason="질의 실행 중 내부 오류가 발생했습니다.",
+                    suggested_action="잠시 후 다시 시도해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
 
         if (
             isinstance(executed, dict)
@@ -238,6 +386,7 @@ def make_retry_agent_subgraph(
                     "retryable": True,
                     "empty_retried": True,
                     "truncated": truncated,
+                    "failure": None,
                 }
             reason = _classify_empty_result(attempts)
             logger.info("%s: 결과 없음으로 최종 수용 (%s)", label, reason)
@@ -248,6 +397,7 @@ def make_retry_agent_subgraph(
                 "attempts": new_attempts,
                 "retryable": False,
                 "truncated": truncated,
+                "failure": None,
             }
 
         required_outputs = state.get("required_outputs", [])
@@ -262,6 +412,16 @@ def make_retry_agent_subgraph(
                 return failure(
                     f"결과의 {row_index}번 행에 필수 alias가 없습니다: {aliases}",
                     retryable=True,
+                    safe_failure=make_query_failure(
+                        code="QUERY_CONTRACT_FAILED",
+                        stage="validation",
+                        category="QUERY_INVALID",
+                        kind="user_correctable",
+                        retryable=True,
+                        user_safe_reason="질문에 필요한 항목을 조회 결과에서 확인하지 못했습니다.",
+                        suggested_action="필요한 결과 항목을 명확하게 지정해 다시 질문해 주세요.",
+                        failed_tool=tool_name,
+                    ),
                 )
 
         return {
@@ -271,6 +431,7 @@ def make_retry_agent_subgraph(
             "attempts": [*attempts, {"query": query_text, "error": None}],
             "retryable": False,
             "truncated": truncated,
+            "failure": None,
         }
 
     def should_retry(state: RetryAgentState) -> str:

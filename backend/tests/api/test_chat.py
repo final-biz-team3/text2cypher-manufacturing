@@ -14,12 +14,23 @@ import api.chat as chat_module
 import orchestrator.graph as graph_module
 from api.chat import ChatRequest, chat
 from core.auth import CurrentUser, create_access_token
+from main import app as main_app
+from orchestrator.errors import AnswerGenerationError, EntityNotFoundError
+from orchestrator.nodes.plan_outputs import OutputPlanningError
+from orchestrator.nodes.route_query import RoutePlanError
 from tests.mocks.openai import (
+    MockChatCompletion,
     MockOpenAIClient,
     make_content_response,
     make_no_tool_call_response,
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
+
+_ANSWER = "정가는 **2,384.07**입니다."
+
+
+def _answering_client(*responses: MockChatCompletion) -> MockOpenAIClient:
+    return MockOpenAIClient(*responses, make_content_response(_ANSWER))
 
 
 def _fake_request() -> Request:
@@ -34,7 +45,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """confirmed_entity를 검증·유지하고 SQL 생성·실행을 한 번 시도한다."""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
@@ -83,18 +94,17 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     )
     assert result["sql_result"]["error"] is None
     assert result["sql_result"]["result"] == [{"listPrice": 2384.07}]
-    assert result["final_answer"] is not None
-    assert result["final_answer"].startswith("COMPOSED: ")
+    assert result["final_answer"] == _ANSWER
     assert "composed_result" not in result
     assert "resultTransform" not in result
     assert "subqueries" not in result
     assert "subquery_results" not in result
-    assert len(openai_client.calls) == 4
+    assert len(openai_client.calls) == 5
 
 
 async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> None:
     """/chat 호출 후 로그인한 사용자 이름으로 대화기록이 저장된다."""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
@@ -165,7 +175,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """대화기록 저장이 실패해도 /chat 응답 자체는 정상 반환된다."""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
@@ -232,7 +242,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
 ) -> None:
     """유효한 access_token 쿠키가 있으면 /chat이 정상 응답한다."""
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response('["sql"]'),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
@@ -260,6 +270,223 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     assert response.status_code == 200
 
 
+class _AnswerFailingGraph:
+    async def ainvoke(self, state: dict) -> dict:
+        raise AnswerGenerationError()
+
+
+class _RaisingGraph:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def ainvoke(self, state: dict) -> dict:
+        raise self.error
+
+
+class _FailedResultGraph:
+    async def ainvoke(self, state: dict) -> dict:
+        return {
+            "query": state["query"],
+            "sql_query": "SELECT * FROM secret_table",
+            "sql_result": {
+                "result": None,
+                "error": "database secret error",
+                "attempts": [
+                    {
+                        "query": "SELECT * FROM secret_table",
+                        "error": "database secret error",
+                    }
+                ],
+                "failure": {"internal": "secret"},
+            },
+            "graph_result": None,
+            "query_failure": {
+                "code": "QUERY_EXECUTION_FAILED",
+                "stage": "execution",
+                "category": "QUERY_INVALID",
+                "kind": "user_correctable",
+                "retryable": True,
+                "user_safe_reason": "조회에 실패했습니다.",
+                "suggested_action": "조건을 구체화해 주세요.",
+                "failed_tool": "sql",
+                "dependent_failure": False,
+            },
+            "final_answer": "조건을 구체화해 다시 질문해 주세요.",
+        }
+
+
+class _PartiallyFailedResultGraph:
+    async def ainvoke(self, state: dict) -> dict:
+        return {
+            "query": state["query"],
+            "sql_query": "SELECT product_id FROM production.product",
+            "cypher_query": "MATCH (secret) RETURN secret",
+            "sql_result": {
+                "result": [{"product_id": 1}],
+                "error": None,
+                "attempts": [
+                    {
+                        "query": "SELECT product_id FROM production.product",
+                        "error": None,
+                    }
+                ],
+            },
+            "graph_result": {
+                "result": None,
+                "error": "secret graph error",
+                "attempts": [
+                    {"query": "MATCH (secret) RETURN secret", "error": "secret"}
+                ],
+            },
+            "query_failure": {
+                "code": "QUERY_EXECUTION_FAILED",
+                "stage": "execution",
+                "category": "QUERY_INVALID",
+                "kind": "user_correctable",
+                "retryable": True,
+                "user_safe_reason": "조회에 실패했습니다.",
+                "suggested_action": "조건을 구체화해 주세요.",
+                "failed_tool": "graph",
+                "dependent_failure": False,
+            },
+            "final_answer": "그래프 조회 조건을 확인해 주세요.",
+        }
+
+
+def test_chat_endpoint_returns_502_and_does_not_save_on_answer_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
+    monkeypatch.setattr(main_app.state, "graph", _AnswerFailingGraph(), raising=False)
+    write_pool = MockAsyncWritePool()
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
+    client = TestClient(main_app, raise_server_exceptions=False)
+    client.cookies.set("access_token", create_access_token("kim.quality", "admin"))
+
+    response = client.post("/chat", json={"query": "정가 알려줘"})
+
+    assert response.status_code == 502
+    assert response.json() == {
+        "code": "ANSWER_GENERATION_FAILED",
+        "message": "자연어 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    }
+    assert write_pool.statements == []
+
+
+@pytest.mark.parametrize(
+    ("error", "internal_stage"),
+    [
+        (EntityNotFoundError(), "entity_resolution"),
+        (RoutePlanError("internal route error", "SECRET ROUTE RESPONSE"), "routing"),
+        (
+            OutputPlanningError("internal plan error", "SECRET PLAN RESPONSE"),
+            "planning",
+        ),
+    ],
+)
+async def test_chat_naturalizes_and_saves_user_correctable_early_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    internal_stage: str,
+) -> None:
+    answer = "질문의 대상과 조건을 더 구체적으로 지정해 주세요."
+    openai_client = MockOpenAIClient(make_content_response(answer))
+    monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
+    write_pool = MockAsyncWritePool()
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
+    app = FastAPI()
+    app.state.graph = _RaisingGraph(error)
+
+    result = await chat(
+        ChatRequest(query="지난달 결과를 알려줘"),
+        request=Request({"type": "http", "app": app, "headers": []}),
+        user=CurrentUser(username="kim.quality", role="user"),
+    )
+
+    assert result["final_answer"] == answer
+    assert result["sql_query"] is None
+    assert result["cypher_query"] is None
+    assert write_pool.committed is True
+    assert write_pool.statements[0][1][2] == answer
+    prompt = str(openai_client.calls[0]["messages"])
+    assert internal_stage not in prompt
+    assert "SECRET ROUTE RESPONSE" not in prompt
+    assert "SECRET PLAN RESPONSE" not in prompt
+    assert "internal route error" not in prompt
+    assert "internal plan error" not in prompt
+
+
+async def test_chat_removes_raw_query_and_error_from_failed_response_and_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_pool = MockAsyncWritePool()
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
+    app = FastAPI()
+    app.state.graph = _FailedResultGraph()
+
+    result = await chat(
+        ChatRequest(query="실패하는 질의"),
+        request=Request({"type": "http", "app": app, "headers": []}),
+        user=CurrentUser(username="kim.quality", role="user"),
+    )
+
+    assert result["sql_query"] is None
+    assert result["sql_result"]["error"] == "질의를 완료하지 못했습니다."
+    assert result["sql_result"]["attempts"] == []
+    serialized_response = json.dumps(result, ensure_ascii=False)
+    serialized_history = json.dumps(write_pool.statements, ensure_ascii=False)
+    assert "secret_table" not in serialized_response
+    assert "database secret error" not in serialized_response
+    assert "QUERY_EXECUTION_FAILED" not in serialized_response
+    assert "secret_table" not in serialized_history
+    assert "database secret error" not in serialized_history
+
+
+async def test_chat_preserves_successful_tool_attempts_on_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_pool = MockAsyncWritePool()
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
+    app = FastAPI()
+    app.state.graph = _PartiallyFailedResultGraph()
+
+    result = await chat(
+        ChatRequest(query="제품과 공정 조회"),
+        request=Request({"type": "http", "app": app, "headers": []}),
+        user=CurrentUser(username="kim.quality", role="user"),
+    )
+
+    assert result["sql_query"] == "SELECT product_id FROM production.product"
+    assert result["sql_result"]["attempts"][0]["error"] is None
+    assert result["cypher_query"] is None
+    assert result["graph_result"]["attempts"] == []
+    assert "secret" not in json.dumps(result["graph_result"], ensure_ascii=False)
+
+
+async def test_early_failure_answer_generation_error_does_not_save_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_MODEL", "test-model")
+    monkeypatch.setattr(
+        chat_module,
+        "get_openai_client",
+        lambda: MockOpenAIClient(MockChatCompletion(choices=[])),
+    )
+    write_pool = MockAsyncWritePool()
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
+    app = FastAPI()
+    app.state.graph = _RaisingGraph(EntityNotFoundError())
+
+    with pytest.raises(AnswerGenerationError):
+        await chat(
+            ChatRequest(query="없는 제품"),
+            request=Request({"type": "http", "app": app, "headers": []}),
+            user=CurrentUser(username="kim.quality", role="user"),
+        )
+
+    assert write_pool.statements == []
+
+
 async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -267,7 +494,7 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     neo4j.time.DateTime 둘 다 HTTP 응답에 JSON 안전한 값으로 담긴다.
     (jsonable_encoder는 Decimal은 알아서 처리하지만 neo4j.time.DateTime은
     __dict__를 그대로 덤프해버려 명시적 변환이 필요했다 - 실측으로 확인함.)"""
-    openai_client = MockOpenAIClient(
+    openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response('["sql", "graph"]'),
         make_content_response('{"requiredOutputs":["listPrice"]}'),

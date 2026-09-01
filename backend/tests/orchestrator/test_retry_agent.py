@@ -3,11 +3,37 @@
 
 import logging
 
+import pytest
+
 import orchestrator.subgraphs.retry_agent as retry_agent_module
+from orchestrator.errors import QueryInfrastructureError
 from orchestrator.guards.result import GuardResult
 from orchestrator.subgraphs.retry_agent import make_retry_agent_subgraph
 
 logger = logging.getLogger(__name__)
+
+
+async def test_query_generation_exception_becomes_safe_infrastructure_error() -> None:
+    async def generate(state, previous_query, previous_error) -> str:
+        raise RuntimeError("provider secret")
+
+    async def execute(query: str) -> list[dict]:
+        raise AssertionError("execute must not be called")
+
+    subgraph = make_retry_agent_subgraph(
+        logger=logger,
+        label="sql_agent",
+        generate=generate,
+        execute=execute,
+        connection_exceptions=(),
+        retryable_exceptions=(),
+        empty_result_feedback="EMPTY",
+    )
+
+    with pytest.raises(QueryInfrastructureError) as exc_info:
+        await subgraph.ainvoke(_initial_state())
+
+    assert "provider secret" not in exc_info.value.message
 
 
 def _initial_state(query: str = "제품 수를 알려줘.") -> dict:
@@ -25,7 +51,9 @@ def _initial_state(query: str = "제품 수를 알려줘.") -> dict:
     }
 
 
-def _make_subgraph(*, guard, execute=None):
+def _make_subgraph(
+    *, guard, execute=None, connection_exceptions=(), retryable_exceptions=()
+):
     async def generate(state, previous_query, previous_error) -> str:
         return "SELECT 1"
 
@@ -37,8 +65,8 @@ def _make_subgraph(*, guard, execute=None):
         label="test_agent",
         generate=generate,
         execute=execute or default_execute,
-        connection_exceptions=(),
-        retryable_exceptions=(),
+        connection_exceptions=connection_exceptions,
+        retryable_exceptions=retryable_exceptions,
         empty_result_feedback="EMPTY",
         guard=guard,
     )
@@ -63,6 +91,49 @@ async def test_guard_exception_does_not_propagate_and_is_not_retried() -> None:
     assert execute_calls == []
     assert result["result"] is None
     assert result["error"] == "쿼리 검증 중 오류가 발생했습니다."
+    assert len(result["attempts"]) == 1
+    assert result["failure"]["kind"] == "internal"
+
+
+async def test_numeric_filter_validation_runs_without_optional_query_guard() -> None:
+    async def generate(state, previous_query, previous_error) -> str:
+        return "SELECT * FROM product"
+
+    async def execute(query: str) -> list[dict]:
+        raise AssertionError("execute must not be called")
+
+    subgraph = make_retry_agent_subgraph(
+        logger=logger,
+        label="test_agent",
+        generate=generate,
+        execute=execute,
+        connection_exceptions=(),
+        retryable_exceptions=(),
+        empty_result_feedback="EMPTY",
+        guard=None,
+    )
+
+    result = await subgraph.ainvoke(_initial_state("가격이 100 이상인 제품"))
+
+    assert result["failure"]["code"] == "QUERY_FILTER_DROPPED"
+    assert len(result["attempts"]) == 3
+
+
+async def test_numeric_filter_validation_exception_is_fail_closed(monkeypatch) -> None:
+    def broken_validation(question: str, generated_query: str) -> set[str]:
+        raise RuntimeError("parser bug")
+
+    monkeypatch.setattr(
+        retry_agent_module,
+        "missing_numeric_filter_literals",
+        broken_validation,
+    )
+    subgraph = _make_subgraph(guard=None)
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert result["failure"]["code"] == "QUERY_VALIDATION_INTERNAL_ERROR"
+    assert result["failure"]["kind"] == "internal"
     assert len(result["attempts"]) == 1
 
 
@@ -117,6 +188,8 @@ async def test_guard_block_message_hides_reason_detail_but_keeps_reason_code() -
     assert "UNKNOWN_TABLE" in result["error"]
     assert "secret_schema" not in result["error"]
     assert "secret_table" not in result["error"]
+    assert result["failure"]["code"] == "QUERY_POLICY_BLOCKED"
+    assert "secret_schema" not in str(result["failure"])
 
 
 async def test_unknown_table_guard_block_is_not_retried() -> None:
@@ -171,3 +244,79 @@ async def test_write_keyword_guard_block_is_still_retried() -> None:
 
     assert call_count == 3
     assert result["attempt_count"] == 3
+
+
+async def test_connection_failure_is_classified_as_infrastructure() -> None:
+    class ConnectionFailureError(Exception):
+        pass
+
+    async def execute(query: str) -> list[dict]:
+        raise ConnectionFailureError("postgresql://secret-host/internal")
+
+    subgraph = _make_subgraph(
+        guard=None,
+        execute=execute,
+        connection_exceptions=(ConnectionFailureError,),
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert result["failure"]["code"] == "INFRASTRUCTURE_UNAVAILABLE"
+    assert result["failure"]["kind"] == "infrastructure"
+    assert "secret-host" not in str(result["failure"])
+
+
+async def test_timeout_failure_is_safe_and_user_correctable() -> None:
+    class QueryTimeoutError(Exception):
+        pass
+
+    async def execute(query: str) -> list[dict]:
+        raise QueryTimeoutError("SELECT secret FROM internal_table timed out")
+
+    subgraph = _make_subgraph(
+        guard=None,
+        execute=execute,
+        retryable_exceptions=(QueryTimeoutError,),
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert result["attempt_count"] == 3
+    assert result["failure"]["code"] == "QUERY_TIMEOUT"
+    assert result["failure"]["kind"] == "user_correctable"
+    assert "internal_table" not in str(result["failure"])
+
+
+async def test_explicit_numeric_filter_must_survive_generated_query() -> None:
+    generate_calls = 0
+    execute_calls = 0
+
+    async def generate(state, previous_query, previous_error) -> str:
+        nonlocal generate_calls
+        generate_calls += 1
+        return "SELECT listprice FROM production.product WHERE productid = 956"
+
+    async def execute(query: str) -> list[dict]:
+        nonlocal execute_calls
+        execute_calls += 1
+        return [{"listPrice": 2384.07}]
+
+    subgraph = make_retry_agent_subgraph(
+        logger=logger,
+        label="sql_agent",
+        generate=generate,
+        execute=execute,
+        connection_exceptions=(),
+        retryable_exceptions=(),
+        empty_result_feedback="EMPTY",
+        guard=lambda query: GuardResult(True),
+    )
+
+    result = await subgraph.ainvoke(
+        _initial_state("Touring-1000 Yellow, 54 중 정가가 0원인 제품을 알려줘.")
+    )
+
+    assert generate_calls == 3
+    assert execute_calls == 0
+    assert result["failure"]["code"] == "QUERY_FILTER_DROPPED"
+    assert "2384.07" not in str(result["failure"])

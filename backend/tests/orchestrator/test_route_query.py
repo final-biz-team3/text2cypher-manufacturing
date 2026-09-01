@@ -192,6 +192,38 @@ async def test_route_query_retries_invalid_plan_with_validation_feedback() -> No
     assert "비어 있지 않은 배열" in retry_messages[-1]["content"]
 
 
+async def test_route_query_retries_when_numeric_filter_is_dropped() -> None:
+    missing_filter = (
+        '{"tool_plan":["sql"],"subqueries":['
+        '{"id":"sql_price","tool":"sql",'
+        '"question":"Touring-1000 Yellow, 54의 정가를 조회한다.",'
+        '"dependsOn":[],"joinKeys":[],"inputBindings":{}}],'
+        '"resultTransform":null}'
+    )
+    preserved_filter = missing_filter.replace(
+        '"question":"Touring-1000 Yellow, 54의 정가를 조회한다."',
+        '"question":"Touring-1000 Yellow, 54 중 정가가 0원인 제품을 조회한다."',
+    )
+    client = MockOpenAIClient(
+        make_content_response(missing_filter), make_content_response(preserved_filter)
+    )
+    node = make_route_query_node(client)
+
+    result = await node(
+        {
+            "query": "Touring-1000 Yellow, 54 중 정가가 0원인 제품을 알려줘.",
+            "entity": {
+                "productId": 956,
+                "productName": "Touring-1000 Yellow, 54",
+            },
+        }
+    )
+
+    assert len(client.calls) == 2
+    assert "숫자 조건" in client.calls[1]["messages"][-1]["content"]
+    assert "0원" in result["routeDraft"]["subqueries"][0]["question"]
+
+
 async def test_route_query_retries_missing_raw_binding_join_keys() -> None:
     invalid = (
         '{"tool_plan":["graph","sql"],"subqueries":['
@@ -249,6 +281,47 @@ async def test_route_query_retries_product_size_used_as_korean_production_qty() 
         "type": "bom_shortage_v1",
         "productionQty": 10,
     }
+
+
+async def test_route_query_keeps_filter_equal_to_entity_numeric_value() -> None:
+    wrong = (
+        '{"tool_plan":["sql"],"subqueries":['
+        '{"id":"sql_price","tool":"sql","question":"제품 가격을 조회한다.",'
+        '"dependsOn":[],"joinKeys":[],"inputBindings":{}}],'
+        '"resultTransform":null}'
+    )
+    valid = wrong.replace("제품 가격을", "가격이 0원인 제품 가격을")
+    client = MockOpenAIClient(
+        make_content_response(wrong), make_content_response(valid)
+    )
+
+    result = await make_route_query_node(client)(
+        {
+            "query": "가격이 0원인 제품을 알려줘",
+            "entity": {"productId": 0, "productName": "Sample"},
+        }
+    )
+
+    assert len(client.calls) == 2
+    assert "0원인" in result["routeDraft"]["subqueries"][0]["question"]
+
+
+async def test_route_query_accepts_korean_scaled_number_as_equivalent_value() -> None:
+    content = (
+        '{"tool_plan":["sql"],"subqueries":['
+        '{"id":"sql_price","tool":"sql",'
+        '"question":"가격이 10000원 이상인 제품을 조회한다.",'
+        '"dependsOn":[],"joinKeys":[],"inputBindings":{}}],'
+        '"resultTransform":null}'
+    )
+    client = MockOpenAIClient(make_content_response(content))
+
+    result = await make_route_query_node(client)(
+        {"query": "가격이 1만 원 이상인 제품을 알려줘", "entity": None}
+    )
+
+    assert result["tool_plan"] == ["sql"]
+    assert len(client.calls) == 1
 
 
 @pytest.mark.parametrize(

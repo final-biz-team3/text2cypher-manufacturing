@@ -11,6 +11,8 @@ import pytest
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
 from orchestrator.nodes.execute_plan import make_execute_plan_node
 from orchestrator.planning import Subquery
+from orchestrator.query_failures import make_query_failure
+from orchestrator.state import QueryFailure
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
@@ -38,6 +40,7 @@ def _result(
     *,
     error: str | None = None,
     empty_reason: str | None = None,
+    failure: QueryFailure | None = None,
 ) -> dict[str, Any]:
     return {
         "messages": [{"role": "assistant", "content": query}],
@@ -45,6 +48,7 @@ def _result(
         "error": error,
         "attempts": [{"query": query, "error": error}],
         "empty_reason": empty_reason,
+        "failure": failure,
     }
 
 
@@ -358,3 +362,90 @@ async def test_execute_plan_continues_independent_step_after_failure() -> None:
     assert len(sql_agent.calls) == 1
     assert result["graph_result"]["error"] == "graph failed"
     assert result["sql_result"]["result"] == [{"count": 3}]
+
+
+async def test_execute_plan_preserves_primary_safe_failure_for_answer_node() -> None:
+    primary_failure = make_query_failure(
+        code="QUERY_TIMEOUT",
+        stage="execution",
+        category="TIMEOUT",
+        kind="user_correctable",
+        retryable=True,
+        user_safe_reason="조회가 제한 시간 안에 완료되지 않았습니다.",
+        suggested_action="조회 범위를 줄여 주세요.",
+        failed_tool="graph",
+    )
+    graph_agent = _FakeAgent(
+        _result(
+            "MATCH secret",
+            None,
+            error="raw database error",
+            failure=primary_failure,
+        )
+    )
+    sql_agent = _FakeAgent(_result("SELECT broad", [{"value": 1}]))
+
+    result = await _node(sql_agent, graph_agent)(
+        {
+            "query": "복합 질문",
+            "subqueries": [
+                _step("graph_first", "graph", "선행 조회"),
+                _step(
+                    "sql_second",
+                    "sql",
+                    "후속 조회",
+                    depends_on=["graph_first"],
+                ),
+            ],
+        }
+    )
+
+    assert result["query_failure"] == primary_failure
+    assert "raw database error" not in str(result["query_failure"])
+    assert result["sql_result"]["failure"]["code"] == "DEPENDENCY_FAILED"
+
+
+async def test_execute_plan_prioritizes_infrastructure_over_user_failure() -> None:
+    user_failure = make_query_failure(
+        code="QUERY_CONTRACT_FAILED",
+        stage="validation",
+        category="QUERY_INVALID",
+        kind="user_correctable",
+        retryable=False,
+        user_safe_reason="조건을 구성하지 못했습니다.",
+        suggested_action="조건을 구체화해 주세요.",
+        failed_tool="sql",
+    )
+    infrastructure_failure = make_query_failure(
+        code="INFRASTRUCTURE_UNAVAILABLE",
+        stage="execution",
+        category="CONNECTION_ERROR",
+        kind="infrastructure",
+        retryable=True,
+        user_safe_reason="조회 시스템에 연결할 수 없습니다.",
+        suggested_action="잠시 후 다시 시도해 주세요.",
+        failed_tool="graph",
+    )
+    sql_agent = _FakeAgent(
+        _result("SELECT bad", None, error="bad query", failure=user_failure)
+    )
+    graph_agent = _FakeAgent(
+        _result(
+            "MATCH bad",
+            None,
+            error="connection failed",
+            failure=infrastructure_failure,
+        )
+    )
+
+    result = await _node(sql_agent, graph_agent)(
+        {
+            "query": "독립 복합 질문",
+            "subqueries": [
+                _step("sql_first", "sql", "첫 조회"),
+                _step("graph_second", "graph", "둘째 조회"),
+            ],
+        }
+    )
+
+    assert result["query_failure"] == infrastructure_failure
