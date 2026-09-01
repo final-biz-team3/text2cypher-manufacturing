@@ -1,0 +1,22 @@
+{
+  "range": {
+    "sql": "SELECT LEAST((SELECT MIN(startdate)::date FROM production.workorder), (SELECT MIN(actualstartdate)::date FROM production.workorderrouting)) AS \"minDate\", GREATEST((SELECT MAX(enddate)::date FROM production.workorder), (SELECT MAX(actualenddate)::date FROM production.workorderrouting)) AS \"maxDate\""
+  },
+  "summary": {
+    "sql": "WITH period AS (SELECT %s::date AS from_date, (%s::date + INTERVAL '1 day') AS to_exclusive) SELECT (SELECT COUNT(*)::int FROM production.workorder wo, period p WHERE wo.startdate >= p.from_date AND wo.startdate < p.to_exclusive) AS \"startedWorkOrderCount\", (SELECT COUNT(*)::int FROM production.workorder wo, period p WHERE wo.enddate >= p.from_date AND wo.enddate < p.to_exclusive) AS \"completedWorkOrderCount\", (SELECT COUNT(*)::int FROM production.workorderrouting wor, period p WHERE wor.actualstartdate >= p.from_date AND wor.actualstartdate < p.to_exclusive) AS \"operationCount\", (SELECT COUNT(*)::int FROM production.workorder wo, period p WHERE wo.enddate >= p.from_date AND wo.enddate < p.to_exclusive AND wo.scrappedqty > 0) AS \"scrappedWorkOrderCount\", (SELECT COALESCE(SUM(wo.scrappedqty), 0)::int FROM production.workorder wo, period p WHERE wo.enddate >= p.from_date AND wo.enddate < p.to_exclusive AND wo.scrappedqty > 0) AS \"scrappedQty\"",
+    "metrics": [
+      {"key": "startedWorkOrderCount", "label": "시작 작업지시", "unit": "건"},
+      {"key": "completedWorkOrderCount", "label": "완료 작업지시", "unit": "건"},
+      {"key": "operationCount", "label": "수행 공정", "unit": "건"},
+      {"key": "scrappedWorkOrderCount", "label": "폐기 발생 작업지시", "unit": "건"},
+      {"key": "scrappedQty", "label": "폐기수량", "unit": "개"}
+    ]
+  },
+  "trend": {
+    "sql": "WITH period AS (SELECT %s::date AS from_date, %s::date AS to_date), buckets AS (SELECT generate_series(date_trunc('{bucket}', from_date), date_trunc('{bucket}', to_date), INTERVAL '1 {bucket}')::date AS bucket FROM period), started AS (SELECT date_trunc('{bucket}', wo.startdate)::date AS bucket, COUNT(*)::int AS value FROM production.workorder wo, period p WHERE wo.startdate >= p.from_date AND wo.startdate < p.to_date + INTERVAL '1 day' GROUP BY 1), completed AS (SELECT date_trunc('{bucket}', wo.enddate)::date AS bucket, COUNT(*)::int AS value, COALESCE(SUM(wo.scrappedqty) FILTER (WHERE wo.scrappedqty > 0), 0)::int AS scrapped FROM production.workorder wo, period p WHERE wo.enddate >= p.from_date AND wo.enddate < p.to_date + INTERVAL '1 day' GROUP BY 1) SELECT b.bucket AS date, COALESCE(s.value, 0)::int AS \"startedWorkOrderCount\", COALESCE(c.value, 0)::int AS \"completedWorkOrderCount\", COALESCE(c.scrapped, 0)::int AS \"scrappedQty\" FROM buckets b LEFT JOIN started s USING (bucket) LEFT JOIN completed c USING (bucket) ORDER BY b.bucket",
+    "dailyMaxDays": 93
+  },
+  "locations": {
+    "sql": "WITH period AS (SELECT %s::date AS from_date, (%s::date + INTERVAL '1 day') AS to_exclusive) SELECT l.locationid AS \"locationId\", l.name AS \"locationName\", COUNT(*)::int AS \"operationCount\", COUNT(DISTINCT wor.workorderid)::int AS \"workOrderCount\" FROM production.workorderrouting wor JOIN production.location l ON l.locationid = wor.locationid CROSS JOIN period p WHERE wor.actualstartdate >= p.from_date AND wor.actualstartdate < p.to_exclusive GROUP BY l.locationid, l.name ORDER BY \"operationCount\" DESC, \"locationId\" ASC LIMIT 7"
+  }
+}

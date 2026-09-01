@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from core.auth import CurrentUser, get_current_user
+from dashboard.process import get_process_overview
 from dashboard.service import (
     DashboardServiceError,
     get_dashboard_card,
@@ -26,6 +27,18 @@ async def overview(
 ):
     try:
         return await get_dashboard_overview()
+    except DashboardServiceError as error:
+        return _error_response(error)
+
+
+@router.get("/process-overview")
+async def process_overview(
+    from_value: str | None = Query(default=None, alias="from"),
+    to_value: str | None = Query(default=None, alias="to"),
+    _user: CurrentUser = Depends(get_current_user),  # noqa: B008
+):
+    try:
+        return await get_process_overview(from_value, to_value)
     except DashboardServiceError as error:
         return _error_response(error)
 
