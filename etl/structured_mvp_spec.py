@@ -34,6 +34,17 @@ class RelationshipSpec:
     # 있으면 그 컬럼(예: bomId), 없으면 (시작 컬럼, 도착 컬럼) 쌍. 쓰기 전 중복 검사
     # (find_duplicate_key_rows)에 쓴다.
     merge_key_columns: tuple[str, ...]
+    # from_label/to_label: merge_cypher의 두 MATCH가 잡는 시작·도착 노드 라벨.
+    # from_key/to_key: 그 MATCH가 끝점을 찾을 때 쓰는 추출 행의 FK 컬럼명 -
+    #   참조 무결성 검사(find_dangling_relationship_rows)가 이 값으로 끝점 노드가
+    #   추출됐는지 본다. 중복 검사용 merge_key_columns와는 별개 개념이다(예:
+    #   SUPPLIES는 from_key=supplierId/to_key=productId지만 merge_key_columns는
+    #   ("supplyKey",)). 이 4개를 스펙에 함께 두어야 관계 추가가 이 파일 한 곳
+    #   편집으로 끝나고, 무결성 검사가 실제 MERGE 패턴과 구조적으로 어긋날 수 없다.
+    from_label: str
+    to_label: str
+    from_key: str
+    to_key: str
     date_columns: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -159,6 +170,10 @@ MERGE (s)-[r:SUPPLIES {supplyKey: row.supplyKey}]->(p)
 SET r.syncRunId = $syncRunId
 """,
         merge_key_columns=("supplyKey",),
+        from_label="Supplier",
+        to_label="Product",
+        from_key="supplierId",
+        to_key="productId",
     ),
     RelationshipSpec(
         rel_type="REQUIRES_COMPONENT",
@@ -182,6 +197,10 @@ SET r.quantityPerAssembly = row.quantityPerAssembly,
     r.syncRunId = $syncRunId
 """,
         merge_key_columns=("bomId",),
+        from_label="Product",
+        to_label="Product",
+        from_key="assemblyProductId",
+        to_key="componentProductId",
         date_columns=("startDate", "endDate"),
     ),
     RelationshipSpec(
@@ -197,6 +216,10 @@ MERGE (wo)-[r:PRODUCES]->(p)
 SET r.syncRunId = $syncRunId
 """,
         merge_key_columns=("workOrderId", "productId"),
+        from_label="WorkOrder",
+        to_label="Product",
+        from_key="workOrderId",
+        to_key="productId",
     ),
     RelationshipSpec(
         rel_type="HAS_OPERATION",
@@ -213,6 +236,10 @@ MERGE (wo)-[r:HAS_OPERATION]->(ro)
 SET r.syncRunId = $syncRunId
 """,
         merge_key_columns=("workOrderId", "routingOperationKey"),
+        from_label="WorkOrder",
+        to_label="RoutingOperation",
+        from_key="workOrderId",
+        to_key="routingOperationKey",
     ),
     RelationshipSpec(
         rel_type="PERFORMED_AT",
@@ -229,6 +256,10 @@ MERGE (ro)-[r:PERFORMED_AT]->(loc)
 SET r.syncRunId = $syncRunId
 """,
         merge_key_columns=("routingOperationKey", "locationId"),
+        from_label="RoutingOperation",
+        to_label="Location",
+        from_key="routingOperationKey",
+        to_key="locationId",
     ),
     RelationshipSpec(
         rel_type="SCRAPPED_DUE_TO",
@@ -245,5 +276,9 @@ MERGE (wo)-[r:SCRAPPED_DUE_TO]->(sr)
 SET r.syncRunId = $syncRunId
 """,
         merge_key_columns=("workOrderId", "scrapReasonId"),
+        from_label="WorkOrder",
+        to_label="ScrapReason",
+        from_key="workOrderId",
+        to_key="scrapReasonId",
     ),
 ]

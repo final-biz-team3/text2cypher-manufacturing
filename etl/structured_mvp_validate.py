@@ -11,7 +11,10 @@ import sys
 from typing import Any
 
 from dotenv import load_dotenv
-from neo4j import Driver, GraphDatabase
+from neo4j import Driver, Session
+from postgres_restore import ROOT_DIR
+from structured_mvp_config import RELATIONSHIP_TYPES, connect_neo4j_from_env
+from structured_mvp_load import BUSINESS_LABELS
 
 # quantityPerAssembly가 PostgreSQL Decimal -> float 변환 후 Cypher에서 다시 곱셈을
 # 거치므로, 수학적으로 정확히 80이어도 부동소수점 표현 오차로 79.99999999999997
@@ -128,6 +131,30 @@ def count_relationships_by_type(
     return counts
 
 
+def _entity_exists(
+    session: Session,
+    label: str,
+    key_field: str,
+    key_value: object,
+    sync_run_id: str | None,
+) -> bool:
+    """라벨+키로 노드가 1건 이상 있는지. sync_run_id를 주면 그 실행분만 본다.
+
+    verify_fixture_entities의 Product 루프·supplier·workOrder가 같은 모양의
+    존재 확인 쿼리를 세 벌 복제하고 있어 하나로 모은다.
+    """
+    result = session.run(
+        f"""
+        MATCH (n:{label} {{{key_field}: $id}})
+        WHERE $syncRunId IS NULL OR n.syncRunId = $syncRunId
+        RETURN count(n) AS c
+        """,
+        id=key_value,
+        syncRunId=sync_run_id,
+    )
+    return result.single()["c"] > 0
+
+
 def verify_fixture_entities(
     driver: Driver,
     entities: dict[str, Any],
@@ -155,42 +182,21 @@ def verify_fixture_entities(
         ]
         for entity_key, id_field in product_checks:
             product_id = entities[entity_key][id_field]
-            result = session.run(
-                """
-                MATCH (p:Product {productId: $id})
-                WHERE $syncRunId IS NULL OR p.syncRunId = $syncRunId
-                RETURN count(p) AS c
-                """,
-                id=product_id,
-                syncRunId=sync_run_id,
-            )
-            if result.single()["c"] == 0:
+            if not _entity_exists(
+                session, "Product", "productId", product_id, sync_run_id
+            ):
                 failures.append(f"{entity_key}: Product {product_id} 없음")
 
         supplier_id = entities["supplier"]["supplierId"]
-        result = session.run(
-            """
-            MATCH (s:Supplier {supplierId: $id})
-            WHERE $syncRunId IS NULL OR s.syncRunId = $syncRunId
-            RETURN count(s) AS c
-            """,
-            id=supplier_id,
-            syncRunId=sync_run_id,
-        )
-        if result.single()["c"] == 0:
+        if not _entity_exists(
+            session, "Supplier", "supplierId", supplier_id, sync_run_id
+        ):
             failures.append(f"supplier: Supplier {supplier_id} 없음")
 
         work_order_id = entities["workOrder"]["workOrderId"]
-        result = session.run(
-            """
-            MATCH (w:WorkOrder {workOrderId: $id})
-            WHERE $syncRunId IS NULL OR w.syncRunId = $syncRunId
-            RETURN count(w) AS c
-            """,
-            id=work_order_id,
-            syncRunId=sync_run_id,
-        )
-        if result.single()["c"] == 0:
+        if not _entity_exists(
+            session, "WorkOrder", "workOrderId", work_order_id, sync_run_id
+        ):
             failures.append(f"workOrder: WorkOrder {work_order_id} 없음")
 
     return failures
@@ -280,28 +286,10 @@ def main() -> None:
 
     사용법(리포 루트 기준): python etl/structured_mvp_validate.py
     """
-    from postgres_restore import ROOT_DIR
-    from run_structured_mvp_sync import NEO4J_REQUIRED_ENV_VARS, RELATIONSHIP_TYPES
-    from structured_mvp_load import BUSINESS_LABELS
-
     load_dotenv(ROOT_DIR / ".env")
 
-    missing_vars = [
-        name for name in NEO4J_REQUIRED_ENV_VARS if not os.environ.get(name)
-    ]
-    if missing_vars:
-        sys.exit(f".env에 다음 값이 없습니다: {', '.join(missing_vars)}")
-
+    driver = connect_neo4j_from_env()
     print(f"대상: {os.environ['NEO4J_URI']}")
-
-    driver = GraphDatabase.driver(
-        os.environ["NEO4J_URI"],
-        auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
-    )
-    try:
-        driver.verify_connectivity()
-    except Exception as exc:
-        sys.exit(f"Neo4j 접속 실패 ({os.environ['NEO4J_URI']}): {exc}")
 
     try:
         print("1) 건수 확인")
