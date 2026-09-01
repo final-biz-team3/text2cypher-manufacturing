@@ -550,10 +550,14 @@ def _node_payload(node: Node) -> dict[str, Any]:
 
 
 def _edge_payload(edge: Relationship) -> dict[str, Any]:
+    start_node = edge.start_node
+    end_node = edge.end_node
+    if start_node is None or end_node is None:
+        raise ValueError("그래프 관계의 시작 또는 끝 노드가 없습니다.")
     return {
         "id": edge.element_id,
-        "source": edge.start_node.element_id,
-        "target": edge.end_node.element_id,
+        "source": start_node.element_id,
+        "target": end_node.element_id,
         "type": edge.type,
         "properties": {key: _graph_value(value) for key, value in dict(edge).items()},
     }
