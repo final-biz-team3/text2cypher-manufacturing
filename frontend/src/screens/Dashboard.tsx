@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { TopBar } from '@/components/layout/TopBar'
 import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
@@ -60,15 +61,23 @@ function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrecti
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
 // 질문 입력 → /chat 호출 → 결과 표시 → 이력 저장까지 대시보드의 핵심 흐름을 담당한다.
 export function Dashboard() {
+  const navigate = useNavigate()
+  const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
+  const postgresConnected = useHealthStore((s) => s.postgresConnected)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   // 입력창 텍스트는 로컬 상태로만 둔다 - store(sessionStorage 영속)에 두면 한
   // 글자 칠 때마다 result(수백 행)까지 통째로 다시 직렬화해서 저장하게 된다.
   // 새로고침 시 보여줄 초기값은 이미 복원된 result.query에서 가져온다(App.tsx가
   // uiHydrated를 보장한 뒤에만 Dashboard가 마운트되므로 안전하다).
-  const [queryText, setQueryText] = useState(() => useUiStore.getState().result?.query ?? '')
+  const [queryText, setQueryText] = useState(() => {
+    const draftQuestion = (location.state as { draftQuestion?: unknown } | null)?.draftQuestion
+    return typeof draftQuestion === 'string'
+      ? draftQuestion
+      : (useUiStore.getState().result?.query ?? '')
+  })
   // 새로고침해도 보던 화면 그대로 남아있어야 해서(결과/화면 단계 포함)
   // 전역 store(sessionStorage 영속)에 둔다.
   const activeScreen = useUiStore((s) => s.activeScreen)
@@ -95,6 +104,13 @@ export function Dashboard() {
   useEffect(() => {
     refreshHistory()
   }, [])
+
+  useEffect(() => {
+    const draftQuestion = (location.state as { draftQuestion?: unknown } | null)?.draftQuestion
+    if (typeof draftQuestion === 'string' && draftQuestion.trim()) {
+      navigate('/chat', { replace: true, state: null })
+    }
+  }, [location.state, navigate])
 
   // /chat을 호출하고 성공·모호함·에러 세 갈래로 화면 상태를 갱신하는 공통 로직.
   // confirmedSoFar는 직전 라운드까지 사용자가 확정한 후보들(모호한 이름이
@@ -178,8 +194,12 @@ export function Dashboard() {
     <div className="flex h-screen flex-col bg-bg">
       <TopBar
         connected={neo4jConnected}
+        postgresConnected={postgresConnected}
         readOnly={READ_ONLY}
-        onNavigateHome={handleNavigateHome}
+        onNavigateHome={() => navigate('/dashboard')}
+        activeSection="chat"
+        onNavigateDashboard={() => navigate('/dashboard')}
+        onNavigateChat={handleNavigateHome}
         username={user?.username}
         onLogout={logout}
       />
