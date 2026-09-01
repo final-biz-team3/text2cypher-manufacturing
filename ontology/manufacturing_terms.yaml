@@ -1,0 +1,300 @@
+ontologyVersion: manufacturing-v1
+
+outputRoles:
+  - roleId: product.component-id
+    alias: componentId
+    canonical: 하위 부품 식별자
+    terms: [부품 ID, component ID]
+    valueType: identity
+    mappings:
+      sql:
+        - production.product.productid
+        - production.productinventory.productid
+        - purchasing.productvendor.productid
+        - production.billofmaterials.componentid
+      graph: [Product.productId]
+  - roleId: product.component-name
+    alias: componentName
+    canonical: 하위 부품 이름
+    terms: [부품명, component name]
+    valueType: name
+    mappings:
+      sql: [production.product.name]
+      graph: [Product.name]
+  - roleId: product.finished-id
+    alias: finishedProductId
+    canonical: 완제품 식별자
+    terms: [완제품 ID, finished product ID]
+    valueType: identity
+    mappings:
+      sql:
+        - production.product.productid
+        - production.billofmaterials.productassemblyid
+      graph: [Product.productId]
+  - roleId: product.finished-name
+    alias: finishedProductName
+    canonical: 완제품 이름
+    terms: [완제품명, finished product name]
+    valueType: name
+    mappings:
+      sql: [production.product.name]
+      graph: [Product.name]
+  - roleId: product.root-id
+    alias: rootProductId
+    canonical: BOM 탐색 시작 제품 식별자
+    terms: [루트 제품 ID, root product ID]
+    valueType: identity
+    mappings:
+      sql:
+        - production.product.productid
+        - production.billofmaterials.productassemblyid
+      graph: [Product.productId]
+  - roleId: product.root-name
+    alias: rootProductName
+    canonical: BOM 탐색 시작 제품 이름
+    terms: [루트 제품명, root product name]
+    valueType: name
+    mappings:
+      sql: [production.product.name]
+      graph: [Product.name]
+  - roleId: product.finished-a-id
+    alias: finishedProductIdA
+    canonical: 첫 번째 완제품 식별자
+    terms: [첫 번째 완제품 ID]
+    valueType: identity
+    mappings:
+      sql: [production.product.productid]
+      graph: [Product.productId]
+  - roleId: product.finished-b-id
+    alias: finishedProductIdB
+    canonical: 두 번째 완제품 식별자
+    terms: [두 번째 완제품 ID]
+    valueType: identity
+    mappings:
+      sql: [production.product.productid]
+      graph: [Product.productId]
+  - roleId: supplier.a-id
+    alias: supplierIdA
+    canonical: 공급업체 쌍의 첫 번째 식별자
+    terms: [첫 번째 공급업체 ID]
+    valueType: identity
+    mappings:
+      sql: [purchasing.vendor.businessentityid]
+      graph: [Supplier.supplierId]
+  - roleId: supplier.a-name
+    alias: supplierNameA
+    canonical: 공급업체 쌍의 첫 번째 이름
+    terms: [첫 번째 공급업체명]
+    valueType: name
+    mappings:
+      sql: [purchasing.vendor.name]
+      graph: [Supplier.name]
+  - roleId: supplier.b-id
+    alias: supplierIdB
+    canonical: 공급업체 쌍의 두 번째 식별자
+    terms: [두 번째 공급업체 ID]
+    valueType: identity
+    mappings:
+      sql: [purchasing.vendor.businessentityid]
+      graph: [Supplier.supplierId]
+  - roleId: supplier.b-name
+    alias: supplierNameB
+    canonical: 공급업체 쌍의 두 번째 이름
+    terms: [두 번째 공급업체명]
+    valueType: name
+    mappings:
+      sql: [purchasing.vendor.name]
+      graph: [Supplier.name]
+
+businessConcepts:
+  - conceptId: supplier.active-count
+    alias: activeSupplierCount
+    canonical: 활성 공급업체 수
+    terms: [active supplier count]
+    kind: aggregate
+    sources: [sql]
+    grain: []
+    operation: countDistinct
+    inputs: [supplierId]
+    predicates:
+      - {field: active, operator: equals, value: true}
+  - conceptId: product.purchased-count
+    alias: purchasedProductCount
+    canonical: 외부 구매 제품 수
+    terms: [구매 제품 수, purchased product count]
+    kind: aggregate
+    sources: [sql]
+    grain: []
+    operation: countDistinct
+    inputs: [productId]
+    predicates:
+      - {field: makeFlag, operator: equals, value: false}
+  - conceptId: product.count
+    alias: productCount
+    canonical: 선택 grain의 제품 수
+    terms: [제품 개수, product count]
+    kind: aggregate
+    sources: [sql]
+    grain: []
+    operation: countDistinct
+    inputs: [productId]
+  - conceptId: inventory.actual-stock
+    alias: actualStock
+    canonical: 제품별 현재 실제 재고
+    terms: [현재 재고, 실제 재고, 재고 합계]
+    kind: aggregate
+    sources: [sql]
+    grain: [productId]
+    operation: sum
+    inputs: [quantity]
+  - conceptId: inventory.shortage
+    alias: shortageQty
+    canonical: 안전재고 부족 수량
+    terms: [부족 수량, 부족분, 모자란 수량]
+    kind: derived
+    sources: [sql]
+    grain: [productId]
+    operation: clampedDifference
+    inputs: [safetyStockLevel, actualStock]
+  - conceptId: sales.total-order-quantity
+    alias: totalOrderQty
+    canonical: 판매 주문 수량 합계
+    terms: [총 주문 수량]
+    kind: aggregate
+    sources: [sql]
+    grain: [productId]
+    operation: sum
+    inputs: [orderQty]
+  - conceptId: purchasing.total-rejected-quantity
+    alias: totalRejectedQty
+    canonical: 구매 반려 수량 합계
+    terms: [총 반려 수량]
+    kind: aggregate
+    sources: [sql]
+    grain: [supplierId]
+    operation: sum
+    inputs: [rejectedQty]
+  - conceptId: product.price-cost-gap
+    alias: priceCostGap
+    canonical: 정가와 표준원가의 차이
+    terms: [가격 원가 차이]
+    kind: derived
+    sources: [sql]
+    grain: [productId]
+    operation: difference
+    inputs: [listPrice, standardCost]
+  - conceptId: supplier.supplied-product-count
+    alias: suppliedProductCount
+    canonical: 공급업체별 서로 다른 공급 제품 수
+    terms: [공급 제품 종류 수]
+    kind: aggregate
+    sources: [sql]
+    grain: [supplierId]
+    operation: countDistinct
+    inputs: [productId]
+  - conceptId: product.average-list-price
+    alias: averageListPrice
+    canonical: 선택 grain의 평균 정가
+    terms: [평균 판매 가격]
+    kind: aggregate
+    sources: [sql]
+    grain: []
+    operation: average
+    inputs: [listPrice]
+  - conceptId: work-order.count
+    alias: workOrderCount
+    canonical: 선택 grain의 서로 다른 작업지시 수
+    terms: [작업지시 개수]
+    kind: aggregate
+    sources: [sql]
+    grain: []
+    operation: countDistinct
+    inputs: [workOrderId]
+  - conceptId: work-order.total-scrapped-quantity
+    alias: totalScrappedQty
+    canonical: 선택 grain의 폐기 수량 합계
+    terms: [총 폐기 수량]
+    kind: aggregate
+    sources: [sql]
+    grain: []
+    operation: sum
+    inputs: [scrappedQty]
+  - conceptId: graph.depth
+    alias: depth
+    canonical: anchor에서 destination까지의 경로 깊이
+    terms: [경로 깊이, path depth]
+    kind: path
+    sources: [graph]
+    grain: [componentId]
+    operation: pathLength
+    inputs: []
+  - conceptId: graph.minimum-depth
+    alias: minDepth
+    canonical: destination별 최소 경로 깊이
+    terms: [최소 깊이, minimum depth]
+    kind: path
+    sources: [graph]
+    grain: [componentId]
+    operation: minimumPathLength
+    inputs: [depth]
+  - conceptId: graph.minimum-depth-a
+    alias: minDepthA
+    canonical: 첫 번째 anchor에서 destination까지의 최소 경로 깊이
+    terms: [첫 번째 최소 깊이]
+    kind: path
+    sources: [graph]
+    grain: [componentId]
+    operation: minimumPathLength
+    inputs: [depth]
+  - conceptId: graph.minimum-depth-b
+    alias: minDepthB
+    canonical: 두 번째 anchor에서 destination까지의 최소 경로 깊이
+    terms: [두 번째 최소 깊이]
+    kind: path
+    sources: [graph]
+    grain: [componentId]
+    operation: minimumPathLength
+    inputs: [depth]
+  - conceptId: graph.path-product-ids
+    alias: pathProductIds
+    canonical: anchor에서 destination 순서의 제품 식별자 경로
+    terms: [제품 ID 경로]
+    kind: path
+    sources: [graph]
+    grain: [rootProductId, componentId]
+    operation: orderedPathProjection
+    inputs: [productId]
+  - conceptId: graph.path-product-names
+    alias: pathProductNames
+    canonical: anchor에서 destination 순서의 제품 이름 경로
+    terms: [제품명 경로]
+    kind: path
+    sources: [graph]
+    grain: [rootProductId, componentId]
+    operation: orderedPathProjection
+    inputs: [productName]
+  - conceptId: supplier-pair.shared-component-count
+    alias: sharedComponentCount
+    canonical: 공급업체 쌍이 함께 공급하는 서로 다른 부품 수
+    terms: [공동 공급 부품 수]
+    kind: aggregate
+    sources: [graph]
+    grain: [supplierIdA, supplierIdB]
+    operation: countDistinct
+    inputs: [componentId]
+
+transforms:
+  - transformId: bom_shortage_v1
+    outputScale: 6
+    requiredOutputs:
+      graph:
+        - finishedProductId
+        - finishedProductName
+        - componentId
+        - componentName
+        - depth
+        - pathProductIds
+        - quantityPerAssembly
+        - supplierId
+        - supplierName
+      sql: [componentId, makeFlag, actualStock]

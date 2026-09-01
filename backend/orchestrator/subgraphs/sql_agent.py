@@ -44,6 +44,7 @@ def make_sql_agent_subgraph(
     execute_sql: Callable[[str], Awaitable[Any]],
     sql_schema: SqlSchema,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+    semantic_context: str = "",
 ) -> CompiledStateGraph:
     """SQL 생성 -> 쿼리 가드 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_sql 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
@@ -56,6 +57,8 @@ def make_sql_agent_subgraph(
             query=state["query"],
             entity=state["entity"],
             schema_text=state["schema"],
+            semantic_context=semantic_context,
+            business_rules=state.get("business_rules", []),
             required_outputs=state.get("required_outputs", []),
             input_bindings=state.get("input_bindings"),
             previous_query=previous_query,

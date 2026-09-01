@@ -309,15 +309,15 @@
     {"caseId": "RB20-C", "contractId": "RQ20", "suite": "robustness", "question": "작업지시 17747의 제품, 폐기 이유, 공정 순서랑 작업장 알려줘.", "parameters": {"workOrderId": 17747}},
     {"caseId": "RB20-R", "contractId": "RQ20", "suite": "robustness", "question": "17747 생산·폐기 정보와 전체 라우팅 공정을 한 번에 보여줘.", "parameters": {"workOrderId": 17747}},
 
-    {"caseId": "HQ01", "contractId": "HQ01", "suite": "holdout", "question": "Mountain-100 Silver, 38과 Mountain-100 Black, 38의 정가-표준원가 차액을 비교해 큰 순서로 보여줘.", "parameters": {"productNames": ["Mountain-100 Silver, 38", "Mountain-100 Black, 38"]}},
-    {"caseId": "HQ02", "contractId": "HQ02", "suite": "holdout", "question": "안전재고보다 실제 재고가 부족한 제품을 부족 수량이 큰 순서로 5개 보여줘.", "parameters": {}},
-    {"caseId": "HQ03", "contractId": "HQ03", "suite": "holdout", "question": "활성 공급업체 중 가장 다양한 부품을 공급하는 곳 5곳과 부품 종류 수를 알려줘.", "parameters": {}},
-    {"caseId": "HQ04", "contractId": "HQ04", "suite": "holdout", "question": "제품 분류별 평균 정가와 제품 수를 평균 정가가 높은 순서로 보여줘.", "parameters": {}},
-    {"caseId": "HQ05", "contractId": "HQ05", "suite": "holdout", "question": "서로 다른 작업지시를 가장 많이 처리한 작업장 5곳과 작업지시 수를 알려줘.", "parameters": {}},
-    {"caseId": "HQ06", "contractId": "HQ06", "suite": "holdout", "question": "HL Road Frame - Black, 58의 BOM에서 더 이상 하위 부품이 없는 최하위 부품과 각각의 최소 깊이를 알려줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
-    {"caseId": "HQ07", "contractId": "HQ07", "suite": "holdout", "question": "같은 부품을 함께 공급하는 활성 공급업체 쌍을 공통 부품 종류가 많은 순서로 5쌍 알려줘.", "parameters": {}},
-    {"caseId": "HQ08", "contractId": "HQ08", "suite": "holdout", "question": "Thermoform temperature too low 때문에 폐기된 작업지시가 많은 제품 5개와 작업지시 수를 알려줘.", "parameters": {"scrapReasonName": "Thermoform temperature too low"}},
-    {"caseId": "HQ09", "contractId": "HQ09", "suite": "holdout", "question": "HL Road Frame - Black, 58의 최하위 BOM 부품 중 안전재고보다 실제 재고가 부족한 부품과 부족 수량을 알려줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
-    {"caseId": "HQ10", "contractId": "HQ10", "suite": "holdout", "question": "Frame Forming 작업장을 거친 제품 가운데 전체 작업지시 폐기 수량이 많은 제품 5개를 알려줘.", "parameters": {"locationName": "Frame Forming"}}
+    {"caseId": "HQ01", "contractId": "HQ01", "suite": "complexity", "question": "Mountain-100 Silver, 38과 Mountain-100 Black, 38의 정가-표준원가 차액을 비교해 큰 순서로 보여줘.", "parameters": {"productNames": ["Mountain-100 Silver, 38", "Mountain-100 Black, 38"]}},
+    {"caseId": "HQ02", "contractId": "HQ02", "suite": "complexity", "question": "안전재고보다 실제 재고가 부족한 제품을 부족 수량이 큰 순서로 5개 보여줘.", "parameters": {}},
+    {"caseId": "HQ03", "contractId": "HQ03", "suite": "complexity", "question": "활성 공급업체 중 가장 다양한 부품을 공급하는 곳 5곳과 부품 종류 수를 알려줘.", "parameters": {}},
+    {"caseId": "HQ04", "contractId": "HQ04", "suite": "complexity", "question": "제품 분류별 평균 정가와 제품 수를 평균 정가가 높은 순서로 보여줘.", "parameters": {}},
+    {"caseId": "HQ05", "contractId": "HQ05", "suite": "complexity", "question": "서로 다른 작업지시를 가장 많이 처리한 작업장 5곳과 작업지시 수를 알려줘.", "parameters": {}},
+    {"caseId": "HQ06", "contractId": "HQ06", "suite": "complexity", "question": "HL Road Frame - Black, 58의 BOM에서 더 이상 하위 부품이 없는 최하위 부품과 각각의 최소 깊이를 알려줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "HQ07", "contractId": "HQ07", "suite": "complexity", "question": "같은 부품을 함께 공급하는 활성 공급업체 쌍을 공통 부품 종류가 많은 순서로 5쌍 알려줘.", "parameters": {}},
+    {"caseId": "HQ08", "contractId": "HQ08", "suite": "complexity", "question": "Thermoform temperature too low 때문에 폐기된 작업지시가 많은 제품 5개와 작업지시 수를 알려줘.", "parameters": {"scrapReasonName": "Thermoform temperature too low"}},
+    {"caseId": "HQ09", "contractId": "HQ09", "suite": "complexity", "question": "HL Road Frame - Black, 58의 최하위 BOM 부품 중 안전재고보다 실제 재고가 부족한 부품과 부족 수량을 알려줘.", "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4}},
+    {"caseId": "HQ10", "contractId": "HQ10", "suite": "complexity", "question": "Frame Forming 작업장을 거친 제품 가운데 전체 작업지시 폐기 수량이 많은 제품 5개를 알려줘.", "parameters": {"locationName": "Frame Forming"}}
   ]
 }

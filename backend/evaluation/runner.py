@@ -101,6 +101,11 @@ class EvaluationRunner:
         self.graph_schema_text = serialize_graph_schema(graph_schema)
         self.graph_query_policy = graph_schema.query_policy
         output_catalog = build_output_catalog(sql_schema, graph_schema)
+        self.output_catalog = output_catalog
+        self.semantic_context = {
+            "sql": output_catalog.describe("sql"),
+            "graph": output_catalog.describe("graph"),
+        }
         # resolve_entity/route_query 노드는 async다 - 이 클래스(그리고
         # 아래를 호출하는 _evaluate_case)는 전부 동기라, 호출부 입장에서는
         # 평범한 함수처럼 보이게 감싼다. 감쌀 때 매번 asyncio.run()을 쓰면 안
@@ -128,6 +133,9 @@ class EvaluationRunner:
                 self.openai_client,
                 reasoning_effort=reasoning_effort,
                 shared_join_aliases=output_catalog.shared_join_aliases,
+                catalog=output_catalog,
+                sql_schema_text=self.sql_schema_text,
+                graph_schema_text=self.graph_schema_text,
             )
             plan_outputs_node = make_plan_outputs_node(
                 self.openai_client,
@@ -311,6 +319,7 @@ class EvaluationRunner:
             source_results,
             row_limit=max(final.row_count + 1, 1),
             result_transform=self._expected_transform(contract, case),
+            semantic_catalog=self.output_catalog,
         )
         if composed.get("error") is not None:
             raise InfrastructureError(
@@ -485,6 +494,9 @@ class EvaluationRunner:
                     query=actual["question"],
                     entity=context,
                     schema_text=self.sql_schema_text,
+                    semantic_context=getattr(self, "semantic_context", {}).get(
+                        "sql", ""
+                    ),
                     required_outputs=actual.get("requiredOutputs", []),
                     input_bindings=inputs,
                     reasoning_effort=getattr(
@@ -501,6 +513,7 @@ class EvaluationRunner:
                 entity=context,
                 schema_text=self.graph_schema_text,
                 query_policy=self.graph_query_policy,
+                semantic_context=getattr(self, "semantic_context", {}).get("graph", ""),
                 required_outputs=actual.get("requiredOutputs", []),
                 input_bindings=inputs,
                 reasoning_effort=getattr(

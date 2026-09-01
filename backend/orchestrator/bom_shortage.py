@@ -3,13 +3,6 @@
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import Any
 
-from orchestrator.planning import (
-    BOM_SHORTAGE_GRAPH_OUTPUTS,
-    BOM_SHORTAGE_SQL_OUTPUTS,
-)
-
-_QUANTUM = Decimal("0.000001")
-
 
 def _identifier(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
@@ -36,8 +29,8 @@ def _decimal(value: Any, label: str, *, positive: bool = False) -> Decimal:
     return result
 
 
-def _normalized(value: Decimal) -> Decimal:
-    return value.quantize(_QUANTUM, rounding=ROUND_HALF_EVEN)
+def _normalized(value: Decimal, quantum: Decimal) -> Decimal:
+    return value.quantize(quantum, rounding=ROUND_HALF_EVEN)
 
 
 def _require_fields(row: dict[str, Any], fields: frozenset[str], label: str) -> None:
@@ -51,8 +44,14 @@ def calculate_bom_shortages(
     sql_rows: list[dict[str, Any]],
     *,
     production_qty: int | float,
+    output_scale: int,
+    required_graph_outputs: frozenset[str],
+    required_sql_outputs: frozenset[str],
 ) -> list[dict[str, Any]]:
     """전체 source를 검증한 뒤 component별 shortage를 결정적으로 계산한다."""
+    if not 0 <= output_scale <= 12:
+        raise ValueError("outputScale은 0 이상 12 이하여야 합니다.")
+    quantum = Decimal(1).scaleb(-output_scale)
     production = _decimal(production_qty, "productionQty", positive=True)
     components: dict[int, dict[str, Any]] = {}
     graph_domain: set[int] = set()
@@ -64,7 +63,7 @@ def calculate_bom_shortages(
         label = f"GRAPH {row_index}번 행"
         if not isinstance(row, dict):
             raise ValueError(f"{label}이 객체가 아닙니다.")
-        _require_fields(row, BOM_SHORTAGE_GRAPH_OUTPUTS, label)
+        _require_fields(row, required_graph_outputs, label)
         finished_id = _identifier(
             row["finishedProductId"], f"{label}.finishedProductId"
         )
@@ -159,7 +158,7 @@ def calculate_bom_shortages(
         label = f"SQL {row_index}번 행"
         if not isinstance(row, dict):
             raise ValueError(f"{label}이 객체가 아닙니다.")
-        _require_fields(row, BOM_SHORTAGE_SQL_OUTPUTS, label)
+        _require_fields(row, required_sql_outputs, label)
         component_id = _identifier(row["componentId"], f"{label}.componentId")
         if component_id in sql_by_component:
             raise ValueError(f"SQL에 componentId {component_id} 행이 중복됐습니다.")
@@ -195,12 +194,12 @@ def calculate_bom_shortages(
             {
                 "finishedProductId": component["finishedProductId"],
                 "finishedProductName": component["finishedProductName"],
-                "productionQty": _normalized(production),
+                "productionQty": _normalized(production, quantum),
                 "componentId": component_id,
                 "componentName": component["componentName"],
-                "requiredQty": _normalized(required),
-                "actualStock": _normalized(actual_stock),
-                "shortageQty": _normalized(shortage),
+                "requiredQty": _normalized(required, quantum),
+                "actualStock": _normalized(actual_stock, quantum),
+                "shortageQty": _normalized(shortage, quantum),
                 "suppliers": suppliers,
             }
         )

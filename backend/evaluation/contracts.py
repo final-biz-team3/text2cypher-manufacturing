@@ -45,7 +45,7 @@ def _question_matches(expected: str, actual: Any, source_question: str) -> bool:
             word in normalize(source_question)
             for word in _KOREAN_NUMBER_WORDS.get(number, ())
         )
-        # Robustness/holdout wording may intentionally omit a canonical fixture
+        # Robustness/complexity wording may intentionally omit a canonical fixture
         # parameter (for example the default BOM depth). Do not require the router
         # to invent a constraint that was absent from the user's actual question.
         if not source_has_number:

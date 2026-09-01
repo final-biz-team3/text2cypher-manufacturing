@@ -125,6 +125,7 @@ def make_cypher_agent_subgraph(
     query_policy: GraphQueryPolicy,
     graph_schema: GraphSchema,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+    semantic_context: str = "",
 ) -> CompiledStateGraph:
     """Cypher 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_cypher 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
@@ -138,6 +139,8 @@ def make_cypher_agent_subgraph(
             entity=state["entity"],
             schema_text=state["schema"],
             query_policy=query_policy,
+            semantic_context=semantic_context,
+            business_rules=state.get("business_rules", []),
             required_outputs=state.get("required_outputs", []),
             input_bindings=state.get("input_bindings"),
             previous_query=previous_query,

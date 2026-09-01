@@ -2,8 +2,8 @@ tables:
   production.product:
     aliases: [제품]
     outputAliases:
-      productid: [productId, componentId, finishedProductId, rootProductId, finishedProductIdA, finishedProductIdB]
-      name: [productName, componentName, finishedProductName, rootProductName]
+      productid: [productId]
+      name: [productName]
       productnumber: [productNumber]
       makeflag: [makeFlag]
       color: [color]
@@ -29,7 +29,7 @@ tables:
   production.productinventory:
     aliases: [제품 재고]
     outputAliases:
-      productid: [productId, componentId]
+      productid: [productId]
       locationid: [locationId]
       shelf: [shelf]
       bin: [bin]
@@ -64,7 +64,7 @@ tables:
   purchasing.productvendor:
     aliases: [제품별 공급업체]
     outputAliases:
-      productid: [productId, componentId]
+      productid: [productId]
       businessentityid: [supplierId]
     columns:
       productid: {type: INTEGER, primaryKey: true, nullable: false, aliases: []}
@@ -94,8 +94,6 @@ tables:
     aliases: [BOM]
     outputAliases:
       billofmaterialsid: [bomId]
-      productassemblyid: [finishedProductId, rootProductId]
-      componentid: [componentId]
       startdate: [startDate]
       enddate: [endDate]
       perassemblyqty: [quantityPerAssembly]

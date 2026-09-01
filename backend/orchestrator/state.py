@@ -58,7 +58,7 @@ class OrchestratorState(TypedDict):
 
     confirmed_entity: NotRequired[dict | list[dict] | None]
 
-    # route_query가 결정한 실행 계획 (["sql"] / ["graph"] / ["sql", "graph"])
+    # route_query의 dependency DAG에서 파생한 실행 순서
     tool_plan: NotRequired[list[str]]
 
     routeDraft: NotRequired[RouteDraft]

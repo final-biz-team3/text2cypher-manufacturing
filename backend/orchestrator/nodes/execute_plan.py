@@ -100,6 +100,16 @@ def _input_binding_failure() -> dict[str, Any]:
         "attempts": [],
         "empty_reason": None,
         "truncated": False,
+        "failure": make_query_failure(
+            code="INPUT_BINDING_INVALID",
+            stage="dependency",
+            category="QUERY_INVALID",
+            kind="internal",
+            retryable=False,
+            user_safe_reason="선행 조회 결과를 후속 조회 입력으로 전달하지 못했습니다.",
+            suggested_action="잠시 후 다시 시도해 주세요.",
+            dependent_failure=True,
+        ),
     }
 
 
@@ -129,6 +139,7 @@ def _initial_state(
         "schema": schema_text,
         "required_outputs": subquery["requiredOutputs"],
         "input_bindings": input_bindings,
+        "business_rules": subquery.get("generatorRules", []),
         "messages": [],
         "result": None,
         "error": None,

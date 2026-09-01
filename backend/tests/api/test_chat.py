@@ -17,6 +17,7 @@ from core.auth import CurrentUser, create_access_token
 from main import app as main_app
 from orchestrator.errors import AnswerGenerationError, EntityNotFoundError
 from orchestrator.nodes.plan_outputs import OutputPlanningError
+from orchestrator.nodes.resolve_entity import EntityExtractionError
 from orchestrator.nodes.route_query import RoutePlanError
 from tests.mocks.openai import (
     MockChatCompletion,
@@ -27,6 +28,22 @@ from tests.mocks.openai import (
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
 
 _ANSWER = "정가는 **2,384.07**입니다."
+_SQL_ROUTE = json.dumps(
+    {
+        "subqueries": [
+            {
+                "id": "sql_query",
+                "tool": "sql",
+                "question": "요청한 SQL 사실을 조회한다.",
+                "dependsOn": [],
+                "joinKeys": [],
+                "inputBindings": [],
+            }
+        ],
+        "resultTransform": None,
+    },
+    ensure_ascii=False,
+)
 
 
 def _answering_client(*responses: MockChatCompletion) -> MockOpenAIClient:
@@ -47,7 +64,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     """confirmed_entity를 검증·유지하고 SQL 생성·실행을 한 번 시도한다."""
     openai_client = _answering_client(
         make_no_tool_call_response(),
-        make_content_response('["sql"]'),
+        make_content_response(_SQL_ROUTE),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product '
@@ -106,7 +123,7 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
     """/chat 호출 후 로그인한 사용자 이름으로 대화기록이 저장된다."""
     openai_client = _answering_client(
         make_no_tool_call_response(),
-        make_content_response('["sql"]'),
+        make_content_response(_SQL_ROUTE),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product'
@@ -177,7 +194,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     """대화기록 저장이 실패해도 /chat 응답 자체는 정상 반환된다."""
     openai_client = _answering_client(
         make_no_tool_call_response(),
-        make_content_response('["sql"]'),
+        make_content_response(_SQL_ROUTE),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product'
@@ -244,7 +261,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     openai_client = _answering_client(
         make_no_tool_call_response(),
-        make_content_response('["sql"]'),
+        make_content_response(_SQL_ROUTE),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product'
@@ -377,6 +394,7 @@ def test_chat_endpoint_returns_502_and_does_not_save_on_answer_failure(
     ("error", "internal_stage"),
     [
         (EntityNotFoundError(), "entity_resolution"),
+        (EntityExtractionError("invalid extraction"), "entity_resolution"),
         (RoutePlanError("internal route error", "SECRET ROUTE RESPONSE"), "routing"),
         (
             OutputPlanningError("internal plan error", "SECRET PLAN RESPONSE"),
@@ -496,7 +514,32 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     __dict__를 그대로 덤프해버려 명시적 변환이 필요했다 - 실측으로 확인함.)"""
     openai_client = _answering_client(
         make_no_tool_call_response(),
-        make_content_response('["sql", "graph"]'),
+        make_content_response(
+            json.dumps(
+                {
+                    "subqueries": [
+                        {
+                            "id": "sql_query",
+                            "tool": "sql",
+                            "question": "요청한 SQL 사실을 조회한다.",
+                            "dependsOn": [],
+                            "joinKeys": [],
+                            "inputBindings": [],
+                        },
+                        {
+                            "id": "graph_query",
+                            "tool": "graph",
+                            "question": "요청한 Graph 사실을 조회한다.",
+                            "dependsOn": [],
+                            "joinKeys": [],
+                            "inputBindings": [],
+                        },
+                    ],
+                    "resultTransform": None,
+                },
+                ensure_ascii=False,
+            )
+        ),
         make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response('{"requiredOutputs":["productId"]}'),
         make_content_response(
@@ -564,7 +607,6 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
 ) -> None:
     """범위 밖 HYBRID 결과는 final_answer에서 차단하되 API 필드는 유지한다."""
     route_plan = """{
-      "tool_plan": ["sql", "graph"],
       "subqueries": [
         {
           "id": "sql_base",
@@ -572,7 +614,7 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
           "question": "기준 사실을 조회한다.",
           "dependsOn": [],
           "joinKeys": ["productId"],
-          "inputBindings": {}
+          "inputBindings": []
         },
         {
           "id": "graph_followup",
@@ -580,7 +622,7 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
           "question": "관련 경로를 조회한다.",
           "dependsOn": [],
           "joinKeys": ["productId"],
-          "inputBindings": {}
+          "inputBindings": []
         }
       ],
       "resultTransform": null

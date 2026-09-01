@@ -1,376 +1,439 @@
-from typing import Any
+"""Route DAG, aligned binding, and formal transform structural contracts."""
+
+import json
+from functools import lru_cache
+from pathlib import Path
+from typing import cast
 
 import pytest
 
+from agents.cypher.schema.loader import load_graph_schema
+from agents.sql.schema.loader import load_sql_schema
+from orchestrator.output_catalog import build_output_catalog
 from orchestrator.planning import (
-    BOM_SHORTAGE_GRAPH_OUTPUTS,
-    BOM_SHORTAGE_SQL_OUTPUTS,
-    parse_execution_plan,
+    Subquery,
+    derive_tool_plan,
     parse_route_draft,
     route_draft_json_schema,
     validate_result_transform,
-    validate_route_subqueries,
     validate_subqueries,
 )
+from orchestrator.semantic_catalog import QuerySemanticCatalog, ToolName
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _step(
+@lru_cache
+def _catalog() -> QuerySemanticCatalog:
+    return build_output_catalog(
+        load_sql_schema(PROJECT_ROOT / "schema" / "sql_schema.yaml"),
+        load_graph_schema(PROJECT_ROOT / "schema" / "graph_schema.yaml"),
+    )
+
+
+def _route(subqueries: list[dict], transform: dict | None = None) -> str:
+    return json.dumps(
+        {"subqueries": subqueries, "resultTransform": transform},
+        ensure_ascii=False,
+    )
+
+
+def _draft(
     subquery_id: str,
+    tool: str,
     *,
-    tool: str = "graph",
     depends_on: list[str] | None = None,
-    outputs: list[str] | None = None,
     join_keys: list[str] | None = None,
-    bindings: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {
+    bindings: list[dict] | None = None,
+) -> dict:
+    return {
         "id": subquery_id,
         "tool": tool,
-        "question": "질문",
+        "question": f"{tool} responsibility",
         "dependsOn": depends_on or [],
-        "requiredOutputs": outputs or ["componentId"],
         "joinKeys": join_keys or [],
+        "inputBindings": bindings or [],
     }
-    if bindings:
-        result["inputBindings"] = bindings
-    return result
+
+
+def test_route_schema_omits_tool_plan_and_exposes_aligned_binding_array() -> None:
+    schema = route_draft_json_schema(
+        _catalog().shared_join_aliases,
+        catalog=_catalog(),
+    )
+
+    assert "tool_plan" not in schema["properties"]
+    assert "uniqueItems" not in json.dumps(schema)
+    binding_schema = schema["properties"]["subqueries"]["items"]["properties"][
+        "inputBindings"
+    ]
+    assert binding_schema["type"] == "array"
+    assert set(binding_schema["items"]["required"]) == {
+        "target",
+        "sourceSubqueryId",
+        "sourceOutput",
+    }
+    source_outputs = binding_schema["items"]["properties"]["sourceOutput"]["enum"]
+    assert "componentId" in source_outputs
+    assert "quantityPerAssembly" in source_outputs
+
+
+@pytest.mark.parametrize("tool", ["sql", "graph"])
+def test_single_source_route_derives_tool_plan(tool: str) -> None:
+    parsed = parse_route_draft(
+        _route([_draft(f"{tool}_query", tool)]),
+        "question",
+        catalog=_catalog(),
+        shared_join_aliases=_catalog().shared_join_aliases,
+    )
+
+    assert parsed["tool_plan"] == [tool]
+    assert "inputBindings" not in parsed["subqueries"][0]
+
+
+def test_independent_hybrid_keeps_model_order_and_has_no_bindings() -> None:
+    parsed = parse_route_draft(
+        _route([_draft("sql_facts", "sql"), _draft("graph_paths", "graph")]),
+        "question",
+        catalog=_catalog(),
+        shared_join_aliases=_catalog().shared_join_aliases,
+    )
+
+    assert parsed["tool_plan"] == ["sql", "graph"]
+    assert all(not item["dependsOn"] for item in parsed["subqueries"])
+
+
+def test_dependent_hybrid_derives_topological_order_and_compiles_many_bindings() -> (
+    None
+):
+    consumer = _draft(
+        "sql_consumer",
+        "sql",
+        depends_on=["graph_producer"],
+        bindings=[
+            {
+                "target": "componentIds",
+                "sourceSubqueryId": "graph_producer",
+                "sourceOutput": "componentId",
+            },
+            {
+                "target": "quantities",
+                "sourceSubqueryId": "graph_producer",
+                "sourceOutput": "quantityPerAssembly",
+            },
+        ],
+    )
+    producer = _draft("graph_producer", "graph")
+
+    parsed = parse_route_draft(
+        _route([consumer, producer]),
+        "question",
+        catalog=_catalog(),
+        shared_join_aliases=_catalog().shared_join_aliases,
+    )
+
+    assert parsed["tool_plan"] == ["graph", "sql"]
+    assert [item["id"] for item in parsed["subqueries"]] == [
+        "graph_producer",
+        "sql_consumer",
+    ]
+    assert parsed["subqueries"][1]["inputBindings"] == {
+        "componentIds": "graph_producer.componentId",
+        "quantities": "graph_producer.quantityPerAssembly",
+    }
+    assert all(item["joinKeys"] == [] for item in parsed["subqueries"])
+
+
+def test_binding_target_must_be_safe_and_unique() -> None:
+    bindings = [
+        {
+            "target": "unsafe-name",
+            "sourceSubqueryId": "graph_base",
+            "sourceOutput": "componentId",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="invalid values"):
+        parse_route_draft(
+            _route(
+                [
+                    _draft("graph_base", "graph"),
+                    _draft(
+                        "sql_next",
+                        "sql",
+                        depends_on=["graph_base"],
+                        bindings=bindings,
+                    ),
+                ]
+            ),
+            "question",
+            catalog=_catalog(),
+        )
+
+    bindings[0]["target"] = "values"
+    bindings.append(dict(bindings[0]))
+    with pytest.raises(ValueError, match="duplicated"):
+        parse_route_draft(
+            _route(
+                [
+                    _draft("graph_base", "graph"),
+                    _draft(
+                        "sql_next",
+                        "sql",
+                        depends_on=["graph_base"],
+                        bindings=bindings,
+                    ),
+                ]
+            ),
+            "question",
+            catalog=_catalog(),
+        )
+
+
+def test_binding_source_must_belong_to_the_producer_catalog() -> None:
+    with pytest.raises(ValueError, match="not owned by graph producer"):
+        parse_route_draft(
+            _route(
+                [
+                    _draft("graph_base", "graph"),
+                    _draft(
+                        "sql_next",
+                        "sql",
+                        depends_on=["graph_base"],
+                        bindings=[
+                            {
+                                "target": "values",
+                                "sourceSubqueryId": "graph_base",
+                                "sourceOutput": "standardCost",
+                            }
+                        ],
+                    ),
+                ]
+            ),
+            "question",
+            catalog=_catalog(),
+        )
+
+
+def test_binding_does_not_create_or_require_composition_join_keys() -> None:
+    parsed = parse_route_draft(
+        _route(
+            [
+                _draft("graph_base", "graph"),
+                _draft(
+                    "sql_next",
+                    "sql",
+                    depends_on=["graph_base"],
+                    bindings=[
+                        {
+                            "target": "names",
+                            "sourceSubqueryId": "graph_base",
+                            "sourceOutput": "componentName",
+                        }
+                    ],
+                ),
+            ]
+        ),
+        "question",
+        catalog=_catalog(),
+    )
+
+    assert parsed["subqueries"][0]["joinKeys"] == []
+    assert parsed["subqueries"][1]["joinKeys"] == []
 
 
 @pytest.mark.parametrize(
     ("subqueries", "message"),
     [
-        ([_step("same"), _step("same", tool="sql")], "중복"),
-        ([_step("sql", depends_on=["missing"])], "존재하지 않는"),
         (
-            [
-                _step(
-                    "a",
-                    depends_on=["b"],
-                    bindings={"ids": "b.componentId"},
-                ),
-                _step(
-                    "b",
-                    tool="sql",
-                    depends_on=["a"],
-                    bindings={"ids": "a.componentId"},
-                ),
-            ],
-            "순환",
+            [_draft("sql_one", "sql"), _draft("sql_two", "sql")],
+            "one subquery per source",
         ),
-        ([_step("bad", join_keys=["missing"])], "requiredOutputs"),
         (
             [
-                _step("graph"),
-                _step(
+                _draft(
+                    "sql_one",
                     "sql",
-                    tool="sql",
-                    depends_on=["graph"],
-                    bindings={"ids": "other.componentId"},
+                    depends_on=["graph_two"],
+                    bindings=[
+                        {
+                            "target": "values",
+                            "sourceSubqueryId": "graph_two",
+                            "sourceOutput": "productId",
+                        }
+                    ],
+                ),
+                _draft(
+                    "graph_two",
+                    "graph",
+                    depends_on=["sql_one"],
+                    bindings=[
+                        {
+                            "target": "values",
+                            "sourceSubqueryId": "sql_one",
+                            "sourceOutput": "productId",
+                        }
+                    ],
                 ),
             ],
-            "dependsOn",
-        ),
-        (
-            [
-                _step("graph"),
-                _step("sql", tool="sql", depends_on=["graph"]),
-            ],
-            "inputBindings",
+            "cyclic",
         ),
     ],
 )
-def test_validate_subqueries_rejects_invalid_contracts(
+def test_capability_boundary_rejects_duplicate_source_and_cycles(
     subqueries: list[dict], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        validate_subqueries(subqueries)
+        parse_route_draft(
+            _route(subqueries),
+            "question",
+            catalog=_catalog(),
+        )
 
 
-def test_parse_execution_plan_keeps_legacy_tool_plan_with_one_subquery() -> None:
-    result = parse_execution_plan('["sql"]', "원래 질문")
+def test_hybrid_join_keys_are_shared_identity_and_ordered_equally() -> None:
+    with pytest.raises(ValueError, match="shared identities"):
+        parse_route_draft(
+            _route(
+                [
+                    _draft("graph_base", "graph", join_keys=["categoryId"]),
+                    _draft("sql_next", "sql", join_keys=["categoryId"]),
+                ]
+            ),
+            "question",
+            catalog=_catalog(),
+            shared_join_aliases=_catalog().shared_join_aliases,
+        )
 
-    assert result["tool_plan"] == ["sql"]
-    assert len(result["subqueries"]) == 1
-    assert result["subqueries"][0]["question"] == "원래 질문"
-
-
-def test_route_binding_name_must_match_schema_identity_alias() -> None:
-    subqueries = [
-        {
-            "id": "graph_components",
-            "tool": "graph",
-            "question": "부품을 조회한다.",
-            "dependsOn": [],
-            "joinKeys": ["componentId"],
-        },
-        {
-            "id": "sql_stock",
-            "tool": "sql",
-            "question": "재고를 조회한다.",
-            "dependsOn": ["graph_components"],
-            "joinKeys": ["componentId"],
-            "inputBindings": {"productIds": "graph_components.componentId"},
-        },
-    ]
-
-    with pytest.raises(ValueError, match="binding 이름과 source alias"):
-        validate_route_subqueries(subqueries)
-
-
-def test_parse_route_draft_merges_binding_alias_into_both_join_keys() -> None:
-    content = """{
-      "tool_plan": ["graph", "sql"],
-      "subqueries": [
-        {
-          "id": "graph_supplier_impact",
-          "tool": "graph",
-          "question": "North Mill 공급 부품의 영향을 찾는다.",
-          "dependsOn": [],
-          "joinKeys": [],
-          "inputBindings": {}
-        },
-        {
-          "id": "sql_component_stock",
-          "tool": "sql",
-          "question": "앞 단계 부품의 재고를 찾는다.",
-          "dependsOn": ["graph_supplier_impact"],
-          "joinKeys": ["componentId"],
-          "inputBindings": {
-            "componentIds": "graph_supplier_impact.componentId"
-          }
-        }
-      ],
-      "resultTransform": null
-    }"""
-
-    result = parse_route_draft(content, "공급 중단 영향과 재고")
-
-    assert result["subqueries"][0]["joinKeys"] == ["componentId"]
-    assert result["subqueries"][1]["joinKeys"] == ["componentId"]
+    with pytest.raises(ValueError, match="same ordered aliases"):
+        parse_route_draft(
+            _route(
+                [
+                    _draft(
+                        "graph_base",
+                        "graph",
+                        join_keys=["componentId", "productId"],
+                    ),
+                    _draft(
+                        "sql_next",
+                        "sql",
+                        join_keys=["productId", "componentId"],
+                    ),
+                ]
+            ),
+            "question",
+            catalog=_catalog(),
+            shared_join_aliases=_catalog().shared_join_aliases,
+        )
 
 
-def test_route_schema_restricts_binding_value_to_matching_identity_alias() -> None:
-    schema = route_draft_json_schema({"componentId", "productId"})
-    variants = schema["properties"]["subqueries"]["items"]["properties"][
-        "inputBindings"
-    ]["anyOf"]
-    component_variant = next(
-        item for item in variants if "componentIds" in item["properties"]
-    )
-
-    assert component_variant["properties"]["componentIds"]["pattern"] == (
-        r"^[^.\s]+\.componentId$"
-    )
-
-
-def test_parse_execution_plan_rejects_tool_order_before_its_dependency() -> None:
-    content = """{
-      "tool_plan": ["sql", "graph"],
-      "subqueries": [
-        {
-          "id": "graph_impact",
-          "tool": "graph",
-          "question": "영향 부품을 찾는다.",
-          "dependsOn": [],
-          "requiredOutputs": ["componentId"],
-          "joinKeys": ["componentId"]
-        },
-        {
-          "id": "sql_stock",
-          "tool": "sql",
-          "question": "부품 재고를 찾는다.",
-          "dependsOn": ["graph_impact"],
-          "inputBindings": {"componentIds": "graph_impact.componentId"},
-          "requiredOutputs": ["componentId"],
-          "joinKeys": ["componentId"]
-        }
-      ]
-    }"""
-
-    with pytest.raises(ValueError, match="의존 실행 순서"):
-        parse_execution_plan(content, "복합 질문")
-
-
-def test_parse_execution_plan_rejects_more_than_one_subquery_for_same_tool() -> None:
-    content = """{
-      "tool_plan": ["sql"],
-      "subqueries": [
-        {
-          "id": "sql_price",
-          "tool": "sql",
-          "question": "가격을 찾는다.",
-          "dependsOn": [],
-          "requiredOutputs": ["productId", "listPrice"],
-          "joinKeys": []
-        },
-        {
-          "id": "sql_stock",
-          "tool": "sql",
-          "question": "재고를 찾는다.",
-          "dependsOn": [],
-          "requiredOutputs": ["productId", "actualStock"],
-          "joinKeys": []
-        }
-      ]
-    }"""
-
-    with pytest.raises(ValueError, match="도구 하나당 subquery"):
-        parse_execution_plan(content, "가격과 재고")
-
-
-def test_validate_subqueries_accepts_same_hybrid_join_keys_in_different_order() -> None:
-    result = validate_subqueries(
+def _shortage_route(production_qty: int | float = 10) -> str:
+    return _route(
         [
-            _step(
-                "graph",
-                outputs=["componentId", "supplierId"],
-                join_keys=["componentId", "supplierId"],
-            ),
-            _step(
+            _draft("graph_bom", "graph", join_keys=["componentId"]),
+            _draft(
+                "sql_stock",
                 "sql",
-                tool="sql",
-                outputs=["supplierId", "componentId"],
-                join_keys=["supplierId", "componentId"],
+                depends_on=["graph_bom"],
+                join_keys=["componentId"],
+                bindings=[
+                    {
+                        "target": "componentIds",
+                        "sourceSubqueryId": "graph_bom",
+                        "sourceOutput": "componentId",
+                    }
+                ],
             ),
-        ]
-    )
-
-    assert result[0]["joinKeys"] == ["componentId", "supplierId"]
-    assert result[1]["joinKeys"] == ["supplierId", "componentId"]
-
-
-@pytest.mark.parametrize(
-    ("subqueries", "message"),
-    [
-        (
-            [
-                _step("graph", join_keys=["componentId"]),
-                _step("sql", tool="sql"),
-            ],
-            "모두 지정하거나 모두 비워야",
-        ),
-        (
-            [
-                _step("graph", join_keys=["componentId"]),
-                _step(
-                    "sql",
-                    tool="sql",
-                    outputs=["supplierId"],
-                    join_keys=["supplierId"],
-                ),
-            ],
-            "구성이 일치",
-        ),
-        (
-            [
-                _step("graph"),
-                _step(
-                    "sql",
-                    tool="sql",
-                    depends_on=["graph"],
-                    bindings={"ids": "graph.componentId"},
-                ),
-            ],
-            "공통 joinKeys",
-        ),
-        (
-            [
-                _step("graph", join_keys=["componentId"]),
-                _step(
-                    "sql",
-                    tool="sql",
-                    depends_on=["graph"],
-                    outputs=["componentId", "supplierId"],
-                    join_keys=["supplierId"],
-                    bindings={"ids": "graph.componentId"},
-                ),
-            ],
-            "선행 단계에 없습니다",
-        ),
-    ],
-)
-def test_validate_subqueries_rejects_invalid_hybrid_join_contracts(
-    subqueries: list[dict[str, Any]], message: str
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        validate_subqueries(subqueries)
-
-
-def test_validate_subqueries_keeps_single_and_legacy_hybrid_compatible() -> None:
-    single = validate_subqueries([_step("sql", tool="sql", join_keys=["componentId"])])
-    legacy = parse_execution_plan('["sql", "graph"]', "독립 복합 질문")
-
-    assert single[0]["joinKeys"] == ["componentId"]
-    assert [item["joinKeys"] for item in legacy["subqueries"]] == [[], []]
-
-
-def test_object_plan_requires_all_canonical_outputs_but_legacy_can_be_empty() -> None:
-    content = """{
-      "tool_plan": ["sql"],
-      "subqueries": [{
-        "id": "sql_stock",
-        "tool": "sql",
-        "question": "재고를 조회한다.",
-        "dependsOn": [],
-        "requiredOutputs": [],
-        "joinKeys": [],
-        "inputBindings": {}
-      }]
-    }"""
-
-    with pytest.raises(ValueError, match="requiredOutputs는 비어 있을 수 없습니다"):
-        parse_execution_plan(content, "재고")
-
-    assert (
-        parse_execution_plan('["sql"]', "재고")["subqueries"][0]["requiredOutputs"]
-        == []
+        ],
+        {"type": "bom_shortage_v1", "productionQty": production_qty},
     )
 
 
-def _shortage_steps() -> list[dict[str, Any]]:
-    return [
-        _step(
-            "graph_bom",
-            outputs=sorted(BOM_SHORTAGE_GRAPH_OUTPUTS),
-            join_keys=["componentId"],
-        ),
-        _step(
-            "sql_stock",
-            tool="sql",
-            depends_on=["graph_bom"],
-            outputs=sorted(BOM_SHORTAGE_SQL_OUTPUTS),
-            join_keys=["componentId"],
-            bindings={"componentIds": "graph_bom.componentId"},
-        ),
-    ]
-
-
-def test_bom_shortage_transform_requires_exact_allowlisted_plan() -> None:
-    steps = validate_subqueries(_shortage_steps())
+def test_bom_shortage_route_and_execution_contract_come_from_catalog() -> None:
+    parsed = parse_route_draft(
+        _shortage_route(),
+        "완제품을 10개 생산",
+        catalog=_catalog(),
+        shared_join_aliases=_catalog().shared_join_aliases,
+    )
+    spec = _catalog().transform("bom_shortage_v1")
+    execution = []
+    for item in parsed["subqueries"]:
+        tool = cast(ToolName, item["tool"])
+        execution.append(
+            {
+                **item,
+                "requiredOutputs": list(spec.required_outputs[tool]),
+            }
+        )
+    validated = validate_subqueries(execution)
 
     assert validate_result_transform(
-        {"type": "bom_shortage_v1", "productionQty": 10}, steps
+        parsed["resultTransform"], validated, catalog=_catalog()
     ) == {"type": "bom_shortage_v1", "productionQty": 10}
+    assert spec.output_scale == 6
 
 
-@pytest.mark.parametrize("production_qty", [True, 0, -1, float("inf"), float("nan")])
-def test_bom_shortage_transform_rejects_invalid_production_quantity(
-    production_qty: Any,
-) -> None:
-    steps = validate_subqueries(_shortage_steps())
-
-    with pytest.raises(ValueError, match="유한한 양수"):
-        validate_result_transform(
-            {"type": "bom_shortage_v1", "productionQty": production_qty}, steps
+def test_bom_shortage_quantity_mismatch_fails_closed() -> None:
+    with pytest.raises(ValueError, match="does not match"):
+        parse_route_draft(
+            _shortage_route(12),
+            "완제품을 10개 생산",
+            catalog=_catalog(),
+            shared_join_aliases=_catalog().shared_join_aliases,
         )
 
 
-def test_bom_shortage_transform_rejects_wrong_binding_contract() -> None:
-    steps = _shortage_steps()
-    steps[1]["inputBindings"] = {"componentIds": "graph_bom.componentName"}
-    validated = validate_subqueries(steps)
+def test_legacy_array_tool_plan_and_silent_join_recovery_are_rejected() -> None:
+    with pytest.raises(ValueError, match="only subqueries"):
+        parse_route_draft('["sql"]', "question", catalog=_catalog())
 
-    with pytest.raises(ValueError, match="componentIds binding"):
-        validate_result_transform(
-            {"type": "bom_shortage_v1", "productionQty": 10}, validated
+    raw = json.loads(_shortage_route())
+    raw["subqueries"][0]["joinKeys"] = []
+    raw["subqueries"][1]["joinKeys"] = []
+    with pytest.raises(ValueError, match="join key"):
+        parse_route_draft(
+            json.dumps(raw),
+            "완제품을 10개 생산",
+            catalog=_catalog(),
         )
+
+
+def test_route_and_execution_parsers_reject_unknown_fields() -> None:
+    route = _draft("sql_query", "sql")
+    route["requiredOutputs"] = ["productId"]
+    with pytest.raises(ValueError, match="route boundary fields"):
+        parse_route_draft(_route([route]), "question", catalog=_catalog())
+
+    execution = {
+        **_draft("sql_query", "sql"),
+        "requiredOutputs": ["productId"],
+        "unexpected": True,
+    }
+    execution.pop("inputBindings")
+    with pytest.raises(ValueError, match="unknown execution fields"):
+        validate_subqueries([execution])
+
+
+def test_derive_tool_plan_is_a_pure_dag_projection() -> None:
+    execution: list[Subquery] = [
+        {
+            "id": "graph_first",
+            "tool": "graph",
+            "question": "graph",
+            "dependsOn": [],
+            "requiredOutputs": ["productId"],
+            "joinKeys": [],
+        },
+        {
+            "id": "sql_second",
+            "tool": "sql",
+            "question": "sql",
+            "dependsOn": ["graph_first"],
+            "requiredOutputs": ["productId"],
+            "joinKeys": [],
+            "inputBindings": {"ids": "graph_first.productId"},
+        },
+    ]
+
+    assert derive_tool_plan(execution) == ["graph", "sql"]

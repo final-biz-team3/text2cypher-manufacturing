@@ -373,18 +373,20 @@ def test_invalid_route_plan_keeps_the_model_response_for_review() -> None:
     runner.manifest = manifest
     runner.resolve_entity = lambda state: {"entity": None}
 
+    raw_response = '{"subqueries":[],"resultTransform":null}'
+
     def invalid_route(state: OrchestratorState) -> dict[str, Any]:
-        raise RoutePlanError("invalid join key", '{"tool_plan":["sql"]}')
+        raise RoutePlanError("invalid join key", raw_response)
 
     runner.route_query = invalid_route
 
     record = runner._evaluate_case(case, 1)
 
     assert record["planningError"] == "invalid join key"
-    assert record["planningResponse"] == '{"tool_plan":["sql"]}'
-    assert record["toolPlan"] == ["sql"]
-    assert record["checks"]["routing"] is True
+    assert record["planningResponse"] == raw_response
+    assert record["toolPlan"] is None
+    assert record["checks"]["routing"] is False
     assert record["checks"]["split"] is False
-    assert "ROUTE_MISMATCH" not in record["failureReasons"]
+    assert "ROUTE_MISMATCH" in record["failureReasons"]
     assert "SUBQUERY_INTEGRATION_CONTRACT_MISMATCH" in record["failureReasons"]
     assert record["status"] == "FAIL"

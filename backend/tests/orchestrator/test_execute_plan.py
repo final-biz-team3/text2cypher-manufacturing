@@ -232,13 +232,13 @@ async def test_execute_plan_fails_safely_for_invalid_input_binding_row() -> None
 
     assert sql_agent.calls == []
     assert result["sql_query"] is None
-    assert result["sql_result"] == {
-        "result": None,
-        "error": "하위 질의 입력 계획이 유효하지 않아 실행하지 않았습니다.",
-        "attempts": [],
-        "empty_reason": None,
-        "truncated": False,
-    }
+    assert result["sql_result"]["result"] is None
+    assert result["sql_result"]["error"] == (
+        "하위 질의 입력 계획이 유효하지 않아 실행하지 않았습니다."
+    )
+    assert result["sql_result"]["attempts"] == []
+    assert result["sql_result"]["failure"]["code"] == "INPUT_BINDING_INVALID"
+    assert result["sql_result"]["failure"]["dependent_failure"] is True
     assert "componentId" not in result["sql_result"]["error"]
 
 

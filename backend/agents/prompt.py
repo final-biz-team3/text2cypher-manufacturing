@@ -32,6 +32,7 @@ def build_prompt_messages(
     query: str,
     entity: object | None,
     schema_text: str,
+    semantic_context: str = "",
     business_rules: Sequence[str] = (),
     required_outputs: Sequence[str] = (),
     input_bindings: dict[str, list[Any]] | None = None,
@@ -45,6 +46,9 @@ def build_prompt_messages(
         instructions.strip(),
         f"Schema:\n{schema_text.strip()}",
     ]
+
+    if semantic_context.strip():
+        system_sections.append("Semantic output catalog:\n" + semantic_context.strip())
 
     if business_rules:
         formatted_rules = "\n".join(f"- {rule}" for rule in business_rules)
