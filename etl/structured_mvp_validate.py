@@ -76,11 +76,6 @@ def find_rows_with_null_key(
     return [row for row in rows if any(row[col] is None for col in key_columns)]
 
 
-def counts_are_equal(first: dict[str, int], second: dict[str, int]) -> bool:
-    """두 스냅샷의 라벨/관계타입별 건수가 완전히 같은지 비교한다(멱등성 재검증용)."""
-    return first == second
-
-
 def count_nodes_by_label(
     driver: Driver,
     labels: list[str],

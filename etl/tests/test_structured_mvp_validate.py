@@ -1,7 +1,6 @@
 """관계 적재 전 참조 무결성 검사(순수 함수, DB 접속 없이 메모리에서 계산)."""
 
 from structured_mvp_validate import (
-    counts_are_equal,
     find_dangling_relationship_rows,
     find_duplicate_key_rows,
     find_rows_with_null_key,
@@ -52,20 +51,6 @@ def test_finds_relationship_row_whose_to_key_is_missing() -> None:
     )
 
     assert dangling == [{"workOrderId": 17747, "scrapReasonId": 999}]
-
-
-def test_counts_are_equal_true_for_identical_snapshots() -> None:
-    first = {"Product": 504, "Supplier": 104}
-    second = {"Product": 504, "Supplier": 104}
-
-    assert counts_are_equal(first, second) is True
-
-
-def test_counts_are_equal_false_when_any_count_differs() -> None:
-    first = {"Product": 504, "Supplier": 104}
-    second = {"Product": 504, "Supplier": 103}
-
-    assert counts_are_equal(first, second) is False
 
 
 def test_quantities_match_true_for_exact_value() -> None:
