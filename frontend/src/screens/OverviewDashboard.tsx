@@ -7,6 +7,7 @@ import { AnalysisCard } from '@/components/dashboard/AnalysisCard'
 import { DashboardRiskPanel } from '@/components/dashboard/DashboardRiskPanel'
 import { PriorityMetrics, SecondaryMetrics } from '@/components/dashboard/DashboardMetrics'
 import { DashboardDrawer } from '@/components/dashboard/DashboardDrawer'
+import { ProcessOverviewSection } from '@/components/dashboard/ProcessOverviewSection'
 import { formatSnapshotDateTime } from '@/components/dashboard/dashboardFormatters'
 import { Button } from '@/components/ui/button'
 import { fetchDashboardOverview, type DashboardCard } from '@/lib/dashboard'
@@ -163,7 +164,7 @@ export function OverviewDashboard() {
           onNavigateDashboard={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
           onNavigateChat={() => goToChat()}
         />
-        <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
+        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
           <div className="mx-auto w-full max-w-[1600px]">
             <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -175,14 +176,14 @@ export function OverviewDashboard() {
                         데이터 동기화 {formatSnapshotDateTime(overview.snapshot.syncedAt)}
                       </span>
                       <span className="rounded-sm border border-border bg-panel px-2 py-1 text-[10px] text-text-muted">
-                        BOM 기준 {overview.snapshot.bomAsOfDate}
+                        BOM 관계 유효 기준 {overview.snapshot.bomAsOfDate}
                       </span>
                     </>
                   ) : null}
                 </div>
                 <p className="mt-1 text-[11.5px] text-text-muted">
                   {overview
-                    ? `${overview.snapshot.scope}로 제품·재고·공급업체·작업지시 정보를 조회합니다.`
+                    ? `집계 범위: ${overview.snapshot.scope}. 제품·재고·공급업체 정보는 전체 적재 데이터를 사용합니다.`
                     : 'AdventureWorks 전체 데이터 스냅샷을 불러오는 중입니다.'}
                 </p>
               </div>
@@ -229,6 +230,13 @@ export function OverviewDashboard() {
                     일부 항목을 불러오지 못했습니다. 표시된 다른 항목은 계속 사용할 수 있습니다.
                   </p>
                 ) : null}
+                <ProcessOverviewSection />
+                <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-5">
+                  <h2 className="text-[15px] font-semibold text-text">전체 데이터 분석</h2>
+                  <span className="rounded-sm border border-border bg-panel px-2 py-1 text-[10px] text-text-muted">
+                    전체 적재 데이터
+                  </span>
+                </div>
                 <section className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(380px,0.9fr)]">
                   {primaryCard ? (
                     <AnalysisCard

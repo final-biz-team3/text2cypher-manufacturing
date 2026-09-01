@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DashboardOverviewSchema, EntityDetailSchema } from './dashboard'
+import { DashboardOverviewSchema, EntityDetailSchema, ProcessOverviewSchema } from './dashboard'
 
 describe('DashboardOverviewSchema', () => {
   it('accepts partial failure without discarding ready cards', () => {
@@ -61,5 +61,31 @@ describe('EntityDetailSchema', () => {
 
     expect(parsed.groups[0].fields[0].value).toEqual([{ locationId: 1, quantity: 8 }])
     expect(parsed.actions[0].question).toContain('재고')
+  })
+})
+
+describe('ProcessOverviewSchema', () => {
+  it('accepts period metrics, trend rows, and location rankings', () => {
+    const parsed = ProcessOverviewSchema.parse({
+      availableRange: { from: '2011-06-03', to: '2014-06-28' },
+      period: { from: '2014-05-30', to: '2014-06-28', granularity: 'day' },
+      kpis: [{ key: 'operationCount', label: '수행 공정', value: 10, unit: '건', status: 'ready' }],
+      trend: [
+        {
+          date: '2014-05-30',
+          startedWorkOrderCount: 2,
+          completedWorkOrderCount: 1,
+          scrappedQty: 3,
+        },
+      ],
+      locations: [
+        { locationId: 10, locationName: 'Frame Forming', operationCount: 4, workOrderCount: 2 },
+      ],
+      errors: [],
+    })
+
+    expect(parsed.period.granularity).toBe('day')
+    expect(parsed.trend[0].scrappedQty).toBe(3)
+    expect(parsed.locations[0].operationCount).toBe(4)
   })
 })

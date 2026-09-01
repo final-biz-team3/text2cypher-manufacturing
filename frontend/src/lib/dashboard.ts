@@ -39,6 +39,33 @@ export const DashboardOverviewSchema = z.object({
   errors: z.array(z.object({ key: z.string(), code: z.string(), message: z.string() })),
 })
 
+export const ProcessOverviewSchema = z.object({
+  availableRange: z.object({ from: z.string(), to: z.string() }),
+  period: z.object({
+    from: z.string(),
+    to: z.string(),
+    granularity: z.enum(['day', 'month']),
+  }),
+  kpis: z.array(DashboardKpiSchema),
+  trend: z.array(
+    z.object({
+      date: z.string(),
+      startedWorkOrderCount: z.number(),
+      completedWorkOrderCount: z.number(),
+      scrappedQty: z.number(),
+    }),
+  ),
+  locations: z.array(
+    z.object({
+      locationId: z.number(),
+      locationName: z.string(),
+      operationCount: z.number(),
+      workOrderCount: z.number(),
+    }),
+  ),
+  errors: z.array(z.object({ key: z.string(), code: z.string(), message: z.string() })),
+})
+
 const EntityFieldSchema = z.object({
   key: z.string(),
   label: z.string(),
@@ -71,11 +98,20 @@ export const EntityNeighborsSchema = z.object({
 export type DashboardOverview = z.infer<typeof DashboardOverviewSchema>
 export type DashboardCard = z.infer<typeof DashboardCardSchema>
 export type DashboardKpi = z.infer<typeof DashboardKpiSchema>
+export type ProcessOverview = z.infer<typeof ProcessOverviewSchema>
 export type EntityDetail = z.infer<typeof EntityDetailSchema>
 
 export async function fetchDashboardOverview(signal?: AbortSignal): Promise<DashboardOverview> {
   const response = await api.get('/dashboard/overview', { signal })
   return DashboardOverviewSchema.parse(response.data)
+}
+
+export async function fetchProcessOverview(
+  period: { from?: string; to?: string } = {},
+  signal?: AbortSignal,
+): Promise<ProcessOverview> {
+  const response = await api.get('/dashboard/process-overview', { params: period, signal })
+  return ProcessOverviewSchema.parse(response.data)
 }
 
 export async function fetchDashboardCard(
