@@ -5,21 +5,21 @@ import {
   CheckCircle2,
   Factory,
   LoaderCircle,
-  Minus,
   PlayCircle,
-  Plus,
   RotateCcw,
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { fetchProcessOverview, type DashboardKpi, type ProcessOverview } from '@/lib/dashboard'
+import {
+  fetchProcessOverview,
+  type DashboardKpi,
+  type ProcessGranularity,
+  type ProcessOverview,
+} from '@/lib/dashboard'
 
 const CHART_WIDTH = 720
 const CHART_HEIGHT = 236
 const CHART_PADDING = { top: 18, right: 18, bottom: 34, left: 44 }
-const CHART_MIN_ZOOM = 100
-const CHART_MAX_ZOOM = 200
-const CHART_ZOOM_STEP = 10
 
 const KPI_ICONS = {
   startedWorkOrderCount: PlayCircle,
@@ -31,62 +31,18 @@ const KPI_ICONS = {
 
 type Preset = '7d' | '30d' | '90d' | 'all'
 
-function ChartZoomControls({
-  label,
-  zoomPercent,
-  onZoomChange,
-}: {
-  label: string
-  zoomPercent: number
-  onZoomChange: (zoomPercent: number) => void
-}) {
-  return (
-    <div
-      className="flex items-center rounded-[4px] border border-border bg-panel-2 p-0.5"
-      aria-label={`${label} 확대 및 축소`}
-      role="group"
-    >
-      <button
-        type="button"
-        onClick={() => onZoomChange(Math.max(CHART_MIN_ZOOM, zoomPercent - CHART_ZOOM_STEP))}
-        disabled={zoomPercent <= CHART_MIN_ZOOM}
-        className="grid size-6 place-items-center rounded-[3px] text-text-muted transition-colors hover:bg-panel hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info disabled:opacity-35"
-        aria-label={`${label} 축소`}
-        title="축소"
-      >
-        <Minus className="size-3" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        onClick={() => onZoomChange(CHART_MIN_ZOOM)}
-        disabled={zoomPercent === CHART_MIN_ZOOM}
-        className="h-6 min-w-11 rounded-[3px] px-1.5 text-[10px] font-medium tabular-nums text-text-muted transition-colors hover:bg-panel hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info disabled:opacity-70"
-        aria-label={`${label} 배율 100%로 초기화`}
-        title="100%로 초기화"
-      >
-        {zoomPercent}%
-      </button>
-      <button
-        type="button"
-        onClick={() => onZoomChange(Math.min(CHART_MAX_ZOOM, zoomPercent + CHART_ZOOM_STEP))}
-        disabled={zoomPercent >= CHART_MAX_ZOOM}
-        className="grid size-6 place-items-center rounded-[3px] text-text-muted transition-colors hover:bg-panel hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info disabled:opacity-35"
-        aria-label={`${label} 확대`}
-        title="확대"
-      >
-        <Plus className="size-3" aria-hidden="true" />
-      </button>
-    </div>
-  )
-}
-
 function addDays(value: string, days: number): string {
   const next = new Date(`${value}T00:00:00Z`)
   next.setUTCDate(next.getUTCDate() + days)
   return next.toISOString().slice(0, 10)
 }
 
-function formatPeriodDate(value: string, granularity: 'day' | 'month'): string {
+function granularityLabel(granularity: ProcessGranularity): string {
+  return { day: '일별', month: '월별', year: '연도별' }[granularity]
+}
+
+function formatPeriodDate(value: string, granularity: ProcessGranularity): string {
+  if (granularity === 'year') return value.slice(0, 4)
   if (granularity === 'month') return value.slice(0, 7).replace('-', '.')
   const date = new Date(`${value}T00:00:00Z`)
   return new Intl.DateTimeFormat('ko-KR', {
@@ -120,10 +76,8 @@ function ProcessMetric({ kpi }: { kpi: DashboardKpi }) {
 }
 
 function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
-  const [zoomPercent, setZoomPercent] = useState(CHART_MIN_ZOOM)
   const rows = data.trend
-  const chartWidth = (CHART_WIDTH * zoomPercent) / 100
-  const plotWidth = chartWidth - CHART_PADDING.left - CHART_PADDING.right
+  const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
   const maxValue = Math.max(
     1,
@@ -143,35 +97,24 @@ function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
         <div>
           <h3 className="text-[13px] font-semibold text-text">작업지시 시작·완료 추이</h3>
           <p className="mt-0.5 text-[10.5px] text-text-muted">
-            {data.period.granularity === 'day' ? '일별 집계' : '월별 집계'}
+            {granularityLabel(data.period.granularity)} 집계
           </p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <div className="flex gap-3 text-[10.5px] text-text-muted" aria-hidden="true">
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-info" /> 시작
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-success" /> 완료
-            </span>
-          </div>
-          <ChartZoomControls
-            label="작업지시 추이 차트"
-            zoomPercent={zoomPercent}
-            onZoomChange={setZoomPercent}
-          />
+        <div className="flex gap-3 text-[10.5px] text-text-muted" aria-hidden="true">
+          <span className="flex items-center gap-1.5">
+            <span className="size-2 rounded-full bg-info" /> 시작
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="size-2 rounded-full bg-success" /> 완료
+          </span>
         </div>
       </div>
-      <div
-        className="mt-3 aspect-[720/236] overflow-x-auto overflow-y-hidden overscroll-x-contain"
-        data-testid="work-order-trend-chart-viewport"
-      >
+      <div className="mt-3 aspect-[720/236] w-full overflow-hidden">
         <svg
-          className="h-auto max-w-none overflow-visible transition-[width] duration-150 motion-reduce:transition-none"
-          style={{ width: `${zoomPercent}%` }}
-          viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}
+          className="block size-full"
+          viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
           role="img"
-          aria-label={`선택 기간의 작업지시 시작 및 완료 추이, ${zoomPercent}% 확대`}
+          aria-label={`선택 기간의 작업지시 시작 및 완료 ${granularityLabel(data.period.granularity)} 추이`}
         >
           {[0, 0.5, 1].map((ratio) => {
             const gridY = CHART_PADDING.top + plotHeight * ratio
@@ -180,7 +123,7 @@ function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
               <g key={ratio}>
                 <line
                   x1={CHART_PADDING.left}
-                  x2={chartWidth - CHART_PADDING.right}
+                  x2={CHART_WIDTH - CHART_PADDING.right}
                   y1={gridY}
                   y2={gridY}
                   stroke="var(--border)"
@@ -259,10 +202,8 @@ function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
 }
 
 function ScrapTrendChart({ data }: { data: ProcessOverview }) {
-  const [zoomPercent, setZoomPercent] = useState(CHART_MIN_ZOOM)
   const rows = data.trend
-  const chartWidth = (CHART_WIDTH * zoomPercent) / 100
-  const plotWidth = chartWidth - CHART_PADDING.left - CHART_PADDING.right
+  const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
   const maxValue = Math.max(1, ...rows.map((row) => row.scrappedQty))
   const slotWidth = rows.length > 0 ? plotWidth / rows.length : plotWidth
@@ -271,27 +212,18 @@ function ScrapTrendChart({ data }: { data: ProcessOverview }) {
 
   return (
     <section className="min-w-0 rounded-[5px] border border-border bg-panel p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-[13px] font-semibold text-text">폐기수량 추이</h3>
-          <p className="mt-0.5 text-[10.5px] text-text-muted">작업지시 완료일 기준</p>
-        </div>
-        <ChartZoomControls
-          label="폐기수량 추이 차트"
-          zoomPercent={zoomPercent}
-          onZoomChange={setZoomPercent}
-        />
+      <div>
+        <h3 className="text-[13px] font-semibold text-text">폐기수량 추이</h3>
+        <p className="mt-0.5 text-[10.5px] text-text-muted">
+          작업지시 완료일 기준 · {granularityLabel(data.period.granularity)} 집계
+        </p>
       </div>
-      <div
-        className="mt-3 aspect-[720/236] overflow-x-auto overflow-y-hidden overscroll-x-contain"
-        data-testid="scrap-trend-chart-viewport"
-      >
+      <div className="mt-3 aspect-[720/236] w-full overflow-hidden">
         <svg
-          className="h-auto max-w-none overflow-visible transition-[width] duration-150 motion-reduce:transition-none"
-          style={{ width: `${zoomPercent}%` }}
-          viewBox={`0 0 ${chartWidth} ${CHART_HEIGHT}`}
+          className="block size-full"
+          viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
           role="img"
-          aria-label={`선택 기간의 폐기수량 추이, ${zoomPercent}% 확대`}
+          aria-label={`선택 기간의 ${granularityLabel(data.period.granularity)} 폐기수량 추이`}
         >
           {[0, 0.5, 1].map((ratio) => {
             const gridY = CHART_PADDING.top + plotHeight * ratio
@@ -299,7 +231,7 @@ function ScrapTrendChart({ data }: { data: ProcessOverview }) {
               <g key={ratio}>
                 <line
                   x1={CHART_PADDING.left}
-                  x2={chartWidth - CHART_PADDING.right}
+                  x2={CHART_WIDTH - CHART_PADDING.right}
                   y1={gridY}
                   y2={gridY}
                   stroke="var(--border)"
@@ -396,21 +328,29 @@ export function ProcessOverviewSection() {
   const [data, setData] = useState<ProcessOverview | null>(null)
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
+  const [granularity, setGranularity] = useState<ProcessGranularity>('day')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
 
-  const load = (period?: { from: string; to: string }) => {
+  const load = (
+    options: {
+      from?: string
+      to?: string
+      granularity?: ProcessGranularity
+    } = {},
+  ) => {
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
     setLoading(true)
     setError(null)
-    fetchProcessOverview(period, controller.signal)
+    fetchProcessOverview(options, controller.signal)
       .then((next) => {
         setData(next)
         setFromDate(next.period.from)
         setToDate(next.period.to)
+        setGranularity(next.period.granularity)
       })
       .catch((fetchError: unknown) => {
         if (!controller.signal.aborted) {
@@ -431,6 +371,7 @@ export function ProcessOverviewSection() {
         setData(next)
         setFromDate(next.period.from)
         setToDate(next.period.to)
+        setGranularity(next.period.granularity)
       })
       .catch((fetchError: unknown) => {
         if (!controller.signal.aborted) {
@@ -465,12 +406,22 @@ export function ProcessOverviewSection() {
       preset === 'all'
         ? data.availableRange.from
         : addDays(to, -(preset === '7d' ? 6 : preset === '30d' ? 29 : 89))
-    load({ from: from < data.availableRange.from ? data.availableRange.from : from, to })
+    load({
+      from: from < data.availableRange.from ? data.availableRange.from : from,
+      to,
+      granularity,
+    })
   }
 
   const submitPeriod = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (fromDate && toDate) load({ from: fromDate, to: toDate })
+    if (fromDate && toDate) load({ from: fromDate, to: toDate, granularity })
+  }
+
+  const applyGranularity = (nextGranularity: ProcessGranularity) => {
+    if (fromDate && toDate) {
+      load({ from: fromDate, to: toDate, granularity: nextGranularity })
+    }
   }
 
   return (
@@ -483,7 +434,7 @@ export function ProcessOverviewSection() {
             </h2>
             {data ? (
               <span className="rounded-sm border border-border bg-panel px-2 py-1 text-[10px] text-text-muted">
-                {data.period.granularity === 'day' ? '일별' : '월별'} 집계
+                {granularityLabel(data.period.granularity)} 집계
               </span>
             ) : null}
           </div>
@@ -497,6 +448,31 @@ export function ProcessOverviewSection() {
           className="flex flex-wrap items-end gap-2"
           aria-label="공정 기간 선택"
         >
+          <fieldset className="grid gap-1" disabled={!data || loading}>
+            <legend className="text-[10px] text-text-muted">집계 기준</legend>
+            <div
+              className="flex rounded-[4px] border border-border bg-panel p-0.5"
+              aria-label="공정 집계 기준"
+            >
+              {(
+                [
+                  ['day', '일'],
+                  ['month', '월'],
+                  ['year', '년'],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => applyGranularity(value)}
+                  aria-pressed={granularity === value}
+                  className="min-w-8 rounded-[3px] px-2 py-1.5 text-[10.5px] font-medium text-text-muted transition-colors hover:text-text aria-pressed:bg-accent-bg aria-pressed:text-info disabled:opacity-50"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <div className="flex rounded-[4px] border border-border bg-panel p-0.5">
             {(
               [

@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { api } from './api'
 
+export type ProcessGranularity = 'day' | 'month' | 'year'
+
 const DashboardKpiSchema = z.object({
   key: z.string(),
   label: z.string(),
@@ -44,7 +46,7 @@ export const ProcessOverviewSchema = z.object({
   period: z.object({
     from: z.string(),
     to: z.string(),
-    granularity: z.enum(['day', 'month']),
+    granularity: z.enum(['day', 'month', 'year']),
   }),
   kpis: z.array(DashboardKpiSchema),
   trend: z.array(
@@ -107,7 +109,7 @@ export async function fetchDashboardOverview(signal?: AbortSignal): Promise<Dash
 }
 
 export async function fetchProcessOverview(
-  period: { from?: string; to?: string } = {},
+  period: { from?: string; to?: string; granularity?: ProcessGranularity } = {},
   signal?: AbortSignal,
 ): Promise<ProcessOverview> {
   const response = await api.get('/dashboard/process-overview', { params: period, signal })
