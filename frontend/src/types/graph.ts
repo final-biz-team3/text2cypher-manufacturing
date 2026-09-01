@@ -5,6 +5,9 @@ export type GraphPropertyValue = unknown
 export interface GraphNodeAttributes extends Attributes {
   label: string
   category: string
+  categoryLabel: string
+  displayTitle: string
+  displayMeta: string
   color: string
   size: number
   x: number

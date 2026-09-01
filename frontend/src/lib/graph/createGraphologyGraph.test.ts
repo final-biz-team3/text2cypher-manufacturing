@@ -118,4 +118,17 @@ describe('Neo4j API to Graphology adapter', () => {
       expect(Number.isFinite(attributes.y)).toBe(true)
     })
   })
+
+  it('pairs product path identifiers with their product names', () => {
+    const graph = createGraphologyGraph([
+      {
+        productIdPath: [316, 747, 680],
+        productNamePath: ['Blade', 'HL Mountain Frame', 'HL Road Frame'],
+      },
+    ]).graph
+
+    expect(graph.getNodeAttribute('Product:316', 'label')).toBe('Blade')
+    expect(graph.getNodeAttribute('Product:747', 'displayTitle')).toBe('HL Mountain Frame')
+    expect(graph.getNodeAttribute('Product:680', 'displayMeta')).toBe('ID 680')
+  })
 })

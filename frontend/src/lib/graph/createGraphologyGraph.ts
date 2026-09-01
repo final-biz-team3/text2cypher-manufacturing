@@ -1,6 +1,7 @@
 import { MultiDirectedGraph } from 'graphology'
 import circular from 'graphology-layout/circular'
 import { colorForCategory } from './graphStyle'
+import { createGraphNodePresentation } from './graphNodePresentation'
 import type {
   GraphAttributes,
   GraphBuildIssue,
@@ -68,6 +69,12 @@ const RELATIONSHIP_INFERENCE: readonly {
   { source: 'routingOperationKey', target: 'locationId', type: 'PERFORMED_AT' },
   { source: 'workOrderId', target: 'scrapReasonId', type: 'SCRAPPED_DUE_TO' },
 ]
+
+const PRODUCT_PATH_NAME_FIELDS: Record<string, readonly string[]> = {
+  pathProductIds: ['pathProductNames', 'productNamePath'],
+  productIds: ['productNames', 'productNamePath'],
+  productIdPath: ['productNamePath', 'pathProductNames'],
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -169,6 +176,7 @@ export function normalizeGraphNode(
     firstText(properties, ['name', ...uniqueFields]) ??
     String(rawId)
   const key = stableNodeKey(category, rawId)
+  const presentation = createGraphNodePresentation(category, label, properties)
 
   return {
     key,
@@ -176,8 +184,9 @@ export function normalizeGraphNode(
     attributes: {
       label,
       category,
+      ...presentation,
       color: typeof input.color === 'string' ? input.color : colorForCategory(category),
-      size: finiteNumber(input.size) ?? 3.4,
+      size: finiteNumber(input.size) ?? 4.8,
       x: x ?? 0,
       y: y ?? 0,
       originalId: String(rawId),
@@ -285,15 +294,26 @@ function extractKnownRowEntities(
   for (const pathField of ['pathProductIds', 'productIds', 'productIdPath']) {
     const path = row[pathField]
     if (!Array.isArray(path)) continue
-    const pathIds = path.filter(isIdentifier)
-    pathIds.forEach((id) => {
-      const node = normalizeGraphNode({ properties: { productId: id } }, 'Product', id)
+    const namePath = PRODUCT_PATH_NAME_FIELDS[pathField]
+      .map((field) => row[field])
+      .find(Array.isArray)
+    const pathEntries = path.flatMap((id, index) => {
+      if (!isIdentifier(id)) return []
+      const candidateName = namePath?.[index]
+      return [{ id, name: typeof candidateName === 'string' ? candidateName : undefined }]
+    })
+    pathEntries.forEach(({ id, name }) => {
+      const node = normalizeGraphNode(
+        { properties: { productId: id, ...(name ? { name } : {}) } },
+        'Product',
+        id,
+      )
       if (node) nodes.push(node)
     })
-    for (let index = 0; index < pathIds.length - 1; index += 1) {
+    for (let index = 0; index < pathEntries.length - 1; index += 1) {
       edges.push({
-        source: stableNodeKey('Product', pathIds[index]),
-        target: stableNodeKey('Product', pathIds[index + 1]),
+        source: stableNodeKey('Product', pathEntries[index].id),
+        target: stableNodeKey('Product', pathEntries[index + 1].id),
         relationshipType: 'REQUIRES_COMPONENT',
         attributes: {
           label: 'REQUIRES_COMPONENT',

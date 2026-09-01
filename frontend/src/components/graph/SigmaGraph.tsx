@@ -15,7 +15,9 @@ import type { MultiDirectedGraph } from 'graphology'
 import { Button } from '@/components/ui/button'
 import { EntityDetailContent } from '@/components/dashboard/EntityDetailContent'
 import { createGraphologyGraph } from '@/lib/graph/createGraphologyGraph'
+import { drawGraphNodeHover, drawGraphNodeLabel } from '@/lib/graph/graphNodePresentation'
 import { fetchEntityDetail, type EntityDetail } from '@/lib/dashboard'
+import { useUiStore } from '@/store/useUiStore'
 import type { GraphAttributes, GraphEdgeAttributes, GraphNodeAttributes } from '@/types/graph'
 
 type SigmaGraphologyGraph = MultiDirectedGraph<
@@ -43,12 +45,14 @@ interface SearchEntry {
   node: string
   label: string
   category: string
+  categoryLabel: string
   color: string
   searchableText: string
 }
 
 interface CategorySummary {
   category: string
+  label: string
   color: string
   total: number
 }
@@ -79,6 +83,7 @@ interface GraphRuntimeProps {
   hoveredNode: string | null
   hiddenCategories: ReadonlySet<string>
   searchResultNodeId: string | null
+  theme: 'light' | 'dark'
   onSelectedNodeChange: (node: string | null) => void
   onHoveredNodeChange: (node: string | null) => void
 }
@@ -89,6 +94,7 @@ function GraphRuntime({
   hoveredNode,
   hiddenCategories,
   searchResultNodeId,
+  theme,
   onSelectedNodeChange,
   onHoveredNodeChange,
 }: GraphRuntimeProps) {
@@ -108,6 +114,21 @@ function GraphRuntime({
     if (!focusedNode || !graph.hasNode(focusedNode)) return new Set<string>()
     return new Set(graph.neighbors(focusedNode))
   }, [focusedNode, graph])
+  const defaultLabeledNodeIds = useMemo(() => {
+    const limit = graph.order <= 40 ? graph.order : graph.order <= 120 ? 28 : 18
+    return new Set(
+      graph
+        .nodes()
+        .sort((left, right) => {
+          const degreeDifference = graph.degree(right) - graph.degree(left)
+          if (degreeDifference !== 0) return degreeDifference
+          return graph
+            .getNodeAttribute(left, 'label')
+            .localeCompare(graph.getNodeAttribute(right, 'label'))
+        })
+        .slice(0, limit),
+    )
+  }, [graph])
 
   useEffect(() => {
     registerEvents({
@@ -155,18 +176,44 @@ function GraphRuntime({
         const isHovered = node === hoveredNode
         const isSearchResult = node === searchResultNodeId
         const isRelated = !focusedNode || node === focusedNode || focusedNeighborIds.has(node)
+        const shouldShowLabel = focusedNode
+          ? node === focusedNode || focusedNeighborIds.has(node)
+          : defaultLabeledNodeIds.has(node)
+        const degreeBoost = Math.min(2.2, Math.log2(graph.degree(node) + 1) * 0.55)
+        const labelTheme =
+          theme === 'dark'
+            ? {
+                labelBackground: 'rgba(29,33,38,0.96)',
+                labelBorderColor: '#3a4048',
+                labelTextColor: '#e7eaed',
+                labelMutedColor: '#9aa3ad',
+              }
+            : {
+                labelBackground: 'rgba(255,255,255,0.96)',
+                labelBorderColor: '#d7dce2',
+                labelTextColor: '#1a1d21',
+                labelMutedColor: '#6b7280',
+              }
         return {
           ...attributes,
+          ...labelTheme,
           hidden: isHidden || attributes.hidden,
-          label: isSelected || isHovered || isSearchResult ? attributes.label : null,
+          label:
+            shouldShowLabel || isSelected || isHovered || isSearchResult ? attributes.label : null,
+          forceLabel: isSelected || isHovered || isSearchResult,
+          highlighted: isSelected || isSearchResult,
           color: isSelected
             ? '#245ea8'
             : isSearchResult
               ? '#7c5cb8'
               : isRelated
                 ? attributes.color
-                : '#d9dde2',
-          size: attributes.size * (isSelected ? 1.7 : isSearchResult ? 1.55 : isHovered ? 1.4 : 1),
+                : theme === 'dark'
+                  ? '#3a4048'
+                  : '#d9dde2',
+          size:
+            (attributes.size + degreeBoost) *
+            (isSelected ? 1.6 : isSearchResult ? 1.5 : isHovered ? 1.35 : 1),
           zIndex: isSelected || isHovered || isSearchResult ? 3 : 1,
         }
       },
@@ -177,7 +224,13 @@ function GraphRuntime({
         const isRelated = !focusedNode || source === focusedNode || target === focusedNode
         return {
           ...attributes,
-          color: isRelated ? '#9aa4af' : '#e1e4e8',
+          color: isRelated
+            ? theme === 'dark'
+              ? '#65717d'
+              : '#9aa4af'
+            : theme === 'dark'
+              ? '#30363d'
+              : '#e1e4e8',
           size: isRelated && focusedNode ? 1.35 : 0.45,
           hidden: attributes.hidden || sourceHidden || targetHidden,
         }
@@ -186,12 +239,14 @@ function GraphRuntime({
   }, [
     focusedNeighborIds,
     focusedNode,
+    defaultLabeledNodeIds,
     graph,
     hiddenCategories,
     hoveredNode,
     searchResultNodeId,
     selectedNodeIds,
     setSettings,
+    theme,
   ])
 
   useEffect(() => {
@@ -380,7 +435,7 @@ function SearchOverlay({
                   aria-hidden="true"
                 />
                 <span className="min-w-0 flex-1 truncate text-[11px] text-text">{entry.label}</span>
-                <span className="shrink-0 text-[9.5px] text-text-faint">{entry.category}</span>
+                <span className="shrink-0 text-[9.5px] text-text-faint">{entry.categoryLabel}</span>
               </button>
             ))
           ) : (
@@ -405,7 +460,7 @@ function LegendOverlay({ categories, hiddenCategories, onToggle }: LegendOverlay
         노드 타입
       </p>
       <div className="flex flex-col gap-1">
-        {categories.map(({ category, color, total }) => {
+        {categories.map(({ category, label, color, total }) => {
           const hidden = hiddenCategories.has(category)
           return (
             <button
@@ -415,7 +470,7 @@ function LegendOverlay({ categories, hiddenCategories, onToggle }: LegendOverlay
               className="flex h-6 items-center gap-1.5 rounded-full border border-white/70 px-2 text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-ring/30"
               style={{ backgroundColor: hidden ? '#e5e7eb' : `${color}33` }}
               aria-pressed={!hidden}
-              aria-label={`${category} ${hidden ? '표시' : '숨기기'}`}
+              aria-label={`${label} ${hidden ? '표시' : '숨기기'}`}
             >
               <span
                 className="size-2 shrink-0 rounded-full"
@@ -425,9 +480,7 @@ function LegendOverlay({ categories, hiddenCategories, onToggle }: LegendOverlay
               <span className="shrink-0 text-[9.5px] font-semibold text-text">
                 {hidden ? 0 : total} / {total}
               </span>
-              <span className="min-w-0 flex-1 truncate text-[9.5px] text-text-muted">
-                {category}
-              </span>
+              <span className="min-w-0 flex-1 truncate text-[9.5px] text-text-muted">{label}</span>
             </button>
           )
         })}
@@ -456,12 +509,14 @@ function buildSearchIndex(graph: SigmaGraphologyGraph): SearchEntry[] {
       node,
       label: attributes.label,
       category: attributes.category,
+      categoryLabel: attributes.categoryLabel,
       color: attributes.color,
       searchableText: [
         node,
         attributes.originalId ?? '',
         attributes.label,
         attributes.category,
+        attributes.categoryLabel,
         ...propertyTerms,
       ]
         .join(' ')
@@ -480,6 +535,7 @@ function buildCategorySummaries(graph: SigmaGraphologyGraph): CategorySummary[] 
     }
     categories.set(attributes.category, {
       category: attributes.category,
+      label: attributes.categoryLabel,
       color: attributes.color,
       total: 1,
     })
@@ -489,6 +545,7 @@ function buildCategorySummaries(graph: SigmaGraphologyGraph): CategorySummary[] 
 
 function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
   const navigate = useNavigate()
+  const theme = useUiStore((state) => state.theme)
   const [selectedNodeIds, setSelectedNodeIds] = useState<ReadonlySet<string>>(() => new Set())
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
   const [hiddenCategories, setHiddenCategories] = useState<ReadonlySet<string>>(() => new Set())
@@ -613,11 +670,11 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
         </div>
         {selectedAttributes ? (
           <p className="max-w-[45%] truncate text-[11px] text-text-muted">
-            선택: {selectedAttributes.label} · {selectedAttributes.category}
+            선택: {selectedAttributes.displayTitle} · {selectedAttributes.categoryLabel}
           </p>
         ) : (
           <p className="hidden text-[11px] text-text-faint sm:block">
-            노드를 선택하거나 화면을 드래그해 탐색하세요
+            카드에서 유형과 핵심값을 확인하고, 노드를 선택해 상세 정보를 보세요
           </p>
         )}
       </div>
@@ -628,22 +685,29 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
             allowInvalidContainer: true,
             defaultEdgeColor: '#c8cdd3',
             defaultEdgeType: 'arrow',
+            defaultDrawNodeHover: drawGraphNodeHover,
+            defaultDrawNodeLabel: drawGraphNodeLabel,
             edgeProgramClasses: { arrow: GraphEdgeArrowProgram },
             enableCameraPanning: true,
             enableCameraZooming: true,
             hideEdgesOnMove: false,
             hideLabelsOnMove: true,
-            labelColor: { color: '#374151' },
-            labelDensity: 0.06,
+            labelColor: { color: theme === 'dark' ? '#e7eaed' : '#1a1d21' },
+            labelDensity: 0.72,
             labelFont: 'Pretendard Variable, Pretendard, -apple-system, sans-serif',
-            labelRenderedSizeThreshold: 4,
+            labelGridCellSize: 176,
+            labelRenderedSizeThreshold: 0,
             labelSize: 11,
             renderEdgeLabels: false,
             renderLabels: true,
             stagePadding: 46,
             zIndex: true,
           }}
-          style={{ height: '100%', width: '100%' }}
+          style={{
+            height: '100%',
+            width: '100%',
+            backgroundColor: theme === 'dark' ? '#17191d' : '#f5f5f6',
+          }}
         >
           <GraphRuntime
             graph={graph}
@@ -651,6 +715,7 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
             hoveredNode={hoveredNode}
             hiddenCategories={hiddenCategories}
             searchResultNodeId={searchResultNodeId}
+            theme={theme}
             onSelectedNodeChange={handleSelectedNodeChange}
             onHoveredNodeChange={setHoveredNode}
           />
@@ -675,9 +740,11 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
           <aside className="absolute inset-y-0 right-0 z-30 flex w-full max-w-[420px] flex-col border-l border-border bg-panel shadow-[-10px_0_28px_rgba(15,23,42,0.12)]">
             <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
               <div className="min-w-0">
-                <p className="truncate text-[11.5px] font-semibold text-text">선택 노드 상세</p>
+                <p className="truncate text-[11.5px] font-semibold text-text">
+                  {selectedAttributes.displayTitle}
+                </p>
                 <p className="truncate text-[9.5px] text-text-faint">
-                  {selectedAttributes.category}
+                  {selectedAttributes.categoryLabel} · 선택 노드 상세
                 </p>
               </div>
               <Button
