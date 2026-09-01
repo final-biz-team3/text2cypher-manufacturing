@@ -12,7 +12,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useHealthStore } from '@/store/useHealthStore'
 import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
-import { fetchHistory } from '@/lib/history'
+import { deleteHistory, fetchHistory } from '@/lib/history'
 import { formatCypherError } from '@/lib/formatCypherError'
 import type { AmbiguousCandidate, ChatResponse, HistoryEntry } from '@/lib/schemas'
 import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
@@ -181,6 +181,16 @@ export function Dashboard() {
     setActiveScreen('success')
   }
 
+  // 대화기록 항목을 삭제하고 사이드바 목록을 갱신한다(현재 보고 있는 화면은 건드리지 않는다)
+  const handleDeleteHistoryItem = async (item: HistoryEntry) => {
+    try {
+      await deleteHistory(item.id)
+      refreshHistory()
+    } catch (err) {
+      console.error('deleteHistory failed:', err)
+    }
+  }
+
   // 홈으로 돌아갈 때는 이전 질문의 잔여 UI 상태(쿼리 패널)도 함께 초기화해서
   // 다음 질문 결과에 이전 상태가 그대로 남지 않도록 한다.
   const handleNavigateHome = () => {
@@ -210,6 +220,7 @@ export function Dashboard() {
           relationships={RELATIONSHIPS}
           history={history}
           onSelectHistoryItem={handleSelectHistoryItem}
+          onDeleteHistoryItem={handleDeleteHistoryItem}
         />
         <main className="flex flex-1 flex-col overflow-y-auto p-6">
           {activeScreen === 'idle' && (

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { X } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { NodeGlyphBadge } from '@/components/common/NodeGlyphBadge'
 import { useUiStore } from '@/store/useUiStore'
@@ -11,6 +12,7 @@ interface SchemaSidebarProps {
   relationships: SchemaRelationship[]
   history: HistoryEntry[]
   onSelectHistoryItem: (item: HistoryEntry) => void
+  onDeleteHistoryItem: (item: HistoryEntry) => void
 }
 
 // 좌측 사이드바: "스키마"(노드/관계 타입 설명)와 "질문 이력" 두 탭을 전환하며 보여준다
@@ -19,6 +21,7 @@ export function SchemaSidebar({
   relationships,
   history,
   onSelectHistoryItem,
+  onDeleteHistoryItem,
 }: SchemaSidebarProps) {
   const historyTab = useUiStore((s) => s.historyTab)
   const setHistoryTab = useUiStore((s) => s.setHistoryTab)
@@ -85,24 +88,39 @@ export function SchemaSidebar({
             <p className="px-1 text-[12px] text-text-faint">아직 질문 이력이 없습니다.</p>
           ) : (
             history.map((item) => (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onClick={() => onSelectHistoryItem(item)}
-                className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-panel-2"
+                className="group flex items-start gap-1 rounded-md px-2 py-1.5 hover:bg-panel-2"
               >
-                <p className="line-clamp-2 text-[12px] text-text">{item.query}</p>
-                <p className="text-[10px] text-text-faint">
-                  {item.username} ·{' '}
-                  {new Date(item.created_at).toLocaleString('ko-KR', {
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </p>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectHistoryItem(item)}
+                  className="flex flex-1 flex-col gap-0.5 text-left"
+                >
+                  <p className="line-clamp-2 text-[12px] text-text">{item.query}</p>
+                  <p className="text-[10px] text-text-faint">
+                    {item.username} ·{' '}
+                    {new Date(item.created_at).toLocaleString('ko-KR', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteHistoryItem(item)
+                  }}
+                  aria-label="이 질문 이력 삭제"
+                  className="mt-0.5 shrink-0 rounded p-0.5 text-text-faint opacity-0 hover:bg-panel hover:text-text group-hover:opacity-100"
+                >
+                  <X size={13} />
+                </button>
+              </div>
             ))
           )}
         </TabsContent>
