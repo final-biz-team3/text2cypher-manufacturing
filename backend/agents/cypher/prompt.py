@@ -64,6 +64,9 @@ def _build_cypher_domain_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...
         "quantityPerAssembly 결과는 경로 순서대로 relationships(path)의 각 수량을 담은 "
         "배열이다. 이를 곱하거나 productionQty를 반영하지 않으며 부족량 계산은 composer가 "
         "담당한다.",
+        "inputBindings의 단일 ID 배열은 선행 결과의 행 중복을 보존할 수 있지만 그래프 "
+        "탐색 대상을 반복하라는 뜻이 아니다. ID 배열을 필터로 사용할 때는 UNWIND한 뒤 "
+        "WITH DISTINCT로 ID를 집합화하고 MATCH한다.",
         "두 anchor의 공통 부품은 pathA를 MATCH한 뒤 component별 "
         "min(length(pathA)) AS minDepthA를 먼저 집계하고, 별도 MATCH 절에서 pathB를 "
         "찾아 min(length(pathB)) AS minDepthB를 집계한다. pathA와 pathB를 같은 MATCH "

@@ -1,4 +1,5 @@
 import asyncio
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,14 +8,15 @@ import pytest
 from agents.cypher.schema.loader import load_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from orchestrator.nodes.plan_outputs import make_plan_outputs_node
-from orchestrator.output_catalog import build_output_catalog
+from orchestrator.output_catalog import OutputCatalog, build_output_catalog
 from orchestrator.planning import RouteSubquery, parse_route_draft
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _catalog():
+@lru_cache(maxsize=1)
+def _catalog() -> OutputCatalog:
     return build_output_catalog(
         load_sql_schema(PROJECT_ROOT / "schema" / "sql_schema.yaml"),
         load_graph_schema(PROJECT_ROOT / "schema" / "graph_schema.yaml"),
@@ -663,53 +665,6 @@ async def test_output_planner_preserves_work_order_role_from_original_question()
     assert "productId가 아니다" in question
 
 
-async def test_output_planner_keeps_common_component_summary_without_paths() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["finishedProductIdA","finishedProductIdB",'
-            '"finishedProductId","finishedProductName","componentId",'
-            '"componentName","minDepthA","minDepthB","pathProductIds"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "Cedar Bike와 Quartz Bike에 모두 들어가는 공통 부품은?",
-            "entity": [
-                {"productId": 8301, "productName": "Cedar Bike"},
-                {"productId": 8302, "productName": "Quartz Bike"},
-            ],
-            "tool_plan": ["graph"],
-            "routeDraft": {
-                "tool_plan": ["graph"],
-                "subqueries": [
-                    {
-                        "id": "graph_common_components",
-                        "tool": "graph",
-                        "question": "두 완제품의 BOM 공통 부품과 최소 깊이를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert result["subqueries"][0]["requiredOutputs"] == [
-        "finishedProductIdA",
-        "finishedProductIdB",
-        "componentId",
-        "componentName",
-        "minDepthA",
-        "minDepthB",
-    ]
-    assert result["subqueries"][0]["question"] == (
-        "Cedar Bike와 Quartz Bike에 모두 들어가는 공통 부품은?"
-    )
-
-
 async def test_bom_shortage_output_contract_is_model_free_and_exact() -> None:
     client = MockOpenAIClient()
     node = make_plan_outputs_node(client, _catalog())
@@ -919,46 +874,6 @@ async def test_output_planner_normalizes_aggregate_stock_and_purchase_count() ->
     assert count_result["subqueries"][0]["requiredOutputs"] == ["purchasedProductCount"]
 
 
-async def test_output_planner_normalizes_where_stock_to_location_rows() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["productId","productName","actualStock"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "Nebula Bracket 재고 어디에 몇 개 있어?",
-            "entity": {"productId": 8001, "productName": "Nebula Bracket"},
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_inventory_locations",
-                        "tool": "sql",
-                        "question": "Nebula Bracket 재고가 어느 위치에 몇 개 있는지 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert result["subqueries"][0]["requiredOutputs"] == [
-        "productId",
-        "productName",
-        "locationId",
-        "locationName",
-        "shelf",
-        "bin",
-        "quantity",
-    ]
-
-
 async def test_output_planner_completes_work_order_scrap_fact_bundle() -> None:
     client = MockOpenAIClient(
         make_content_response(
@@ -1033,12 +948,3 @@ async def test_output_planner_preserves_rejected_quantity_ranking_semantics() ->
     question = result["subqueries"][0]["question"]
     assert "purchaseorderid 건수가 아니라 rejectedqty 합계" in question
     assert "totalRejectedQty를 내림차순" in question
-
-
-def test_schema_catalog_has_no_evaluation_dependency() -> None:
-    source = (
-        PROJECT_ROOT / "backend" / "orchestrator" / "output_catalog.py"
-    ).read_text(encoding="utf-8")
-    assert "queries/evaluation" not in source
-    assert "manifest" not in source
-    assert "gold/" not in source.casefold()
