@@ -72,6 +72,8 @@ export function TopBar({
           variant="outline"
           size="sm"
           className="rounded-full border-border-strong bg-transparent hover:bg-panel-2"
+          aria-label={theme === 'light' ? '다크모드로 전환' : '라이트모드로 전환'}
+          title={theme === 'light' ? '다크모드로 전환' : '라이트모드로 전환'}
           onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
         >
           {theme === 'light' ? <Moon /> : <Sun />}
