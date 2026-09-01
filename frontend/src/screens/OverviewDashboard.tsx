@@ -312,7 +312,7 @@ export function OverviewDashboard() {
                       barColumn={
                         card.key === 'top_suppliers_by_product_count'
                           ? 'suppliedProductCount'
-                          : undefined
+                          : 'averageListPrice'
                       }
                       minHeightClassName="min-h-[300px]"
                     />

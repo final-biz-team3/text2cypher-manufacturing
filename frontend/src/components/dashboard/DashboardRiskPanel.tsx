@@ -78,10 +78,14 @@ export function DashboardRiskPanel({
                 ? (row, trigger) => onSelectRow(activeCard, row, trigger)
                 : undefined
             }
+            barColumn={
+              activeCard.key === 'top_rejected_suppliers' ? 'totalRejectedQty' : 'scrappedQty'
+            }
+            barTone={activeCard.key === 'top_rejected_suppliers' ? 'warn' : 'fail'}
             responsiveHiddenColumns={
               activeCard.key === 'top_scrapped_work_orders'
                 ? ['productId', 'scrapReasonId']
-                : undefined
+                : ['supplierId']
             }
           />
         )}

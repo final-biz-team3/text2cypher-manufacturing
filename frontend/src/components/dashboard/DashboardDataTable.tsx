@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from 'react'
+import { Inbox } from 'lucide-react'
 import { COLUMN_LABELS, formatDashboardValue } from './dashboardFormatters'
 
 interface DashboardDataTableProps {
@@ -147,8 +148,11 @@ export function DashboardDataTable({
         </tbody>
       </table>
       {rows.length === 0 ? (
-        <div className="flex min-h-28 items-center justify-center text-[12px] text-text-faint">
-          표시할 결과가 없습니다.
+        <div className="flex min-h-32 flex-col items-center justify-center gap-2 text-[12px] text-text-faint">
+          <span className="flex size-8 items-center justify-center rounded-full bg-panel-2">
+            <Inbox className="size-4" aria-hidden="true" />
+          </span>
+          <span>표시할 결과가 없습니다.</span>
         </div>
       ) : null}
     </div>

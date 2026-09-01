@@ -533,14 +533,22 @@ function LocationRanking({ data }: { data: ProcessOverview }) {
   const maxValue = Math.max(1, ...data.locations.map((location) => location.operationCount))
 
   return (
-    <section className="rounded-[5px] border border-border bg-panel p-4">
-      <h3 className="text-[13px] font-semibold text-text">작업장별 수행 공정</h3>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-        {data.locations.map((location) => (
+    <section className="rounded-[5px] border border-border bg-panel p-4 xl:col-span-2">
+      <div>
+        <h3 className="text-[13px] font-semibold text-text">작업장별 수행 공정</h3>
+        <p className="mt-0.5 text-[10.5px] text-text-muted">
+          선택 기간의 공정 수행 건수 기준 상위 작업장
+        </p>
+      </div>
+      <div className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
+        {data.locations.map((location, index) => (
           <div
             key={location.locationId}
-            className="grid min-w-0 grid-cols-[minmax(90px,0.8fr)_minmax(100px,1.2fr)_auto] items-center gap-3"
+            className="grid min-w-0 grid-cols-[20px_minmax(90px,0.8fr)_minmax(80px,1.2fr)_auto] items-center gap-2.5"
           >
+            <span className="text-right text-[10.5px] font-semibold tabular-nums text-text-faint">
+              {index + 1}
+            </span>
             <span
               className="truncate text-[11px] font-medium text-text"
               title={location.locationName}
@@ -778,7 +786,7 @@ export function ProcessOverviewSection() {
           {error ? (
             <p className="mt-2 text-[11px] text-fail">{error} 기존 결과를 유지합니다.</p>
           ) : null}
-          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(280px,0.7fr)]">
+          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
             <WorkOrderTrendChart
               data={data}
               granularityOptions={granularityOptions}
