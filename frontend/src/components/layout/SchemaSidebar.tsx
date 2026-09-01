@@ -1,6 +1,17 @@
 import { useState } from 'react'
 import { X } from 'lucide-react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { NodeGlyphBadge } from '@/components/common/NodeGlyphBadge'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { useUiStore } from '@/store/useUiStore'
@@ -125,17 +136,29 @@ export function SchemaSidebar({
                       })}
                     </p>
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteHistoryItem(item)
-                    }}
-                    aria-label="이 질문 이력 삭제"
-                    className="mt-0.5 shrink-0 rounded p-0.5 text-text-faint opacity-0 hover:bg-panel hover:text-text group-hover:opacity-100"
-                  >
-                    <X size={13} />
-                  </button>
+                  <AlertDialog>
+                    <AlertDialogTrigger
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="이 질문 이력 삭제"
+                      className="mt-0.5 shrink-0 rounded p-0.5 text-text-faint opacity-0 hover:bg-panel hover:text-text group-hover:opacity-100"
+                    >
+                      <X size={13} />
+                    </AlertDialogTrigger>
+                    <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>이 질문 이력을 삭제할까요?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          삭제하면 되돌릴 수 없습니다.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>취소</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => onDeleteHistoryItem(item)}>
+                          삭제
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               ))
             )}
