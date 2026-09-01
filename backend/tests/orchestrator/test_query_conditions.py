@@ -16,6 +16,12 @@ from orchestrator.query_conditions import missing_numeric_filter_literals
         ("수량이 0개인 제품", "SELECT * FROM product WHERE quantity = 0"),
         ("가격이 1만 원 이상인 제품", "SELECT * FROM product WHERE price >= 10000"),
         ("예산이 2억 원 이하", "SELECT * FROM budget WHERE amount <= 200000000"),
+        ("가격이 100보다큰 제품", "SELECT * FROM product WHERE price > 100"),
+        (
+            "가격이 3억 5천만 원 이상인 제품",
+            "SELECT * FROM product WHERE price >= 350000000",
+        ),
+        ("최근 5년간 생산량", "SELECT * FROM production WHERE year >= 5"),
     ],
 )
 def test_numeric_constraint_accepts_matching_query(question: str, query: str) -> None:

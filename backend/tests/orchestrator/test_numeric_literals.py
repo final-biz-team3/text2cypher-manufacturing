@@ -30,3 +30,17 @@ def test_normalized_numeric_literals_keeps_scaled_expression_as_one_value() -> N
         "10000",
         "200000000",
     ]
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("3억 5천만 원", ["350000000"]),
+        ("3억5000만원", ["350000000"]),
+        ("1천만원", ["10000000"]),
+    ],
+)
+def test_normalized_numeric_literals_supports_compound_korean_units(
+    source: str, expected: list[str]
+) -> None:
+    assert normalized_numeric_literals(source) == expected

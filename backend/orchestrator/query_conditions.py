@@ -24,14 +24,14 @@ _COMPARISON_FILTER = re.compile(
     r"(?P<comparison>인(?:\s+경우)?|짜리|이상|이하|초과|미만|"
     r"같(?:은|이)|보다\s*(?:큰|작은|많은|적은))"
 )
-_DATE_FILTER = re.compile(rf"(?P<number>{BASE_NUMBER_SOURCE})\s*(?:년|월|일)\b")
+_DATE_FILTER = re.compile(rf"(?P<number>{BASE_NUMBER_SOURCE})\s*(?:년|월|일)")
 _RANK_FILTER = re.compile(
     rf"(?:상위|하위)\s*(?P<number>{NUMERIC_LITERAL_SOURCE})\s*" r"(?:개|건|명|대|곳)?"
 )
 
 _COMPARISON_OPERATORS: dict[str, ConstraintOperator] = {
     "인": "eq",
-    "인 경우": "eq",
+    "인경우": "eq",
     "짜리": "eq",
     "같은": "eq",
     "같이": "eq",
@@ -39,10 +39,10 @@ _COMPARISON_OPERATORS: dict[str, ConstraintOperator] = {
     "이하": "lte",
     "초과": "gt",
     "미만": "lt",
-    "보다 큰": "gt",
-    "보다 많은": "gt",
-    "보다 작은": "lt",
-    "보다 적은": "lt",
+    "보다큰": "gt",
+    "보다많은": "gt",
+    "보다작은": "lt",
+    "보다적은": "lt",
 }
 
 
@@ -51,7 +51,7 @@ def required_numeric_constraints(question: str) -> list[NumericConstraint]:
     constraints = [
         NumericConstraint(
             normalize_numeric_literal(match.group("number")),
-            _COMPARISON_OPERATORS[" ".join(match.group("comparison").split())],
+            _COMPARISON_OPERATORS[re.sub(r"\s+", "", match.group("comparison"))],
         )
         for match in _COMPARISON_FILTER.finditer(question)
     ]
