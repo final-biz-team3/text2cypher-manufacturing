@@ -12,14 +12,13 @@
 """
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
 from typing import Any, Protocol
 
 from dotenv import load_dotenv
-from paths import ROOT_DIR
+from paths import ROOT_DIR, load_fixture_entities
 
 FixtureCheck = tuple[str, str, tuple[Any, ...], Any]  # (설명, SQL, 파라미터, 기대값)
 
@@ -221,7 +220,6 @@ def main() -> None:
     print(f"대상: {host}:{port}/{db}")
 
     dump_path = Path(args.dump_path)
-    parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
 
     print("1) 덤프 파일 재확인")
     if not dump_path.exists():
@@ -247,7 +245,7 @@ def main() -> None:
             print(f"   전체 {len(expected_tables)}개 테이블 확인됨, 누락 없음")
 
         print("3) 픽스처 값 대조 (query_parameters.json 기준)")
-        entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+        entities = load_fixture_entities()
         checks = build_fixture_checks(entities)
         failures = run_fixture_checks(conn, checks)
         if failures:

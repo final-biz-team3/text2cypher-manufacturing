@@ -28,7 +28,6 @@
 """
 
 import argparse
-import json
 import os
 import sys
 import uuid
@@ -37,7 +36,7 @@ from datetime import UTC, datetime
 import psycopg2
 import psycopg2.extensions
 from neo4j import Driver
-from paths import ROOT_DIR
+from paths import ROOT_DIR, load_fixture_entities
 from postgres_restore import REQUIRED_ENV_VARS, target_database_exists
 from structured_mvp_config import (
     BUSINESS_LABELS,
@@ -230,8 +229,7 @@ def validate_after_load(
                 "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
             ]
 
-        parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
-        entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+        entities = load_fixture_entities()
         failures = verify_fixture_entities(session, entities)
         failures += verify_work_order_17747_fixture(session)
         failures += verify_bom_680_to_492_quantity(session)

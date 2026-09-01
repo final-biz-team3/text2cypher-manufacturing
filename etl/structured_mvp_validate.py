@@ -5,13 +5,12 @@
 복원 없이 PostgreSQL만 검증하는 것과 대칭이다.
 """
 
-import json
 import os
 import sys
 from typing import Any
 
 from dotenv import load_dotenv
-from paths import ROOT_DIR
+from paths import ROOT_DIR, load_fixture_entities
 from structured_mvp_config import (
     BUSINESS_LABELS,
     RELATIONSHIP_TYPES,
@@ -284,10 +283,7 @@ def main() -> None:
             print(f"   관계 건수: {rel_counts}")
 
             print("2) fixture 검증 (query_parameters.json 기준)")
-            parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
-            entities = json.loads(
-                parameters_path.read_text(encoding="utf-8")
-            )["entities"]
+            entities = load_fixture_entities()
             failures = verify_fixture_entities(session, entities)
             failures += verify_work_order_17747_fixture(session)
             failures += verify_bom_680_to_492_quantity(session)
