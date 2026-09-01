@@ -56,9 +56,6 @@ def test_package_loader_and_explicit_loader_have_the_same_fingerprint() -> None:
         lambda data: data["outputRoles"][1].update(
             roleId=data["outputRoles"][0]["roleId"]
         ),
-        lambda data: data["entityRoles"][1].update(
-            roleId=data["entityRoles"][0]["roleId"]
-        ),
     ],
 )
 def test_duplicate_semantic_ids_are_rejected(mutation) -> None:
@@ -145,39 +142,10 @@ def test_unknown_role_mapping_path_is_rejected() -> None:
         _compile(data)
 
 
-def test_entity_role_projection_rejects_unknown_source_alias() -> None:
-    data = _ontology_data()
-    product = next(item for item in data["entityRoles"] if item["roleId"] == "product")
-    product["identityProjection"]["sql"]["labels"] = ["unknownLabel"]
-
-    with pytest.raises(ValueError, match="aliases unavailable from sql"):
-        _compile(data)
-
-
-def test_entity_role_projection_rejects_non_identity_key() -> None:
-    data = _ontology_data()
-    product = next(item for item in data["entityRoles"] if item["roleId"] == "product")
-    product["identityProjection"]["sql"]["keys"] = ["listPrice"]
-
-    with pytest.raises(ValueError, match="non-identity sql keys"):
-        _compile(data)
-
-
-def test_entity_role_projection_rejects_non_name_label() -> None:
-    data = _ontology_data()
-    product = next(item for item in data["entityRoles"] if item["roleId"] == "product")
-    product["identityProjection"]["sql"]["labels"] = ["color"]
-
-    with pytest.raises(ValueError, match="non-name sql labels"):
-        _compile(data)
-
-
 def test_alternative_term_order_does_not_change_compiled_semantics() -> None:
     original = _ontology_data()
     reordered = deepcopy(original)
     for role in reordered["outputRoles"]:
-        role["terms"].reverse()
-    for role in reordered["entityRoles"]:
         role["terms"].reverse()
     for concept in reordered["businessConcepts"]:
         concept["terms"].reverse()
@@ -200,13 +168,6 @@ def test_catalog_description_exposes_provenance_and_operation() -> None:
     assert "paths=production.product.productid" in description
     assert "owners=production.product" in description
 
-    entity_roles = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA).describe_entity_roles(
-        "sql"
-    )
-    assert "product" in entity_roles
-    assert "keys=productId" in entity_roles
-    assert "labels=productName" in entity_roles
-
 
 def test_compiled_catalog_mappings_are_immutable() -> None:
     catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
@@ -216,7 +177,3 @@ def test_compiled_catalog_mappings_are_immutable() -> None:
         cast_catalog.by_tool["sql"]["newAlias"] = object()
     with pytest.raises(TypeError):
         cast_catalog.transforms["newTransform"] = object()
-    with pytest.raises(TypeError):
-        cast_catalog.entity_roles["newRole"] = object()
-    with pytest.raises(TypeError):
-        cast_catalog.entity_roles["product"].projections["sql"] = object()

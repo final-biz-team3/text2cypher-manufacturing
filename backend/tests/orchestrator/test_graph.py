@@ -16,7 +16,6 @@ from tests.mocks.openai import (  # noqa: E402
     MockOpenAIClient,
     make_content_response,
     make_no_tool_call_response,
-    make_output_plan_response,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="module")]
@@ -57,7 +56,7 @@ async def test_production_graph_executes_read_only_sql(postgres_pool) -> None:
     client = _client(
         make_no_tool_call_response(),
         make_content_response(_route("sql")),
-        make_output_plan_response(answer_values=["productCount"]),
+        make_content_response('{"requiredOutputs":["productCount"]}'),
         make_content_response(
             'SELECT COUNT(*) AS "productCount" FROM production.product'
         ),
@@ -81,7 +80,7 @@ async def test_production_graph_executes_read_only_cypher(postgres_pool) -> None
     client = _client(
         make_no_tool_call_response(),
         make_content_response(_route("graph")),
-        make_output_plan_response(answer_values=["productId"]),
+        make_content_response('{"requiredOutputs":["productId"]}'),
         make_content_response(
             "MATCH (p:Product) RETURN p.productId AS productId "
             "ORDER BY productId LIMIT 1"

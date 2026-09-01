@@ -24,7 +24,6 @@ from tests.mocks.openai import (
     MockOpenAIClient,
     make_content_response,
     make_no_tool_call_response,
-    make_output_plan_response,
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
 
@@ -51,19 +50,6 @@ def _answering_client(*responses: MockChatCompletion) -> MockOpenAIClient:
     return MockOpenAIClient(*responses, make_content_response(_ANSWER))
 
 
-def _product_display_plan(*answer_values: str) -> MockChatCompletion:
-    return make_output_plan_response(
-        result_entities=[
-            {
-                "role": "product",
-                "representation": "display",
-                "inGrain": True,
-            }
-        ],
-        answer_values=answer_values,
-    )
-
-
 def _fake_request() -> Request:
     """chat()이 캐시된 그래프를 찾아보는 request.app.state.graph 접근을 만족시키는
     최소 Request. lifespan을 거치지 않은 맨 FastAPI() 앱을 물려서, chat()이
@@ -79,10 +65,10 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        _product_display_plan("listPrice"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
-            'SELECT productid AS "productId", name AS "productName", '
-            'listprice AS "listPrice" FROM production.product WHERE productid = 956'
+            'SELECT listprice AS "listPrice" FROM production.product '
+            "WHERE productid = 956"
         ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
@@ -100,13 +86,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     # (Task 5), chat_module의 get_pool monkeypatch로는 못 가로챈다 -
     # graph_module.execute_sql 자체를 가짜로 바꿔야 실제 DB를 안 친다.
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [
-            {
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
-                "listPrice": 2384.07,
-            }
-        ]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
 
@@ -127,17 +107,10 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
         "productName": "Touring-1000 Yellow, 54",
     }
     assert result["sql_query"] == (
-        'SELECT productid AS "productId", name AS "productName", '
-        'listprice AS "listPrice" FROM production.product WHERE productid = 956'
+        'SELECT listprice AS "listPrice" FROM production.product WHERE productid = 956'
     )
     assert result["sql_result"]["error"] is None
-    assert result["sql_result"]["result"] == [
-        {
-            "productId": 956,
-            "productName": "Touring-1000 Yellow, 54",
-            "listPrice": 2384.07,
-        }
-    ]
+    assert result["sql_result"]["result"] == [{"listPrice": 2384.07}]
     assert result["final_answer"] == _ANSWER
     assert "composed_result" not in result
     assert "resultTransform" not in result
@@ -151,10 +124,9 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        _product_display_plan("listPrice"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
-            'SELECT productid AS "productId", name AS "productName", '
-            'listprice AS "listPrice" FROM production.product'
+            'SELECT listprice AS "listPrice" FROM production.product'
         ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
@@ -169,13 +141,7 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [
-            {
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
-                "listPrice": 2384.07,
-            }
-        ]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
 
@@ -229,10 +195,9 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        _product_display_plan("listPrice"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
-            'SELECT productid AS "productId", name AS "productName", '
-            'listprice AS "listPrice" FROM production.product'
+            'SELECT listprice AS "listPrice" FROM production.product'
         ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
@@ -246,13 +211,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: _FailingWritePool())
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [
-            {
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
-                "listPrice": 2384.07,
-            }
-        ]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
 
@@ -269,9 +228,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     )
 
     assert (
-        result["sql_query"]
-        == 'SELECT productid AS "productId", name AS "productName", '
-        'listprice AS "listPrice" FROM production.product'
+        result["sql_query"] == 'SELECT listprice AS "listPrice" FROM production.product'
     )
 
 
@@ -305,10 +262,9 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        _product_display_plan("listPrice"),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
         make_content_response(
-            'SELECT productid AS "productId", name AS "productName", '
-            'listprice AS "listPrice" FROM production.product'
+            'SELECT listprice AS "listPrice" FROM production.product'
         ),
     )
     monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
@@ -318,13 +274,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: MockAsyncWritePool())
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [
-            {
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
-                "listPrice": 2384.07,
-            }
-        ]
+        return [{"listPrice": 2384.07}]
 
     monkeypatch.setattr(graph_module, "execute_sql", fake_execute_sql)
     app = FastAPI()
@@ -590,11 +540,10 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
                 ensure_ascii=False,
             )
         ),
-        _product_display_plan("listPrice"),
-        make_output_plan_response(answer_values=["productId"]),
+        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_content_response('{"requiredOutputs":["productId"]}'),
         make_content_response(
-            'SELECT productid AS "productId", name AS "productName", '
-            'listprice AS "listPrice" FROM production.product'
+            'SELECT listprice AS "listPrice" FROM production.product'
         ),
         make_content_response(
             "MATCH (p:Product) RETURN p.productId AS productId, "
@@ -613,13 +562,7 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
 
     async def fake_execute_sql(sql: str) -> list[dict]:
-        return [
-            {
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
-                "listPrice": Decimal("2384.07"),
-            }
-        ]
+        return [{"listPrice": Decimal("2384.07")}]
 
     async def fake_execute_cypher(cypher: str) -> list[dict]:
         return [
@@ -647,13 +590,7 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_result"]["result"] == [
-        {
-            "productId": 956,
-            "productName": "Touring-1000 Yellow, 54",
-            "listPrice": 2384.07,
-        }
-    ]
+    assert result["sql_result"]["result"] == [{"listPrice": 2384.07}]
     assert result["graph_result"]["result"][0]["sourceModifiedAt"] == (
         "2014-02-08T10:01:36.827000000"
     )
@@ -693,8 +630,8 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response(route_plan),
-        make_output_plan_response(answer_values=["productId"]),
-        make_output_plan_response(answer_values=["productId"]),
+        make_content_response('{"requiredOutputs":["productId"]}'),
+        make_content_response('{"requiredOutputs":["productId"]}'),
         make_content_response("SELECT 1 AS productId, 'SQL Product' AS productName"),
         make_content_response(
             "MATCH (p:Product) RETURN p.productId AS productId, "

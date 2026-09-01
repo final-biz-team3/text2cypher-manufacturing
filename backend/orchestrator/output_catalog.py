@@ -6,8 +6,6 @@ from agents.cypher.schema.models import GraphSchema
 from agents.sql.schema.models import SqlSchema
 from orchestrator.semantic_catalog import (
     AliasSpec,
-    EntityRoleSpec,
-    IdentityProjection,
     OutputCatalog,
     QuerySemanticCatalog,
     ToolName,
@@ -32,8 +30,6 @@ def build_output_catalog(
 __all__ = [
     "AliasSpec",
     "DEFAULT_ONTOLOGY_PATH",
-    "EntityRoleSpec",
-    "IdentityProjection",
     "OutputCatalog",
     "QuerySemanticCatalog",
     "ToolName",
