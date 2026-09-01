@@ -207,11 +207,46 @@ function drawLabelCard(
   context.restore()
 }
 
+function drawCompactLabel(context: CanvasRenderingContext2D, data: LabelCardData) {
+  const title = typeof data.displayTitle === 'string' ? data.displayTitle : (data.label ?? '')
+  if (!title) return
+  const category = typeof data.categoryLabel === 'string' ? data.categoryLabel : ''
+  const meta = typeof data.displayMeta === 'string' ? data.displayMeta : ''
+  const secondLine = [category, meta].filter(Boolean).join(' · ')
+  const textX = data.x + data.size + 5
+  const textY = data.y - (secondLine ? 5 : 0)
+  const textColor = typeof data.labelTextColor === 'string' ? data.labelTextColor : '#1a1d21'
+  const mutedColor = typeof data.labelMutedColor === 'string' ? data.labelMutedColor : '#6b7280'
+  const haloColor =
+    typeof data.labelBackground === 'string' ? data.labelBackground : 'rgba(255,255,255,0.94)'
+
+  context.save()
+  context.textBaseline = 'middle'
+  context.lineJoin = 'round'
+  context.lineWidth = 3.5
+  context.strokeStyle = haloColor
+  context.font = '600 10.5px Pretendard Variable, Pretendard, sans-serif'
+  const fittedTitle = fitText(context, title, 112)
+  context.strokeText(fittedTitle, textX, textY)
+  context.fillStyle = textColor
+  context.fillText(fittedTitle, textX, textY)
+
+  if (secondLine) {
+    context.lineWidth = 3
+    context.font = '500 8.5px Pretendard Variable, Pretendard, sans-serif'
+    const fittedMeta = fitText(context, secondLine, 118)
+    context.strokeText(fittedMeta, textX, textY + 12)
+    context.fillStyle = mutedColor
+    context.fillText(fittedMeta, textX, textY + 12)
+  }
+  context.restore()
+}
+
 export const drawGraphNodeLabel: NodeLabelDrawingFunction<
   GraphNodeAttributes,
   GraphEdgeAttributes,
   GraphAttributes
-> = (context, data) => drawLabelCard(context, data, false)
+> = (context, data) => drawCompactLabel(context, data)
 
 export const drawGraphNodeHover: NodeHoverDrawingFunction<
   GraphNodeAttributes,

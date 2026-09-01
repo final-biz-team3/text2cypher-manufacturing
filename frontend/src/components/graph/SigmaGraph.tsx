@@ -115,7 +115,7 @@ function GraphRuntime({
     return new Set(graph.neighbors(focusedNode))
   }, [focusedNode, graph])
   const defaultLabeledNodeIds = useMemo(() => {
-    const limit = graph.order <= 40 ? graph.order : graph.order <= 120 ? 28 : 18
+    const limit = graph.order <= 40 ? graph.order : graph.order <= 120 ? 20 : 12
     return new Set(
       graph
         .nodes()
@@ -695,7 +695,7 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
             labelColor: { color: theme === 'dark' ? '#e7eaed' : '#1a1d21' },
             labelDensity: 0.72,
             labelFont: 'Pretendard Variable, Pretendard, -apple-system, sans-serif',
-            labelGridCellSize: 176,
+            labelGridCellSize: 136,
             labelRenderedSizeThreshold: 0,
             labelSize: 11,
             renderEdgeLabels: false,
