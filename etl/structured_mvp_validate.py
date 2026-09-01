@@ -8,31 +8,16 @@
 import json
 import os
 import sys
-from typing import Any, Protocol
+from typing import Any
 
 from dotenv import load_dotenv
 from paths import ROOT_DIR
 from structured_mvp_config import (
     BUSINESS_LABELS,
     RELATIONSHIP_TYPES,
+    Neo4jSession,
     connect_neo4j_from_env,
 )
-
-
-class _Result(Protocol):
-    def single(self) -> Any: ...
-
-
-class _Session(Protocol):
-    """neo4j.Session 중 이 모듈이 실제로 쓰는 부분만.
-
-    검증 함수가 driver가 아니라 이 Protocol에만 의존해서, 어느 데이터베이스를
-    쓸지는 호출자가 정하고(driver.session(database=...)) 테스트는 가짜 세션으로
-    할 수 있다 - postgres_restore_validate.py의 _Connection/_Cursor와 같은 방식.
-    """
-
-    def run(self, query: str, **params: Any) -> _Result: ...
-
 
 # quantityPerAssembly가 PostgreSQL Decimal -> float 변환 후 Cypher에서 다시 곱셈을
 # 거치므로, 수학적으로 정확히 80이어도 부동소수점 표현 오차로 79.99999999999997
@@ -95,7 +80,7 @@ def find_rows_with_null_key(
 
 
 def count_nodes_by_label(
-    session: _Session,
+    session: Neo4jSession,
     labels: list[str],
     sync_run_id: str | None = None,
 ) -> dict[str, int]:
@@ -119,7 +104,7 @@ def count_nodes_by_label(
 
 
 def count_relationships_by_type(
-    session: _Session,
+    session: Neo4jSession,
     rel_types: list[str],
     sync_run_id: str | None = None,
 ) -> dict[str, int]:
@@ -139,7 +124,7 @@ def count_relationships_by_type(
 
 
 def _entity_exists(
-    session: _Session,
+    session: Neo4jSession,
     label: str,
     key_field: str,
     key_value: object,
@@ -163,7 +148,7 @@ def _entity_exists(
 
 
 def verify_fixture_entities(
-    session: _Session,
+    session: Neo4jSession,
     entities: dict[str, Any],
     sync_run_id: str | None = None,
 ) -> list[str]:
@@ -206,7 +191,7 @@ def verify_fixture_entities(
 
 
 def verify_work_order_17747_fixture(
-    session: _Session,
+    session: Neo4jSession,
     sync_run_id: str | None = None,
 ) -> list[str]:
     """docs/etl/2-structured_mvp_loading_rules.md 7절의 구체적 fixture 검증:
@@ -240,7 +225,7 @@ def verify_work_order_17747_fixture(
 
 
 def verify_bom_680_to_492_quantity(
-    session: _Session,
+    session: Neo4jSession,
     sync_run_id: str | None = None,
 ) -> list[str]:
     """docs/etl/2-structured_mvp_loading_rules.md 7절 + RQ19 계약: Product 680에서
