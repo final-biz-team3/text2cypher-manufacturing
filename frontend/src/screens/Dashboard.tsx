@@ -226,26 +226,24 @@ export function Dashboard() {
                 </p>
               </div>
               <div className="w-full max-w-2xl">{queryInputBar}</div>
-              {history.length === 0 ? (
-                <div className="w-full max-w-2xl">
-                  <p className="mb-2 text-[12px] font-semibold text-text-faint">
-                    이렇게 질문해 보세요
-                  </p>
-                  <ul className="flex flex-col gap-1.5">
-                    {EXAMPLE_QUESTIONS.map((question) => (
-                      <li key={question}>
-                        <button
-                          type="button"
-                          onClick={() => setQueryText(question)}
-                          className="w-full rounded-md border border-border bg-panel px-3 py-2 text-left text-[12.5px] text-text transition-colors hover:border-border-strong"
-                        >
-                          {question}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+              <div className="w-full max-w-2xl">
+                <p className="mb-2 text-[12px] font-semibold text-text-faint">
+                  이렇게 질문해 보세요
+                </p>
+                <ul className="flex flex-col gap-1.5">
+                  {EXAMPLE_QUESTIONS.map((question) => (
+                    <li key={question}>
+                      <button
+                        type="button"
+                        onClick={() => setQueryText(question)}
+                        className="w-full rounded-md border border-border bg-panel px-3 py-2 text-left text-[12.5px] text-text transition-colors hover:border-border-strong"
+                      >
+                        {question}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
           {activeScreen === 'loading' && (
