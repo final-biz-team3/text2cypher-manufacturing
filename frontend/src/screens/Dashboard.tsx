@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { TopBar } from '@/components/layout/TopBar'
 import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
 import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnswerBox'
 import { ClarificationPrompt } from '@/components/query/ClarificationPrompt'
-import { ResultsTable } from '@/components/result/ResultsTable'
 import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
+import { ResultEvidencePanel } from '@/components/result/ResultEvidencePanel'
 import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useHealthStore } from '@/store/useHealthStore'
@@ -14,8 +15,9 @@ import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
 import { formatCypherError } from '@/lib/formatCypherError'
-import type { AmbiguousCandidate, ChatResponse, HistoryEntry } from '@/lib/schemas'
-import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
+import { toDisplayResult } from '@/lib/displayResult'
+import type { AmbiguousCandidate, HistoryEntry } from '@/lib/schemas'
+import type { RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
 // 모호한 이름이 여러 개면 한 번에 하나씩 확정되므로, 지금까지 확정한 후보들과
 // 원래 질문, 그리고 방금 받은 새 후보 목록을 함께 들고 있어야 한다
@@ -34,28 +36,6 @@ const EXAMPLE_QUESTIONS: string[] = [
 ]
 
 const READ_ONLY = true
-
-// /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있는 형태로 정리한다
-function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
-  const rowsRaw = response.sql_result?.result ?? response.graph_result?.result ?? []
-  const columns: ResultColumn[] =
-    rowsRaw.length > 0 ? Object.keys(rowsRaw[0]).map((key) => ({ key, label: key })) : []
-  const rows = rowsRaw.map((row) =>
-    Object.fromEntries(
-      Object.entries(row).map(([key, value]) => [key, value == null ? '' : String(value)]),
-    ),
-  )
-  return {
-    query: response.query,
-    answer: response.final_answer ?? '답변을 생성하지 못했습니다.',
-    sql: response.sql_query ?? null,
-    cypher: response.cypher_query ?? null,
-    columns,
-    rows,
-    sqlAttempts: response.sql_result?.attempts ?? [],
-    cypherAttempts: response.graph_result?.attempts ?? [],
-  }
-}
 
 // 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다.
 // 실패 다음에 또 다른 시도가 이어졌다면(=실제로 재시도됨) "다시 시도합니다."를 덧붙인다.
@@ -80,17 +60,21 @@ function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrecti
 // 대시보드 화면 전체를 구성하는 최상위 컴포넌트.
 // 질문 입력 → /chat 호출 → 결과 표시 → 이력 저장까지 대시보드의 핵심 흐름을 담당한다.
 export function Dashboard() {
+  const navigate = useNavigate()
+  const location = useLocation()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
+  const postgresConnected = useHealthStore((s) => s.postgresConnected)
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  // 입력창 텍스트는 로컬 상태로만 둔다 - store(sessionStorage 영속)에 두면 한
-  // 글자 칠 때마다 result(수백 행)까지 통째로 다시 직렬화해서 저장하게 된다.
-  // 새로고침 시 보여줄 초기값은 이미 복원된 result.query에서 가져온다(App.tsx가
-  // uiHydrated를 보장한 뒤에만 Dashboard가 마운트되므로 안전하다).
-  const [queryText, setQueryText] = useState(() => useUiStore.getState().result?.query ?? '')
-  // 새로고침해도 보던 화면 그대로 남아있어야 해서(결과/화면 단계 포함)
-  // 전역 store(sessionStorage 영속)에 둔다.
+  // Chat에 새로 진입하면 이전 결과 대신 새 질문 화면을 보여준다. 대시보드에서
+  // 전달한 질문 초안만 입력창의 초기값으로 사용한다.
+  const [queryText, setQueryText] = useState(() => {
+    const draftQuestion = (location.state as { draftQuestion?: unknown } | null)?.draftQuestion
+    return typeof draftQuestion === 'string' ? draftQuestion : ''
+  })
+  // 질문 처리 중에는 여러 결과 컴포넌트가 같은 화면 상태를 공유한다. Chat에
+  // 새로 진입할 때는 아래 useLayoutEffect에서 이 상태를 초기화한다.
   const activeScreen = useUiStore((s) => s.activeScreen)
   const setActiveScreen = useUiStore((s) => s.setActiveScreen)
   const result = useUiStore((s) => s.result)
@@ -105,6 +89,14 @@ export function Dashboard() {
     null,
   )
 
+  // sessionStorage에 이전 성공·오류 화면이 남아 있어도 첫 페인트 전에 질문 화면으로
+  // 초기화한다. useEffect보다 먼저 실행해 예시 질문이 잠깐 보였다 사라지는 현상을 막는다.
+  useLayoutEffect(() => {
+    setActiveScreen('idle')
+    setResult(null)
+    setErrorMessage('')
+  }, [setActiveScreen, setErrorMessage, setResult])
+
   // 대화기록을 다시 불러와 사이드바 목록을 갱신한다
   const refreshHistory = () => {
     fetchHistory()
@@ -116,6 +108,13 @@ export function Dashboard() {
   useEffect(() => {
     refreshHistory()
   }, [])
+
+  useEffect(() => {
+    const draftQuestion = (location.state as { draftQuestion?: unknown } | null)?.draftQuestion
+    if (typeof draftQuestion === 'string' && draftQuestion.trim()) {
+      navigate('/chat', { replace: true, state: null })
+    }
+  }, [location.state, navigate])
 
   // /chat을 호출하고 성공·모호함·에러 세 갈래로 화면 상태를 갱신하는 공통 로직.
   // confirmedSoFar는 직전 라운드까지 사용자가 확정한 후보들(모호한 이름이
@@ -199,6 +198,7 @@ export function Dashboard() {
     <div className="flex h-screen flex-col bg-bg">
       <TopBar
         connected={neo4jConnected}
+        postgresConnected={postgresConnected}
         readOnly={READ_ONLY}
         onNavigateHome={handleNavigateHome}
         username={user?.username}
@@ -210,6 +210,8 @@ export function Dashboard() {
           relationships={RELATIONSHIPS}
           history={history}
           onSelectHistoryItem={handleSelectHistoryItem}
+          onNavigateDashboard={() => navigate('/dashboard')}
+          onNavigateChat={handleNavigateHome}
         />
         <main className="flex flex-1 flex-col overflow-y-auto p-6">
           {activeScreen === 'idle' && (
@@ -224,26 +226,24 @@ export function Dashboard() {
                 </p>
               </div>
               <div className="w-full max-w-2xl">{queryInputBar}</div>
-              {history.length === 0 ? (
-                <div className="w-full max-w-2xl">
-                  <p className="mb-2 text-[12px] font-semibold text-text-faint">
-                    이렇게 질문해 보세요
-                  </p>
-                  <ul className="flex flex-col gap-1.5">
-                    {EXAMPLE_QUESTIONS.map((question) => (
-                      <li key={question}>
-                        <button
-                          type="button"
-                          onClick={() => setQueryText(question)}
-                          className="w-full rounded-md border border-border bg-panel px-3 py-2 text-left text-[12.5px] text-text transition-colors hover:border-border-strong"
-                        >
-                          {question}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+              <div className="w-full max-w-2xl">
+                <p className="mb-2 text-[12px] font-semibold text-text-faint">
+                  이렇게 질문해 보세요
+                </p>
+                <ul className="flex flex-col gap-1.5">
+                  {EXAMPLE_QUESTIONS.map((question) => (
+                    <li key={question}>
+                      <button
+                        type="button"
+                        onClick={() => setQueryText(question)}
+                        className="w-full rounded-md border border-border bg-panel px-3 py-2 text-left text-[12.5px] text-text transition-colors hover:border-border-strong"
+                      >
+                        {question}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
           {activeScreen === 'loading' && (
@@ -273,9 +273,7 @@ export function Dashboard() {
             <div className="flex flex-col gap-4">
               {queryInputBar}
               <NaturalLanguageAnswerBox answer={result.answer} />
-              {result.columns.length > 0 ? (
-                <ResultsTable columns={result.columns} rows={result.rows} />
-              ) : null}
+              <ResultEvidencePanel key={result.query} {...result} />
             </div>
           )}
         </main>

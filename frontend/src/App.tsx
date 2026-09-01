@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { Dashboard } from '@/screens/Dashboard'
+import { OverviewDashboard } from '@/screens/OverviewDashboard'
 import { LoginPage } from '@/pages/LoginPage'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { useUiStore } from '@/store/useUiStore'
@@ -40,14 +41,24 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route
-          path="/"
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <OverviewDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/chat"
           element={
             <ProtectedRoute>
               <Dashboard />
             </ProtectedRoute>
           }
         />
+        <Route path="*" element={<Navigate to="/chat" replace />} />
       </Routes>
     </BrowserRouter>
   )

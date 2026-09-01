@@ -18,6 +18,8 @@ describe('NaturalLanguageAnswerBox', () => {
       />,
     )
 
+    expect(html).toContain('AI 정리 답변')
+    expect(html).toContain('조회된 데이터만 근거로 정리했습니다.')
     expect(html).toContain('<strong>핵심 결과</strong>')
     expect(html).toContain('<ul')
     expect(html).toContain('<table')
