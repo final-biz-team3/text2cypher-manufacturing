@@ -10,7 +10,11 @@ from core.auth import CurrentUser, get_current_user
 from core.history import save_conversation
 from core.openai_client import get_openai_client
 from core.postgres import get_pool, get_write_pool
-from orchestrator.errors import EntityNotFoundError
+from orchestrator.errors import (
+    AnswerGenerationError,
+    EntityNotFoundError,
+    QueryInfrastructureError,
+)
 from orchestrator.graph import build_orchestrator_graph
 from orchestrator.nodes.generate_answer import generate_failure_answer
 from orchestrator.nodes.plan_outputs import OutputPlanningError
@@ -117,6 +121,16 @@ async def chat(
             "query": chat_request.query,
             "final_answer": final_answer,
             "query_failure": query_understanding_failure("planning"),
+        }
+    except (AnswerGenerationError, QueryInfrastructureError) as exc:
+        # 이 둘은 AppError 상속이라 여기서 안 잡으면 main.py의 범용
+        # 핸들러가 잡아 JSON 에러(502/503)로 반환한다 - 이미 exc.message가
+        # 안전한 한국어 안내 문장이라 다른 실패들과 동일하게 자연어 답변
+        # 200으로 감싸 대화 경험을 통일한다.
+        result = {
+            "query": chat_request.query,
+            "final_answer": exc.message,
+            "query_failure": None,
         }
     # entity도 이론상 조회 결과에서 온 값이라(현재는 항상 int id/str name
     # 조합이라 실제로 걸린 적은 없지만) sql_result/graph_result만 따로

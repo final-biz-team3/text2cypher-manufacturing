@@ -15,7 +15,11 @@ import orchestrator.graph as graph_module
 from api.chat import ChatRequest, chat
 from core.auth import CurrentUser, create_access_token
 from main import app as main_app
-from orchestrator.errors import AnswerGenerationError, EntityNotFoundError
+from orchestrator.errors import (
+    AnswerGenerationError,
+    EntityNotFoundError,
+    QueryInfrastructureError,
+)
 from orchestrator.nodes.plan_outputs import OutputPlanningError
 from orchestrator.nodes.route_query import RoutePlanError
 from orchestrator.query_failures import (
@@ -360,9 +364,11 @@ class _PartiallyFailedResultGraph:
         }
 
 
-def test_chat_endpoint_returns_502_and_does_not_save_on_answer_failure(
+def test_chat_endpoint_naturalizes_and_saves_answer_generation_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """AnswerGenerationError를 502 JSON 에러로 새는 대신 다른 실패들과 동일하게
+    자연어 답변 200으로 감싸고 대화기록에 저장한다."""
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     monkeypatch.setattr(main_app.state, "graph", _AnswerFailingGraph(), raising=False)
     write_pool = MockAsyncWritePool()
@@ -372,12 +378,9 @@ def test_chat_endpoint_returns_502_and_does_not_save_on_answer_failure(
 
     response = client.post("/chat", json={"query": "정가 알려줘"})
 
-    assert response.status_code == 502
-    assert response.json() == {
-        "code": "ANSWER_GENERATION_FAILED",
-        "message": "자연어 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-    }
-    assert write_pool.statements == []
+    assert response.status_code == 200
+    assert response.json()["final_answer"] == AnswerGenerationError().message
+    assert write_pool.statements != []
 
 
 @pytest.mark.parametrize(
@@ -423,6 +426,31 @@ async def test_chat_naturalizes_and_saves_user_correctable_early_failure(
     assert "SECRET PLAN RESPONSE" not in answer
     assert "internal route error" not in answer
     assert "internal plan error" not in answer
+
+
+@pytest.mark.parametrize("error", [AnswerGenerationError(), QueryInfrastructureError()])
+async def test_chat_naturalizes_and_saves_apperror_leak(
+    monkeypatch: pytest.MonkeyPatch,
+    error: AnswerGenerationError | QueryInfrastructureError,
+) -> None:
+    """AppError 상속 예외라 main.py 범용 핸들러로 새면 JSON 에러가 되지만,
+    chat()이 직접 잡아 다른 실패와 동일하게 자연어 답변으로 감싼다."""
+    write_pool = MockAsyncWritePool()
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
+    app = FastAPI()
+    app.state.graph = _RaisingGraph(error)
+
+    result = await chat(
+        ChatRequest(query="지난달 결과를 알려줘"),
+        request=Request({"type": "http", "app": app, "headers": []}),
+        user=CurrentUser(username="kim.quality", role="user"),
+    )
+
+    assert result["final_answer"] == error.message
+    assert result["sql_query"] is None
+    assert result["cypher_query"] is None
+    assert write_pool.committed is True
+    assert write_pool.statements[0][1][2] == error.message
 
 
 async def test_chat_removes_raw_query_and_error_from_failed_response_and_history(

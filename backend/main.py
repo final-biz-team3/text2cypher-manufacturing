@@ -109,6 +109,19 @@ async def app_error_handler(request: Request, exc: AppError):
     return JSONResponse(status_code=exc.status_code, content=content)
 
 
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, exc: Exception):
+    # AppError가 아닌 예외(예상 못 한 버그)는 여기 걸리기 전까지 FastAPI
+    # 기본 500(트레이스백 노출 위험)으로 그대로 빠지고 있었다 - 최소한 안전한
+    # 응답과 서버 로그는 보장한다.
+    logger.exception("처리되지 않은 예외: %s %s", request.method, request.url.path)
+    content = {
+        "code": "INTERNAL_ERROR",
+        "message": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+    }
+    return JSONResponse(status_code=500, content=content)
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return Response(status_code=204)
