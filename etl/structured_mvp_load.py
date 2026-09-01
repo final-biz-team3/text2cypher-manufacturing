@@ -39,15 +39,6 @@ from structured_mvp_spec import NodeSpec, RelationshipSpec
 
 BATCH_SIZE = 1000
 
-BUSINESS_LABELS = [
-    "Product",
-    "Supplier",
-    "WorkOrder",
-    "RoutingOperation",
-    "Location",
-    "ScrapReason",
-]
-
 
 def chunk_rows(rows: list[Any], batch_size: int = BATCH_SIZE) -> Iterator[list[Any]]:
     """행 목록을 batch_size 단위로 잘라 순서대로 내놓는다."""

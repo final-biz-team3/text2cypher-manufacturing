@@ -13,8 +13,11 @@ from typing import Any
 from dotenv import load_dotenv
 from neo4j import Driver, Session
 from postgres_restore import ROOT_DIR
-from structured_mvp_config import RELATIONSHIP_TYPES, connect_neo4j_from_env
-from structured_mvp_load import BUSINESS_LABELS
+from structured_mvp_config import (
+    BUSINESS_LABELS,
+    RELATIONSHIP_TYPES,
+    connect_neo4j_from_env,
+)
 
 # quantityPerAssembly가 PostgreSQL Decimal -> float 변환 후 Cypher에서 다시 곱셈을
 # 거치므로, 수학적으로 정확히 80이어도 부동소수점 표현 오차로 79.99999999999997

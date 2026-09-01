@@ -10,11 +10,12 @@ import os
 import sys
 
 from neo4j import Driver, GraphDatabase
-from structured_mvp_spec import RELATIONSHIP_SPECS
+from structured_mvp_spec import NODE_SPECS, RELATIONSHIP_SPECS
 
 NEO4J_REQUIRED_ENV_VARS = ["NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"]
 
-# 스펙 테이블에서 파생 - 관계가 추가되면 structured_mvp_spec.py만 고치면 된다.
+# 스펙 테이블에서 파생 - 노드/관계가 추가되면 structured_mvp_spec.py만 고치면 된다.
+BUSINESS_LABELS = [spec.label for spec in NODE_SPECS]
 RELATIONSHIP_TYPES = [spec.rel_type for spec in RELATIONSHIP_SPECS]
 
 

@@ -38,10 +38,13 @@ import psycopg2
 import psycopg2.extensions
 from neo4j import Driver
 from postgres_restore import REQUIRED_ENV_VARS, ROOT_DIR, target_database_exists
-from structured_mvp_config import RELATIONSHIP_TYPES, connect_neo4j_from_env
+from structured_mvp_config import (
+    BUSINESS_LABELS,
+    RELATIONSHIP_TYPES,
+    connect_neo4j_from_env,
+)
 from structured_mvp_extract import extract_rows, normalize_row
 from structured_mvp_load import (
-    BUSINESS_LABELS,
     apply_constraints,
     create_neo4j_database,
     generate_database_name,
