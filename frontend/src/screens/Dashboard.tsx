@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { TopBar } from '@/components/layout/TopBar'
@@ -67,18 +67,14 @@ export function Dashboard() {
   const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
   const postgresConnected = useHealthStore((s) => s.postgresConnected)
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  // 입력창 텍스트는 로컬 상태로만 둔다 - store(sessionStorage 영속)에 두면 한
-  // 글자 칠 때마다 result(수백 행)까지 통째로 다시 직렬화해서 저장하게 된다.
-  // 새로고침 시 보여줄 초기값은 이미 복원된 result.query에서 가져온다(App.tsx가
-  // uiHydrated를 보장한 뒤에만 Dashboard가 마운트되므로 안전하다).
+  // Chat에 새로 진입하면 이전 결과 대신 새 질문 화면을 보여준다. 대시보드에서
+  // 전달한 질문 초안만 입력창의 초기값으로 사용한다.
   const [queryText, setQueryText] = useState(() => {
     const draftQuestion = (location.state as { draftQuestion?: unknown } | null)?.draftQuestion
-    return typeof draftQuestion === 'string'
-      ? draftQuestion
-      : (useUiStore.getState().result?.query ?? '')
+    return typeof draftQuestion === 'string' ? draftQuestion : ''
   })
-  // 새로고침해도 보던 화면 그대로 남아있어야 해서(결과/화면 단계 포함)
-  // 전역 store(sessionStorage 영속)에 둔다.
+  // 질문 처리 중에는 여러 결과 컴포넌트가 같은 화면 상태를 공유한다. Chat에
+  // 새로 진입할 때는 아래 useLayoutEffect에서 이 상태를 초기화한다.
   const activeScreen = useUiStore((s) => s.activeScreen)
   const setActiveScreen = useUiStore((s) => s.setActiveScreen)
   const result = useUiStore((s) => s.result)
@@ -92,6 +88,15 @@ export function Dashboard() {
   const [pendingClarification, setPendingClarification] = useState<PendingClarification | null>(
     null,
   )
+
+  // sessionStorage에 이전 성공·오류 화면이 남아 있어도 첫 페인트 전에 질문 화면으로
+  // 초기화한다. useEffect보다 먼저 실행해 예시 질문이 잠깐 보였다 사라지는 현상을 막는다.
+  useLayoutEffect(() => {
+    setActiveScreen('idle')
+    setResult(null)
+    setErrorMessage('')
+  }, [setActiveScreen, setErrorMessage, setResult])
+
   // 대화기록을 다시 불러와 사이드바 목록을 갱신한다
   const refreshHistory = () => {
     fetchHistory()
