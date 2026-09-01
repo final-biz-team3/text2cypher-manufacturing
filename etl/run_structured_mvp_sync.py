@@ -37,7 +37,8 @@ from datetime import UTC, datetime
 import psycopg2
 import psycopg2.extensions
 from neo4j import Driver
-from postgres_restore import REQUIRED_ENV_VARS, ROOT_DIR, target_database_exists
+from paths import ROOT_DIR
+from postgres_restore import REQUIRED_ENV_VARS, target_database_exists
 from structured_mvp_config import (
     BUSINESS_LABELS,
     RELATIONSHIP_TYPES,

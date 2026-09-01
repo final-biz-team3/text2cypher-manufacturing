@@ -54,9 +54,9 @@ from pathlib import Path
 import psycopg2
 import psycopg2.errors
 from dotenv import load_dotenv
+from paths import ROOT_DIR
 from psycopg2 import sql
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
 REQUIRED_ENV_VARS = ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER"]
 
 # 배치 하나당 문장 텍스트 총 길이 상한(문자 수). PostgreSQL이 큰 멀티 문장

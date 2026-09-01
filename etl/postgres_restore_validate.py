@@ -19,8 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from dotenv import load_dotenv
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
+from paths import ROOT_DIR
 
 FixtureCheck = tuple[str, str, tuple[Any, ...], Any]  # (설명, SQL, 파라미터, 기대값)
 

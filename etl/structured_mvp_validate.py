@@ -12,7 +12,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from neo4j import Driver, Session
-from postgres_restore import ROOT_DIR
+from paths import ROOT_DIR
 from structured_mvp_config import (
     BUSINESS_LABELS,
     RELATIONSHIP_TYPES,
