@@ -107,7 +107,7 @@ class _MockAsyncWriteConnection:
         self, query: str, params: tuple[Any, ...] = ()
     ) -> "_MockAsyncWriteCursor":
         self._pool.statements.append((query, params))
-        return _MockAsyncWriteCursor(self._pool.rows)
+        return _MockAsyncWriteCursor(self._pool.rows, self._pool.rowcount)
 
     async def commit(self) -> None:
         self._pool.committed = True
@@ -117,8 +117,9 @@ class _MockAsyncWriteConnection:
 
 
 class _MockAsyncWriteCursor:
-    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+    def __init__(self, rows: list[tuple[Any, ...]], rowcount: int = 0) -> None:
         self._rows = rows
+        self.rowcount = rowcount
 
     async def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
@@ -140,8 +141,11 @@ class MockAsyncWritePool:
     기록만 하는 write pool mock. 엔티티 조회용 MockAsyncPostgresPool과 달리
     쿼리 문형을 추측해 분기하지 않고, 실행된 statement를 순서대로 쌓아둔다."""
 
-    def __init__(self, rows: list[tuple[Any, ...]] | None = None) -> None:
+    def __init__(
+        self, rows: list[tuple[Any, ...]] | None = None, rowcount: int = 0
+    ) -> None:
         self.rows = rows or []
+        self.rowcount = rowcount
         self.statements: list[tuple[str, tuple[Any, ...]]] = []
         self.committed = False
         self.rollback_called = False

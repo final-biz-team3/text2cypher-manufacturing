@@ -85,20 +85,21 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["entity"] == {
+    assert result.entity == {
         "productId": 956,
         "productName": "Touring-1000 Yellow, 54",
     }
-    assert result["sql_query"] == (
+    assert result.sql_query == (
         'SELECT listprice AS "listPrice" FROM production.product WHERE productid = 956'
     )
-    assert result["sql_result"]["error"] is None
-    assert result["sql_result"]["result"] == [{"listPrice": 2384.07}]
-    assert result["final_answer"] == _ANSWER
-    assert "composed_result" not in result
-    assert "resultTransform" not in result
-    assert "subqueries" not in result
-    assert "subquery_results" not in result
+    assert result.sql_result is not None
+    assert result.sql_result.error is None
+    assert result.sql_result.result == [{"listPrice": 2384.07}]
+    assert result.final_answer == _ANSWER
+    assert not hasattr(result, "composed_result")
+    assert not hasattr(result, "resultTransform")
+    assert not hasattr(result, "subqueries")
+    assert not hasattr(result, "subquery_results")
     assert len(openai_client.calls) == 5
 
 
@@ -210,9 +211,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert (
-        result["sql_query"] == 'SELECT listprice AS "listPrice" FROM production.product'
-    )
+    assert result.sql_query == 'SELECT listprice AS "listPrice" FROM production.product'
 
 
 def test_chat_request_rejects_unknown_field() -> None:
@@ -403,9 +402,9 @@ async def test_chat_naturalizes_and_saves_user_correctable_early_failure(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["final_answer"] == answer
-    assert result["sql_query"] is None
-    assert result["cypher_query"] is None
+    assert result.final_answer == answer
+    assert result.sql_query is None
+    assert result.cypher_query is None
     assert write_pool.committed is True
     assert write_pool.statements[0][1][2] == answer
     prompt = str(openai_client.calls[0]["messages"])
@@ -430,10 +429,11 @@ async def test_chat_removes_raw_query_and_error_from_failed_response_and_history
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_query"] is None
-    assert result["sql_result"]["error"] == "질의를 완료하지 못했습니다."
-    assert result["sql_result"]["attempts"] == []
-    serialized_response = json.dumps(result, ensure_ascii=False)
+    assert result.sql_query is None
+    assert result.sql_result is not None
+    assert result.sql_result.error == "질의를 완료하지 못했습니다."
+    assert result.sql_result.attempts == []
+    serialized_response = json.dumps(result.model_dump(), ensure_ascii=False)
     serialized_history = json.dumps(write_pool.statements, ensure_ascii=False)
     assert "secret_table" not in serialized_response
     assert "database secret error" not in serialized_response
@@ -456,11 +456,15 @@ async def test_chat_preserves_successful_tool_attempts_on_partial_failure(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_query"] == "SELECT product_id FROM production.product"
-    assert result["sql_result"]["attempts"][0]["error"] is None
-    assert result["cypher_query"] is None
-    assert result["graph_result"]["attempts"] == []
-    assert "secret" not in json.dumps(result["graph_result"], ensure_ascii=False)
+    assert result.sql_query == "SELECT product_id FROM production.product"
+    assert result.sql_result is not None
+    assert result.sql_result.attempts[0].error is None
+    assert result.cypher_query is None
+    assert result.graph_result is not None
+    assert result.graph_result.attempts == []
+    assert "secret" not in json.dumps(
+        result.graph_result.model_dump(), ensure_ascii=False
+    )
 
 
 async def test_early_failure_answer_generation_error_does_not_save_history(
@@ -547,15 +551,17 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_result"]["result"] == [{"listPrice": 2384.07}]
-    assert result["graph_result"]["result"][0]["sourceModifiedAt"] == (
+    assert result.sql_result is not None
+    assert result.graph_result is not None
+    assert result.sql_result.result == [{"listPrice": 2384.07}]
+    assert result.graph_result.result[0]["sourceModifiedAt"] == (
         "2014-02-08T10:01:36.827000000"
     )
     # json.dumps가 그대로 통과해야 한다 - Decimal/neo4j.time.DateTime을
     # 변환 없이 넘기면 여기서 TypeError가 난다(save_conversation 내부에서도
     # 동일하게 json.dumps를 쓰므로, 응답과 저장 양쪽에 이 값이 안전해야 함).
-    json.dumps(result["sql_result"])
-    json.dumps(result["graph_result"])
+    json.dumps(result.sql_result.model_dump())
+    json.dumps(result.graph_result.model_dump())
     assert write_pool.statements
 
 
@@ -623,15 +629,18 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
         user=CurrentUser(username="kim.quality", role="user"),
     )
 
-    assert result["sql_result"]["result"] == [
+    assert result.sql_result is not None
+    assert result.graph_result is not None
+    assert result.sql_result.result == [
         {"productId": 1, "productName": "SQL Product", "sqlFact": "kept"}
     ]
-    assert result["graph_result"]["result"] == [
+    assert result.graph_result.result == [
         {"productId": 999, "productName": "Graph Product", "graphFact": "kept"}
     ]
-    assert "다시 시도" in result["final_answer"]
-    assert "바인딩 범위를 벗어났습니다" not in result["final_answer"]
-    assert "composed_result" not in result
-    assert "resultTransform" not in result
-    assert "subqueries" not in result
-    assert "subquery_results" not in result
+    assert result.final_answer is not None
+    assert "다시 시도" in result.final_answer
+    assert "바인딩 범위를 벗어났습니다" not in result.final_answer
+    assert not hasattr(result, "composed_result")
+    assert not hasattr(result, "resultTransform")
+    assert not hasattr(result, "subqueries")
+    assert not hasattr(result, "subquery_results")

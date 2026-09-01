@@ -4,7 +4,7 @@ from typing import Any
 import neo4j.time
 from fastapi import APIRouter, Depends, Request
 from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.auth import CurrentUser, get_current_user
 from core.history import save_conversation
@@ -76,7 +76,36 @@ class ChatRequest(BaseModel):
     confirmed_entity: dict | list[dict] | None = None
 
 
-@router.post("/chat")
+class RetryAttempt(BaseModel):
+    query: str
+    error: str | None
+
+
+class QueryOutcome(BaseModel):
+    """execute_plan/retry_agent가 SQL·Cypher 실행마다 만드는 결과 요약
+    (orchestrator/nodes/execute_plan.py의 _result_summary와 shape이 같다)."""
+
+    result: list[dict[str, Any]] | None
+    error: str | None
+    attempts: list[RetryAttempt] = Field(default_factory=list)
+    empty_reason: str | None = None
+
+
+class ChatResponse(BaseModel):
+    """POST /chat 응답 계약. 필드 목록이 이 모델 하나로 고정돼, orchestrator
+    내부 전용 필드(composed_result 등)가 실수로 새어나가는 걸 막는다."""
+
+    query: str
+    entity: dict | list[dict] | None = None
+    tool_plan: list[str] | None = None
+    sql_query: str | None = None
+    cypher_query: str | None = None
+    sql_result: QueryOutcome | None = None
+    graph_result: QueryOutcome | None = None
+    final_answer: str | None = None
+
+
+@router.post("/chat", response_model=ChatResponse)
 async def chat(
     chat_request: ChatRequest,
     request: Request,
@@ -133,42 +162,49 @@ async def chat(
     # entity도 이론상 조회 결과에서 온 값이라(현재는 항상 int id/str name
     # 조합이라 실제로 걸린 적은 없지만) sql_result/graph_result만 따로
     # 변환하면 나중에 다른 필드에서 같은 버그가 재현될 수 있다 - response
-    # 전체를 한 번에 감싼다.
+    # 전체를 한 번에 감싼다. 이후로는 이 ChatResponse 하나만 쓰고, dict로
+    # 다시 풀어보지 않는다(응답 계약을 두 표현으로 쪼개면 필드명이
+    # 어긋나도 잡아낼 방법이 없다).
     query_failure: QueryFailure | None = result.get("query_failure")
     sql_failed = _tool_failed(query_failure, "sql")
     graph_failed = _tool_failed(query_failure, "graph")
-    response = _to_json_safe(
-        {
-            "query": result["query"],
-            "entity": result.get("entity"),
-            "tool_plan": result.get("tool_plan"),
-            "sql_query": None if sql_failed else result.get("sql_query"),
-            "cypher_query": (None if graph_failed else result.get("cypher_query")),
-            "sql_result": (
-                _safe_failed_result(result.get("sql_result"))
-                if sql_failed
-                else result.get("sql_result")
-            ),
-            "graph_result": (
-                _safe_failed_result(result.get("graph_result"))
-                if graph_failed
-                else result.get("graph_result")
-            ),
-            "final_answer": result.get("final_answer"),
-        }
+    response = ChatResponse(
+        **_to_json_safe(
+            {
+                "query": result["query"],
+                "entity": result.get("entity"),
+                "tool_plan": result.get("tool_plan"),
+                "sql_query": None if sql_failed else result.get("sql_query"),
+                "cypher_query": (None if graph_failed else result.get("cypher_query")),
+                "sql_result": (
+                    _safe_failed_result(result.get("sql_result"))
+                    if sql_failed
+                    else result.get("sql_result")
+                ),
+                "graph_result": (
+                    _safe_failed_result(result.get("graph_result"))
+                    if graph_failed
+                    else result.get("graph_result")
+                ),
+                "final_answer": result.get("final_answer"),
+            }
+        )
     )
     try:
         # 대화기록 저장은 쓰기(INSERT)라 조회 전용 get_pool()이 아니라
-        # read_only가 안 걸린 별도의 write pool을 쓴다.
+        # read_only가 안 걸린 별도의 write pool을 쓴다. get_write_pool()의
+        # 실제 반환 타입(AsyncConnectionPool)이 core.history.Pool Protocol과
+        # mypy 구조적 검사에서만 어긋나는 이유는 core/history.py의 Pool
+        # 주석 참고(실측 확인된 mypy 한계).
         await save_conversation(
-            get_write_pool(),
+            get_write_pool(),  # type: ignore[arg-type]
             user.username,
-            response["query"],
-            response["final_answer"],
-            response["sql_query"],
-            response["cypher_query"],
-            response["sql_result"],
-            response["graph_result"],
+            response.query,
+            response.final_answer,
+            response.sql_query,
+            response.cypher_query,
+            response.sql_result.model_dump() if response.sql_result else None,
+            response.graph_result.model_dump() if response.graph_result else None,
         )
     except Exception:
         # write pool 고갈(PoolTimeout 등)로 실패했는지 구분할 수 있도록 그
@@ -177,7 +213,7 @@ async def chat(
         logger.exception(
             "save_conversation 실패: username=%r query=%r pool_stats=%s",
             user.username,
-            response["query"],
+            response.query,
             get_write_pool().get_stats(),
         )
     return response

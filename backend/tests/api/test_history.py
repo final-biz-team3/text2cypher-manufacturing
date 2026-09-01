@@ -3,9 +3,13 @@
 from datetime import datetime
 from typing import Any
 
+import pytest
+from fastapi import HTTPException
+
 import api.history as history_module
-from api.history import get_history
+from api.history import delete_history, get_history
 from core.auth import CurrentUser
+from tests.mocks.postgres import MockAsyncWritePool
 
 
 class _FakeCursor:
@@ -65,3 +69,32 @@ async def test_get_history_scopes_query_by_role(monkeypatch: Any) -> None:
     query, params = pool.last_query
     assert "WHERE" not in query
     assert params == ()
+
+
+async def test_delete_history_deletes_own_row_and_returns_no_content(
+    monkeypatch: Any,
+) -> None:
+    pool = MockAsyncWritePool(rowcount=1)
+    monkeypatch.setattr(history_module, "get_write_pool", lambda: pool)
+
+    await delete_history(
+        history_id=42, user=CurrentUser(username="kim.quality", role="user")
+    )
+
+    assert pool.statements
+    query, params = pool.statements[0]
+    assert "DELETE FROM app.conversation_history" in query
+    assert params == (42, "kim.quality")
+    assert pool.committed is True
+
+
+async def test_delete_history_raises_404_when_not_found(monkeypatch: Any) -> None:
+    pool = MockAsyncWritePool(rowcount=0)
+    monkeypatch.setattr(history_module, "get_write_pool", lambda: pool)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await delete_history(
+            history_id=42, user=CurrentUser(username="kim.quality", role="user")
+        )
+
+    assert excinfo.value.status_code == 404
