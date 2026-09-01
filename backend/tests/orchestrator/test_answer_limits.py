@@ -48,13 +48,13 @@ def test_truncate_result_for_answer_cuts_by_char_limit_before_row_limit() -> Non
     assert result["truncated"] is True
 
 
-def test_truncate_result_for_answer_rejects_first_row_over_char_budget() -> None:
-    """첫 행도 문자 예산을 넘으면 포함하지 않아 전역 상한을 지킨다."""
+def test_truncate_result_for_answer_keeps_first_row_over_char_budget() -> None:
+    """성공한 결과가 0행 컨텍스트와 502로 바뀌지 않도록 첫 행은 보존한다."""
     rows = [{"name": "x" * 100}, {"name": "y" * 100}]
 
     result = truncate_result_for_answer(rows, max_rows=10, max_chars=10)
 
-    assert result["rows"] == []
+    assert result["rows"] == rows[:1]
     assert result["total_count"] == 2
     assert result["truncated"] is True
 

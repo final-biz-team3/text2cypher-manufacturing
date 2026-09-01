@@ -74,6 +74,10 @@ def truncate_result_for_answer(
     for row in rows[:row_limit]:
         row_chars = _json_size(row)
         if char_count + row_chars > char_limit:
+            if not truncated_rows:
+                # 비어 있지 않은 성공 결과가 답변 생성 실패로 바뀌지 않도록 첫 행은
+                # 문자 예산을 넘더라도 완전한 값 그대로 한 번 포함한다.
+                truncated_rows.append(row)
             break
         truncated_rows.append(row)
         char_count += row_chars
@@ -114,6 +118,10 @@ def _truncate_sections(
             row = rows[position]
             row_chars = _json_size(row)
             if char_count + row_chars > max_chars:
+                if included_count == 0:
+                    included[section_id].append(row)
+                    positions[section_id] += 1
+                    included_count += 1
                 blocked.add(section_id)
                 continue
 

@@ -348,17 +348,32 @@ async def test_generate_failure_answer_does_not_ground_values_from_question() ->
         )
 
 
-async def test_generate_answer_fails_when_no_row_fits_prompt_budget(
+async def test_generate_answer_keeps_first_row_when_it_exceeds_prompt_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ANSWER_MAX_CHARS", "1")
     client = MockOpenAIClient(make_content_response("재고는 10입니다."))
 
-    with pytest.raises(AnswerGenerationError):
-        await make_generate_answer_node(client)(
-            {"query": "재고를 알려줘", "composed_result": _composed_result()}
-        )
+    result = await make_generate_answer_node(client)(
+        {"query": "재고를 알려줘", "composed_result": _composed_result()}
+    )
 
+    assert result["final_answer"] == "재고는 10입니다."
+    assert len(client.calls) == 1
+
+
+async def test_generate_answer_uses_internal_failure_message_without_llm() -> None:
+    client = MockOpenAIClient()
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "가격이 100 이상인 제품",
+            "query_failure": _query_failure(kind="internal"),
+        }
+    )
+
+    assert "일시적인 문제" in result["final_answer"]
+    assert "질문을 바꾸" in result["final_answer"]
     assert client.calls == []
 
 
@@ -371,6 +386,40 @@ async def test_generate_answer_rejects_unknown_latin_identifier() -> None:
         await make_generate_answer_node(client)(
             {"query": "재고를 알려줘", "composed_result": _composed_result()}
         )
+
+
+@pytest.mark.parametrize("unknown_name", ["브레이크패드", "가상제품"])
+async def test_generate_answer_rejects_unknown_korean_entity_name(
+    unknown_name: str,
+) -> None:
+    client = MockOpenAIClient(
+        make_content_response(f"{unknown_name}의 재고는 10입니다.")
+    )
+
+    with pytest.raises(AnswerGenerationError):
+        await make_generate_answer_node(client)(
+            {
+                "query": "재고를 알려줘",
+                "composed_result": _composed_result(
+                    rows=[{"productName": "프레임", "stock": 10}]
+                ),
+            }
+        )
+
+
+async def test_generate_answer_accepts_grounded_korean_entity_name() -> None:
+    client = MockOpenAIClient(make_content_response("프레임의 재고는 10입니다."))
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "재고를 알려줘",
+            "composed_result": _composed_result(
+                rows=[{"productName": "프레임", "stock": 10}]
+            ),
+        }
+    )
+
+    assert result["final_answer"] == "프레임의 재고는 10입니다."
 
 
 async def test_generate_answer_allows_markdown_ordered_list_numbers() -> None:

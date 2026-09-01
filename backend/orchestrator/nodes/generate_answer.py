@@ -26,6 +26,112 @@ _NUMBER_WITH_UNIT = re.compile(
     r"(?P<unit>개|원|곳|건|명|대|일|시간|분|초|%|퍼센트)"
 )
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
+_KOREAN_TOKEN = re.compile(r"[가-힣]{2,}")
+_KOREAN_SUFFIXES = tuple(
+    sorted(
+        {
+            "으로부터",
+            "에서부터",
+            "입니다",
+            "합니다",
+            "됩니다",
+            "납니다",
+            "드립니다",
+            "줍니다",
+            "습니다",
+            "에서는",
+            "으로",
+            "에게",
+            "부터",
+            "까지",
+            "처럼",
+            "보다",
+            "에서",
+            "이며",
+            "이고",
+            "으로는",
+            "로는",
+            "에는",
+            "은",
+            "는",
+            "이",
+            "가",
+            "을",
+            "를",
+            "의",
+            "와",
+            "과",
+            "도",
+            "만",
+            "에",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+_GENERIC_KOREAN_TERMS = {
+    "결과",
+    "조회",
+    "질문",
+    "답변",
+    "제품",
+    "부품",
+    "공정",
+    "재고",
+    "수량",
+    "가격",
+    "정가",
+    "값",
+    "정보",
+    "항목",
+    "목록",
+    "표",
+    "전체",
+    "일부",
+    "대표",
+    "요약",
+    "핵심",
+    "기준",
+    "합계",
+    "평균",
+    "최대",
+    "최소",
+    "순위",
+    "상위",
+    "하위",
+    "기간",
+    "날짜",
+    "원",
+    "개",
+    "건",
+    "명",
+    "대",
+    "곳",
+    "일",
+    "시간",
+    "분",
+    "초",
+    "천",
+    "만",
+    "억",
+    "현재",
+    "다음",
+    "해당",
+    "확인",
+    "포함",
+    "제외",
+    "바탕",
+    "나타",
+    "알려",
+    "보여",
+    "같",
+    "있",
+    "없",
+    "많",
+    "적",
+    "높",
+    "낮",
+}
 _FORBIDDEN_OUTPUT_TERMS = (
     "SQL",
     "Cypher",
@@ -42,6 +148,10 @@ _NO_DATA_ANSWER = "질문에 해당하는 조회 결과가 없습니다."
 _INCONCLUSIVE_ANSWER = (
     "현재 조회 결과만으로는 질문에 대한 답을 확정할 수 없습니다. "
     "조건을 조금 더 구체적으로 지정해 다시 질문해 주세요."
+)
+_INTERNAL_FAILURE_ANSWER = (
+    "질의를 처리하는 과정에서 일시적인 문제가 발생했습니다. "
+    "질문을 바꾸기보다 잠시 후 다시 시도해 주세요."
 )
 
 _ANSWER_INSTRUCTIONS = """당신은 제조 데이터 조회 결과를 설명하는 답변 작성기입니다.
@@ -99,7 +209,22 @@ def _strip_ungrounded_units(answer: str, source_text: str) -> str:
     return _NUMBER_WITH_UNIT.sub(replace, answer)
 
 
-def _validate_and_sanitize_answer(answer: str, source_text: str) -> str:
+def _korean_term_is_grounded(token: str, source_text: str) -> bool:
+    if token in source_text:
+        return True
+    stem = token
+    for suffix in _KOREAN_SUFFIXES:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    if not stem or stem in source_text:
+        return True
+    return stem in _GENERIC_KOREAN_TERMS
+
+
+def _validate_and_sanitize_answer(
+    answer: str, source_text: str, *, validate_korean_terms: bool = False
+) -> str:
     """출력의 숫자·영문 식별자를 근거와 대조하고 단위 추측을 제거한다."""
     sanitized = _strip_ungrounded_units(answer, source_text)
     if any(term.lower() in sanitized.lower() for term in _FORBIDDEN_OUTPUT_TERMS):
@@ -109,6 +234,11 @@ def _validate_and_sanitize_answer(answer: str, source_text: str) -> str:
     source_lower = source_text.lower()
     if any(
         token.lower() not in source_lower for token in _LATIN_TOKEN.findall(sanitized)
+    ):
+        raise AnswerGenerationError()
+    if validate_korean_terms and any(
+        not _korean_term_is_grounded(token, source_text)
+        for token in _KOREAN_TOKEN.findall(sanitized)
     ):
         raise AnswerGenerationError()
     return sanitized
@@ -171,7 +301,9 @@ async def _generate_markdown_answer(
             ensure_ascii=False,
             default=str,
         )
-        return _validate_and_sanitize_answer(content.strip(), source_text)
+        return _validate_and_sanitize_answer(
+            content.strip(), source_text, validate_korean_terms=True
+        )
     except AnswerGenerationError:
         raise
     except Exception as exc:
@@ -271,7 +403,7 @@ def make_generate_answer_node(
                         failure=query_failure,
                     )
                 }
-            return {"final_answer": _COMPOSITION_ERROR_ANSWER}
+            return {"final_answer": _INTERNAL_FAILURE_ANSWER}
 
         composed_result = state.get("composed_result")
         if composed_result is None or composed_result.get("error") is not None:
