@@ -101,6 +101,25 @@ def make_content_response(
     )
 
 
+def make_output_plan_response(
+    *,
+    answer_values: list[str] | tuple[str, ...] = (),
+    result_entities: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    grain_fields: list[str] | tuple[str, ...] = (),
+) -> MockChatCompletion:
+    """Build the structured semantic output-plan response used by the planner."""
+    return make_content_response(
+        json.dumps(
+            {
+                "resultEntities": list(result_entities),
+                "grainFields": list(grain_fields),
+                "answerValues": list(answer_values),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 class _MockCompletions:
     def __init__(self, responses: list[MockChatCompletion]) -> None:
         self._responses = responses
