@@ -9,7 +9,7 @@ interface EntityDetailContentProps {
   loading: boolean
   error: string | null
   fallbackProperties?: Record<string, unknown>
-  onAsk: (question: string) => void
+  onAsk?: (question: string) => void
   onSelectEntity?: (entity: EntitySelection, trigger: HTMLElement) => void
 }
 
@@ -167,7 +167,7 @@ export function EntityDetailContent({
               </section>
             ))}
           </div>
-          {detail.actions[0] ? (
+          {detail.actions[0] && onAsk ? (
             <div className="border-t border-border bg-panel px-4 py-3">
               <Button
                 type="button"

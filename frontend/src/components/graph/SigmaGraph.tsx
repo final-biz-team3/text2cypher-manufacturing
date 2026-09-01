@@ -1,6 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Maximize2, Minus, Plus, RotateCcw, Search, X } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
 import {
   SigmaContainer,
   useCamera,
@@ -610,7 +609,6 @@ function buildRelationshipSummaries(graph: SigmaGraphologyGraph): RelationshipSu
 }
 
 function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
-  const navigate = useNavigate()
   const theme = useUiStore((state) => state.theme)
   const [selectedNodeIds, setSelectedNodeIds] = useState<ReadonlySet<string>>(() => new Set())
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
@@ -836,7 +834,6 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
                 entityDetailError ?? (selectedEntity ? null : '상세 API 식별자가 없는 노드입니다.')
               }
               fallbackProperties={selectedAttributes.properties}
-              onAsk={(question) => navigate('/chat', { state: { draftQuestion: question } })}
             />
           </aside>
         ) : null}
