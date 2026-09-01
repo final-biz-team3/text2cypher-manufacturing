@@ -214,30 +214,29 @@ def validate_after_load(
     건수가 어긋나면 fixture까지 갈 것 없이 거기서 리스트를 돌려준다(원래 흐름과
     동일). 통과 시 건수 요약 출력은 여기서 한다.
     """
-    actual_node_counts = count_nodes_by_label(driver, BUSINESS_LABELS, database=database)
-    actual_rel_counts = count_relationships_by_type(
-        driver, RELATIONSHIP_TYPES, database=database
-    )
-    if actual_node_counts != expected_node_counts:
-        return [
-            f"노드 적재 건수 불일치 (추출 {expected_node_counts} vs 적재 "
-            f"{actual_node_counts}) - 새 데이터베이스 '{database}'는 조사를 위해 "
-            "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
-        ]
-    if actual_rel_counts != expected_rel_counts:
-        return [
-            f"관계 적재 건수 불일치 (추출 {expected_rel_counts} vs 적재 "
-            f"{actual_rel_counts}) - 새 데이터베이스 '{database}'는 조사를 위해 "
-            "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
-        ]
+    with driver.session(database=database) as session:
+        actual_node_counts = count_nodes_by_label(session, BUSINESS_LABELS)
+        actual_rel_counts = count_relationships_by_type(session, RELATIONSHIP_TYPES)
+        if actual_node_counts != expected_node_counts:
+            return [
+                f"노드 적재 건수 불일치 (추출 {expected_node_counts} vs 적재 "
+                f"{actual_node_counts}) - 새 데이터베이스 '{database}'는 조사를 위해 "
+                "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
+            ]
+        if actual_rel_counts != expected_rel_counts:
+            return [
+                f"관계 적재 건수 불일치 (추출 {expected_rel_counts} vs 적재 "
+                f"{actual_rel_counts}) - 새 데이터베이스 '{database}'는 조사를 위해 "
+                "남겨뒀습니다. 기존 기본 데이터베이스는 승격하지 않아 안전합니다."
+            ]
 
-    parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
-    entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
-    failures = verify_fixture_entities(driver, entities, database=database)
-    failures += verify_work_order_17747_fixture(driver, database=database)
-    failures += verify_bom_680_to_492_quantity(driver, database=database)
-    if failures:
-        return failures
+        parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
+        entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+        failures = verify_fixture_entities(session, entities)
+        failures += verify_work_order_17747_fixture(session)
+        failures += verify_bom_680_to_492_quantity(session)
+        if failures:
+            return failures
 
     print(f"   노드 건수: {actual_node_counts}")
     print(f"   관계 건수: {actual_rel_counts}")
