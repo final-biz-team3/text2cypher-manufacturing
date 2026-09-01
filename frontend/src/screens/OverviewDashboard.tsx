@@ -1,42 +1,26 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  AlertTriangle,
-  ArrowRight,
-  Boxes,
-  ClipboardList,
-  Factory,
-  MessageSquareText,
-  PackageSearch,
-  RefreshCw,
-  Store,
-  Trash2,
-} from 'lucide-react'
+import { AlertTriangle, ArrowRight, MessageSquareText, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar } from '@/components/layout/TopBar'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { AnalysisCard } from '@/components/dashboard/AnalysisCard'
+import { DashboardRiskPanel } from '@/components/dashboard/DashboardRiskPanel'
+import { PriorityMetrics, SecondaryMetrics } from '@/components/dashboard/DashboardMetrics'
 import { DashboardDrawer } from '@/components/dashboard/DashboardDrawer'
 import { formatSnapshotDateTime } from '@/components/dashboard/dashboardFormatters'
 import { Button } from '@/components/ui/button'
-import { fetchDashboardOverview, type DashboardKpi } from '@/lib/dashboard'
+import { fetchDashboardOverview, type DashboardCard } from '@/lib/dashboard'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useDashboardStore } from '@/store/useDashboardStore'
 import { useHealthStore } from '@/store/useHealthStore'
 
-const KPI_ICONS = {
-  product_count: Boxes,
-  active_supplier_count: Store,
-  purchased_product_count: PackageSearch,
-  low_stock_product_count: AlertTriangle,
-  work_order_count: ClipboardList,
-  scrapped_work_order_count: Trash2,
-} as const
-
-const KPI_TONES: Record<string, string> = {
-  low_stock_product_count: 'text-warn',
-  scrapped_work_order_count: 'text-fail',
-  active_supplier_count: 'text-success',
-}
+const PRIORITY_KPI_KEYS = ['low_stock_product_count', 'scrapped_work_order_count']
+const SECONDARY_KPI_KEYS = [
+  'product_count',
+  'active_supplier_count',
+  'purchased_product_count',
+  'work_order_count',
+]
 
 const CARD_QUESTIONS: Record<string, string> = {
   low_stock_top5: '안전재고가 부족한 제품과 부족 수량을 알려줘.',
@@ -48,42 +32,24 @@ const CARD_QUESTIONS: Record<string, string> = {
   top_suppliers_by_product_count: '공급 제품 종류가 많은 활성 공급업체를 알려줘.',
 }
 
-function KpiCard({ kpi }: { kpi: DashboardKpi }) {
-  const Icon = KPI_ICONS[kpi.key as keyof typeof KPI_ICONS] ?? Factory
-  return (
-    <section className="min-w-0 rounded-md border border-border bg-panel px-4 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-      <div className="flex items-center justify-between gap-2">
-        <p className="truncate text-[11.5px] font-medium text-text-muted">{kpi.label}</p>
-        <Icon
-          className={`size-4 shrink-0 ${KPI_TONES[kpi.key] ?? 'text-info'}`}
-          aria-hidden="true"
-        />
-      </div>
-      {kpi.status === 'ready' && kpi.value !== null ? (
-        <p className="mt-4 text-[27px] font-bold tracking-tight text-text tabular-nums">
-          {kpi.value.toLocaleString()}
-          <span className="ml-1 text-[11px] font-medium tracking-normal text-text-muted">
-            {kpi.unit}
-          </span>
-        </p>
-      ) : (
-        <p className="mt-4 text-[12px] font-medium text-fail">불러오기 실패</p>
-      )}
-    </section>
-  )
+function orderByKeys<T extends { key: string }>(items: T[], keys: string[]): T[] {
+  const itemMap = new Map(items.map((item) => [item.key, item]))
+  return keys.flatMap((key) => {
+    const item = itemMap.get(key)
+    return item ? [item] : []
+  })
 }
 
 function DashboardSkeleton() {
   return (
     <div className="animate-pulse" aria-label="대시보드 불러오는 중">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {Array.from({ length: 6 }, (_, index) => (
-          <div key={index} className="h-28 rounded-md border border-border bg-panel" />
-        ))}
+      <div className="grid gap-5 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.6fr)]">
+        <div className="h-32 rounded-[5px] border border-border bg-panel" />
+        <div className="h-32 rounded-[5px] border border-border bg-panel" />
       </div>
-      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {Array.from({ length: 4 }, (_, index) => (
-          <div key={index} className="h-72 rounded-md border border-border bg-panel" />
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(380px,0.9fr)]">
+        {Array.from({ length: 2 }, (_, index) => (
+          <div key={index} className="h-[360px] rounded-[5px] border border-border bg-panel" />
         ))}
       </div>
     </div>
@@ -145,6 +111,40 @@ export function OverviewDashboard() {
   const goToChat = (draftQuestion?: string) => {
     navigate('/chat', draftQuestion ? { state: { draftQuestion } } : undefined)
   }
+
+  const openCard = (card: DashboardCard, trigger: HTMLElement) => {
+    returnFocusRef.current = trigger
+    setSelectedCardKey(card.key)
+  }
+
+  const askCard = (card: DashboardCard) => {
+    goToChat(CARD_QUESTIONS[card.key] ?? `${card.title} 정보를 알려줘.`)
+  }
+
+  const selectCardRow = (
+    card: DashboardCard,
+    row: Record<string, unknown>,
+    trigger: HTMLElement,
+  ) => {
+    const id = card.entityIdField ? row[card.entityIdField] : null
+    if (!card.entityType || (typeof id !== 'string' && typeof id !== 'number')) return
+    returnFocusRef.current = trigger
+    setSelectedCardKey(card.key)
+    setSelectedEntity({ type: card.entityType, id })
+  }
+
+  const priorityKpis = overview ? orderByKeys(overview.kpis, PRIORITY_KPI_KEYS) : []
+  const secondaryKpis = overview ? orderByKeys(overview.kpis, SECONDARY_KPI_KEYS) : []
+  const primaryCard = overview ? orderByKeys(overview.cards, ['low_stock_top5'])[0] : undefined
+  const riskCards = overview
+    ? orderByKeys(overview.cards, ['top_rejected_suppliers', 'top_scrapped_work_orders'])
+    : []
+  const comparisonCards = overview
+    ? orderByKeys(overview.cards, ['top_finished_sales', 'busiest_locations'])
+    : []
+  const supportingCards = overview
+    ? orderByKeys(overview.cards, ['category_price_summary', 'top_suppliers_by_product_count'])
+    : []
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-bg">
@@ -220,24 +220,47 @@ export function OverviewDashboard() {
               <DashboardSkeleton />
             ) : overview ? (
               <>
-                <section
-                  aria-label="핵심 지표"
-                  className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
-                >
-                  {overview.kpis.map((kpi) => (
-                    <KpiCard key={kpi.key} kpi={kpi} />
-                  ))}
+                <section className="grid gap-5 border-t border-border pt-4 xl:grid-cols-[minmax(360px,0.8fr)_minmax(0,1.6fr)]">
+                  <PriorityMetrics kpis={priorityKpis} />
+                  <SecondaryMetrics kpis={secondaryKpis} />
                 </section>
                 {overview.errors.length > 0 ? (
-                  <p role="status" className="mt-3 text-[11px] text-warn">
+                  <p role="status" className="mt-3 text-[12px] text-warn">
                     일부 항목을 불러오지 못했습니다. 표시된 다른 항목은 계속 사용할 수 있습니다.
                   </p>
                 ) : null}
+                <section className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(380px,0.9fr)]">
+                  {primaryCard ? (
+                    <AnalysisCard
+                      card={primaryCard}
+                      selectedEntityId={
+                        selectedEntity && selectedEntity.type === primaryCard.entityType
+                          ? selectedEntity.id
+                          : null
+                      }
+                      onOpenAll={(trigger) => openCard(primaryCard, trigger)}
+                      onAsk={() => askCard(primaryCard)}
+                      onSelectRow={(row, trigger) => selectCardRow(primaryCard, row, trigger)}
+                      barColumn="shortageQty"
+                      barTone="warn"
+                      minHeightClassName="min-h-[360px]"
+                      responsiveHiddenColumns={['productId', 'productNumber']}
+                    />
+                  ) : null}
+                  <DashboardRiskPanel
+                    cards={riskCards}
+                    selectedEntityType={selectedEntity?.type}
+                    selectedEntityId={selectedEntity?.id}
+                    onOpenAll={openCard}
+                    onAsk={askCard}
+                    onSelectRow={selectCardRow}
+                  />
+                </section>
                 <section
-                  aria-label="분석 목록"
-                  className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2"
+                  aria-label="성과와 작업장 비교"
+                  className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2"
                 >
-                  {overview.cards.map((card) => (
+                  {comparisonCards.map((card) => (
                     <AnalysisCard
                       key={card.key}
                       card={card}
@@ -246,21 +269,44 @@ export function OverviewDashboard() {
                           ? selectedEntity.id
                           : null
                       }
-                      onOpenAll={(trigger) => {
-                        returnFocusRef.current = trigger
-                        setSelectedCardKey(card.key)
-                      }}
-                      onAsk={() =>
-                        goToChat(CARD_QUESTIONS[card.key] ?? `${card.title} 정보를 알려줘.`)
+                      onOpenAll={(trigger) => openCard(card, trigger)}
+                      onAsk={() => askCard(card)}
+                      onSelectRow={(row, trigger) => selectCardRow(card, row, trigger)}
+                      barColumn={
+                        card.key === 'top_finished_sales' ? 'totalOrderQty' : 'workOrderCount'
                       }
-                      onSelectRow={(row, trigger) => {
-                        const id = card.entityIdField ? row[card.entityIdField] : null
-                        if (!card.entityType || (typeof id !== 'string' && typeof id !== 'number'))
-                          return
-                        returnFocusRef.current = trigger
-                        setSelectedCardKey(card.key)
-                        setSelectedEntity({ type: card.entityType, id })
-                      }}
+                      minHeightClassName="min-h-[310px]"
+                      displayTitle={card.key === 'busiest_locations' ? '작업장 현황' : undefined}
+                      responsiveHiddenColumns={
+                        card.key === 'top_finished_sales'
+                          ? ['productId', 'productNumber']
+                          : ['operationCount']
+                      }
+                    />
+                  ))}
+                </section>
+                <section
+                  aria-label="기준 정보 분석"
+                  className="mt-4 grid grid-cols-1 gap-4 pb-6 xl:grid-cols-2"
+                >
+                  {supportingCards.map((card) => (
+                    <AnalysisCard
+                      key={card.key}
+                      card={card}
+                      selectedEntityId={
+                        selectedEntity && selectedEntity.type === card.entityType
+                          ? selectedEntity.id
+                          : null
+                      }
+                      onOpenAll={(trigger) => openCard(card, trigger)}
+                      onAsk={() => askCard(card)}
+                      onSelectRow={(row, trigger) => selectCardRow(card, row, trigger)}
+                      barColumn={
+                        card.key === 'top_suppliers_by_product_count'
+                          ? 'suppliedProductCount'
+                          : undefined
+                      }
+                      minHeightClassName="min-h-[300px]"
                     />
                   ))}
                 </section>
