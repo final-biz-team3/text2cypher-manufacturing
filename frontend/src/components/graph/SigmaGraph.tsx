@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { EntityDetailContent } from '@/components/dashboard/EntityDetailContent'
 import { createGraphologyGraph } from '@/lib/graph/createGraphologyGraph'
 import { drawGraphNodeHover, drawGraphNodeLabel } from '@/lib/graph/graphNodePresentation'
+import { colorForRelationship, labelForRelationship } from '@/lib/graph/graphStyle'
 import { fetchEntityDetail, type EntityDetail } from '@/lib/dashboard'
 import { useUiStore } from '@/store/useUiStore'
 import type { GraphAttributes, GraphEdgeAttributes, GraphNodeAttributes } from '@/types/graph'
@@ -30,7 +31,7 @@ const GraphEdgeArrowProgram = createEdgeArrowProgram<
   GraphNodeAttributes,
   GraphEdgeAttributes,
   GraphAttributes
->()
+>({ lengthToThicknessRatio: 4.8, widenessToThicknessRatio: 3.8 })
 
 interface SigmaGraphProps {
   rows: readonly Record<string, unknown>[]
@@ -52,6 +53,13 @@ interface SearchEntry {
 
 interface CategorySummary {
   category: string
+  label: string
+  color: string
+  total: number
+}
+
+interface RelationshipSummary {
+  type: string
   label: string
   color: string
   total: number
@@ -114,6 +122,14 @@ function GraphRuntime({
     if (!focusedNode || !graph.hasNode(focusedNode)) return new Set<string>()
     return new Set(graph.neighbors(focusedNode))
   }, [focusedNode, graph])
+  const focusedEdgeIds = useMemo(() => {
+    if (!focusedNode || !graph.hasNode(focusedNode)) return new Set<string>()
+    return new Set(graph.edges(focusedNode))
+  }, [focusedNode, graph])
+  const focusedLabeledEdgeIds = useMemo(() => {
+    if (!focusedNode) return new Set<string>()
+    return new Set([...focusedEdgeIds].slice(0, 6))
+  }, [focusedEdgeIds, focusedNode])
   const defaultLabeledNodeIds = useMemo(() => {
     const limit = graph.order <= 40 ? graph.order : graph.order <= 120 ? 20 : 12
     return new Set(
@@ -221,23 +237,25 @@ function GraphRuntime({
         const [source, target] = graph.extremities(edge)
         const sourceHidden = hiddenCategories.has(graph.getNodeAttribute(source, 'category'))
         const targetHidden = hiddenCategories.has(graph.getNodeAttribute(target, 'category'))
-        const isRelated = !focusedNode || source === focusedNode || target === focusedNode
+        const relationshipType = attributes.relationshipType ?? attributes.label ?? 'RELATED_TO'
+        const relationshipColor = colorForRelationship(relationshipType)
+        const isRelated = !focusedNode || focusedEdgeIds.has(edge)
+        const shouldLabel = Boolean(focusedNode && focusedLabeledEdgeIds.has(edge))
         return {
           ...attributes,
-          color: isRelated
-            ? theme === 'dark'
-              ? '#65717d'
-              : '#9aa4af'
-            : theme === 'dark'
-              ? '#30363d'
-              : '#e1e4e8',
-          size: isRelated && focusedNode ? 1.35 : 0.45,
+          label: shouldLabel ? labelForRelationship(relationshipType) : null,
+          forceLabel: shouldLabel,
+          color: isRelated ? relationshipColor : theme === 'dark' ? '#293139' : '#d9dee4',
+          size: isRelated && focusedNode ? 1.9 : 0.7,
+          zIndex: isRelated && focusedNode ? 2 : 0,
           hidden: attributes.hidden || sourceHidden || targetHidden,
         }
       },
     })
   }, [
     focusedNeighborIds,
+    focusedEdgeIds,
+    focusedLabeledEdgeIds,
     focusedNode,
     defaultLabeledNodeIds,
     graph,
@@ -449,11 +467,17 @@ function SearchOverlay({
 
 interface LegendOverlayProps {
   categories: readonly CategorySummary[]
+  relationships: readonly RelationshipSummary[]
   hiddenCategories: ReadonlySet<string>
   onToggle: (category: string) => void
 }
 
-function LegendOverlay({ categories, hiddenCategories, onToggle }: LegendOverlayProps) {
+function LegendOverlay({
+  categories,
+  relationships,
+  hiddenCategories,
+  onToggle,
+}: LegendOverlayProps) {
   return (
     <div className="absolute top-16 right-3 z-20 max-h-44 w-[174px] overflow-y-auto rounded-lg border border-border/75 bg-panel/88 p-1.5 shadow-sm backdrop-blur-sm sm:top-3 sm:max-h-64">
       <p className="px-1.5 pb-1 text-[9.5px] font-semibold tracking-wide text-text-faint uppercase">
@@ -485,6 +509,29 @@ function LegendOverlay({ categories, hiddenCategories, onToggle }: LegendOverlay
           )
         })}
       </div>
+      {relationships.length > 0 ? (
+        <>
+          <div className="mx-1.5 my-2 border-t border-border/70" />
+          <p className="px-1.5 pb-1 text-[9.5px] font-semibold tracking-wide text-text-faint uppercase">
+            관계 흐름
+          </p>
+          <div className="flex flex-col gap-1">
+            {relationships.map(({ type, label, color, total }) => (
+              <div key={type} className="flex h-6 items-center gap-1.5 px-2">
+                <span className="text-[13px] font-semibold" style={{ color }} aria-hidden="true">
+                  →
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[9.5px] text-text-muted">
+                  {label}
+                </span>
+                <span className="shrink-0 text-[9px] tabular-nums text-text-faint">
+                  {total.toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }
@@ -543,6 +590,25 @@ function buildCategorySummaries(graph: SigmaGraphologyGraph): CategorySummary[] 
   return [...categories.values()].sort((left, right) => right.total - left.total)
 }
 
+function buildRelationshipSummaries(graph: SigmaGraphologyGraph): RelationshipSummary[] {
+  const relationships = new Map<string, RelationshipSummary>()
+  graph.forEachEdge((_edge, attributes) => {
+    const type = attributes.relationshipType ?? attributes.label ?? 'RELATED_TO'
+    const current = relationships.get(type)
+    if (current) {
+      current.total += 1
+      return
+    }
+    relationships.set(type, {
+      type,
+      label: labelForRelationship(type),
+      color: colorForRelationship(type),
+      total: 1,
+    })
+  })
+  return [...relationships.values()].sort((left, right) => right.total - left.total)
+}
+
 function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
   const navigate = useNavigate()
   const theme = useUiStore((state) => state.theme)
@@ -559,6 +625,7 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
   const deferredSearchQuery = useDeferredValue(searchQuery)
   const searchIndex = useMemo(() => buildSearchIndex(graph), [graph])
   const categories = useMemo(() => buildCategorySummaries(graph), [graph])
+  const relationships = useMemo(() => buildRelationshipSummaries(graph), [graph])
   const searchResults = useMemo(() => {
     const normalizedQuery = deferredSearchQuery.trim().toLocaleLowerCase()
     if (!normalizedQuery) return []
@@ -674,7 +741,7 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
           </p>
         ) : (
           <p className="hidden text-[11px] text-text-faint sm:block">
-            카드에서 유형과 핵심값을 확인하고, 노드를 선택해 상세 정보를 보세요
+            화살표는 조회 경로 방향입니다. 노드에 마우스를 올리면 관계명이 강조됩니다
           </p>
         )}
       </div>
@@ -688,6 +755,10 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
             defaultDrawNodeHover: drawGraphNodeHover,
             defaultDrawNodeLabel: drawGraphNodeLabel,
             edgeProgramClasses: { arrow: GraphEdgeArrowProgram },
+            edgeLabelColor: { color: theme === 'dark' ? '#e7eaed' : '#303740' },
+            edgeLabelFont: 'Pretendard Variable, Pretendard, -apple-system, sans-serif',
+            edgeLabelSize: 9,
+            edgeLabelWeight: '600',
             enableCameraPanning: true,
             enableCameraZooming: true,
             hideEdgesOnMove: false,
@@ -698,7 +769,7 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
             labelGridCellSize: 136,
             labelRenderedSizeThreshold: 0,
             labelSize: 11,
-            renderEdgeLabels: false,
+            renderEdgeLabels: true,
             renderLabels: true,
             stagePadding: 46,
             zIndex: true,
@@ -730,6 +801,7 @@ function SigmaGraphView({ graph, issueCount }: SigmaGraphViewProps) {
           />
           <LegendOverlay
             categories={categories}
+            relationships={relationships}
             hiddenCategories={hiddenCategories}
             onToggle={handleToggleCategory}
           />
