@@ -277,7 +277,8 @@ def prepare_sync_context(driver: Driver) -> tuple[str, str]:
     sync_run_id = generate_sync_run_id()
     print(f"syncRunId = {sync_run_id}")
 
-    expected_default = get_default_database(driver)
+    with driver.session(database="system") as session:
+        expected_default = get_default_database(session)
     print(
         f"   현재 기본 데이터베이스: '{expected_default}' (승격 직전 재확인용으로 기록)"
     )

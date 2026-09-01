@@ -1,14 +1,53 @@
-"""배치 분할·DB 이름 생성(순수 함수)만 pytest로 검증한다. 실제 MERGE/제약조건
-적용/DB 생성·승격은 Neo4j 드라이버 세션이 필요해 로컬 docker 환경에서
-통합 검증한다."""
+"""배치 분할·DB 이름 생성(순수 함수)과 승격 안전장치(가짜 세션)를 검증한다.
+실제 MERGE/제약조건 적용/DB 생성은 Neo4j 드라이버 세션이 필요해 로컬 docker
+환경에서 통합 검증한다."""
 
 import re
+from typing import Any
 
+import pytest
 from structured_mvp_load import (
     build_promotion_failure_message,
     chunk_rows,
+    database_exists,
     generate_database_name,
+    has_active_transactions,
+    retry_promote,
 )
+
+
+class _FakeResult:
+    def __init__(self, record: Any) -> None:
+        self._record = record
+
+    def single(self) -> Any:
+        return self._record
+
+
+class _FakeSession:
+    """준비된 record를 순서대로 돌려주고 실행된 쿼리를 기록하는 가짜 system 세션."""
+
+    def __init__(self, records: list[Any]) -> None:
+        self._records = list(records)
+        self.runs: list[tuple[str, dict[str, Any]]] = []
+
+    def run(self, query: str, **params: Any) -> _FakeResult:
+        self.runs.append((query, params))
+        return _FakeResult(self._records.pop(0) if self._records else None)
+
+    def __enter__(self) -> "_FakeSession":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+class _FakeDriver:
+    def __init__(self, session: _FakeSession) -> None:
+        self._session = session
+
+    def session(self, *, database: str | None = None) -> _FakeSession:
+        return self._session
 
 
 def test_chunk_rows_splits_into_batches_of_given_size() -> None:
@@ -71,3 +110,72 @@ def test_build_promotion_failure_message_unknown_reason_falls_back() -> None:
     )
 
     assert "mystery" in message
+
+
+def test_database_exists_true_when_count_positive() -> None:
+    session = _FakeSession([{"c": 1}])
+
+    assert database_exists(session, "mvpgraph-new") is True
+
+
+def test_database_exists_false_when_count_zero() -> None:
+    session = _FakeSession([{"c": 0}])
+
+    assert database_exists(session, "mvpgraph-new") is False
+
+
+def test_has_active_transactions_reflects_count() -> None:
+    assert has_active_transactions(_FakeSession([{"c": 0}]), "graph.db") is False
+    assert has_active_transactions(_FakeSession([{"c": 3}]), "graph.db") is True
+
+
+def test_retry_promote_happy_path_stops_old_and_sets_new_default() -> None:
+    # 존재 확인 -> 기본 DB 조회 -> 트랜잭션 확인 -> STOP -> setDefaultDatabase
+    session = _FakeSession([{"c": 1}, {"name": "mvpgraph-old"}, {"c": 0}, None, None])
+
+    retry_promote(
+        _FakeDriver(session), "mvpgraph-new", expected_previous_default="mvpgraph-old"
+    )
+
+    queries = " ".join(q for q, _ in session.runs)
+    assert "STOP DATABASE `mvpgraph-old`" in queries
+    assert "setDefaultDatabase" in queries
+
+
+def test_retry_promote_exits_when_new_db_missing() -> None:
+    session = _FakeSession([{"c": 0}])
+
+    with pytest.raises(SystemExit) as exc:
+        retry_promote(_FakeDriver(session), "mvpgraph-new")
+
+    assert "존재하지 않습니다" in str(exc.value)
+    assert not any("STOP DATABASE" in q for q, _ in session.runs)
+
+
+def test_retry_promote_exits_on_race_without_touching_databases() -> None:
+    session = _FakeSession([{"c": 1}, {"name": "mvpgraph-other"}])
+
+    with pytest.raises(SystemExit) as exc:
+        retry_promote(
+            _FakeDriver(session),
+            "mvpgraph-new",
+            expected_previous_default="mvpgraph-old",
+        )
+
+    message = str(exc.value)
+    assert "mvpgraph-old" in message and "mvpgraph-other" in message
+    assert not any("STOP DATABASE" in q for q, _ in session.runs)
+
+
+def test_retry_promote_exits_when_transactions_active() -> None:
+    session = _FakeSession([{"c": 1}, {"name": "mvpgraph-old"}, {"c": 2}])
+
+    with pytest.raises(SystemExit) as exc:
+        retry_promote(
+            _FakeDriver(session),
+            "mvpgraph-new",
+            expected_previous_default="mvpgraph-old",
+        )
+
+    assert "트랜잭션을 이용 중입니다" in str(exc.value)
+    assert not any("STOP DATABASE" in q for q, _ in session.runs)

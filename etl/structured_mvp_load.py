@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from neo4j import Driver
+from structured_mvp_config import Neo4jSession
 from structured_mvp_spec import NodeSpec, RelationshipSpec
 
 BATCH_SIZE = 1000
@@ -67,16 +68,15 @@ def create_neo4j_database(driver: Driver, db_name: str) -> None:
         session.run(f"CREATE DATABASE `{db_name}` WAIT")
 
 
-def get_default_database(driver: Driver) -> str:
-    """현재 기본 데이터베이스 이름을 확인한다."""
-    with driver.session(database="system") as session:
-        result = session.run("SHOW DEFAULT DATABASE").single()
-        assert result is not None
-        return str(result["name"])
+def get_default_database(session: Neo4jSession) -> str:
+    """현재 기본 데이터베이스 이름을 확인한다. session은 system 데이터베이스 세션."""
+    result = session.run("SHOW DEFAULT DATABASE").single()
+    assert result is not None
+    return str(result["name"])
 
 
-def database_exists(driver: Driver, db_name: str) -> bool:
-    """db_name이 실제로 존재하는 데이터베이스인지 확인한다.
+def database_exists(session: Neo4jSession, db_name: str) -> bool:
+    """db_name이 실제로 존재하는 데이터베이스인지 확인한다. session은 system 세션.
 
     retry_promote()가 STOP DATABASE를 호출하기 전에 반드시 확인해야 한다 -
     존재하지 않는 이름을 확인 없이 넘기면, 기존 기본 데이터베이스를 이미
@@ -84,30 +84,28 @@ def database_exists(driver: Driver, db_name: str) -> bool:
     상태로 남을 수 있다(PostgreSQL retry_swap()의 target_database_exists
     사전 확인과 같은 이유).
     """
-    with driver.session(database="system") as session:
-        result = session.run(
-            "SHOW DATABASES YIELD name WHERE name = $name RETURN count(name) AS c",
-            name=db_name,
-        ).single()
-        assert result is not None
-        return bool(result["c"] > 0)
+    result = session.run(
+        "SHOW DATABASES YIELD name WHERE name = $name RETURN count(name) AS c",
+        name=db_name,
+    ).single()
+    assert result is not None
+    return bool(result["c"] > 0)
 
 
-def find_active_transactions(driver: Driver, db_name: str) -> list[dict[str, Any]]:
-    """db_name에서 실행 중인 트랜잭션 목록을 반환한다(비어 있으면 없음).
+def has_active_transactions(session: Neo4jSession, db_name: str) -> bool:
+    """db_name에서 실행 중인 트랜잭션이 있는지. session은 system 세션.
 
     STOP DATABASE 호출 전에 반드시 확인한다 - Neo4j의 STOP DATABASE는
     PostgreSQL의 ALTER DATABASE RENAME과 달리 활성 트랜잭션이 있어도
-    안전장치 없이 강제로 끊어버린다.
+    안전장치 없이 강제로 끊어버린다. retry_promote()가 진위만 쓰므로 트랜잭션
+    상세는 세지 않고 존재 여부만 돌려준다(database_exists와 같은 count 패턴).
     """
-    with driver.session(database="system") as session:
-        result = session.run(
-            "SHOW TRANSACTIONS YIELD database, transactionId, currentQuery "
-            "WHERE database = $db "
-            "RETURN transactionId, currentQuery",
-            db=db_name,
-        )
-        return [dict(record) for record in result]
+    result = session.run(
+        "SHOW TRANSACTIONS YIELD database WHERE database = $db RETURN count(*) AS c",
+        db=db_name,
+    ).single()
+    assert result is not None
+    return bool(result["c"] > 0)
 
 
 def build_promotion_failure_message(
@@ -156,35 +154,37 @@ def retry_promote(
     조용히 덮어쓰지 않고 안전하게 거부한다. 넘기지 않으면(예: "작업 시작
     시점"이 따로 없는 단독 --retry-promote 실행) 이 확인은 건너뛴다.
     """
-    if not database_exists(driver, new_db):
-        sys.exit(
-            f"'{new_db}'가 존재하지 않습니다 - 이미 승격을 마쳤거나, 이름을 "
-            "잘못 입력했을 수 있습니다."
-        )
-
-    actual_default = get_default_database(driver)
-
-    if (
-        expected_previous_default is not None
-        and actual_default != expected_previous_default
-    ):
-        sys.exit(
-            build_promotion_failure_message(
-                "race",
-                previous_default=expected_previous_default,
-                new_db=new_db,
-                actual_default=actual_default,
-            )
-        )
-
-    if find_active_transactions(driver, actual_default):
-        sys.exit(
-            build_promotion_failure_message(
-                "transactions_in_use", previous_default=actual_default, new_db=new_db
-            )
-        )
-
     with driver.session(database="system") as session:
+        if not database_exists(session, new_db):
+            sys.exit(
+                f"'{new_db}'가 존재하지 않습니다 - 이미 승격을 마쳤거나, 이름을 "
+                "잘못 입력했을 수 있습니다."
+            )
+
+        actual_default = get_default_database(session)
+
+        if (
+            expected_previous_default is not None
+            and actual_default != expected_previous_default
+        ):
+            sys.exit(
+                build_promotion_failure_message(
+                    "race",
+                    previous_default=expected_previous_default,
+                    new_db=new_db,
+                    actual_default=actual_default,
+                )
+            )
+
+        if has_active_transactions(session, actual_default):
+            sys.exit(
+                build_promotion_failure_message(
+                    "transactions_in_use",
+                    previous_default=actual_default,
+                    new_db=new_db,
+                )
+            )
+
         session.run(f"STOP DATABASE `{actual_default}`")
         session.run("CALL dbms.setDefaultDatabase($name)", name=new_db)
 
