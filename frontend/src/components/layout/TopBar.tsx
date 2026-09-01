@@ -1,4 +1,4 @@
-import { Database, LayoutDashboard, MessageSquareText, Moon, Sun, User } from 'lucide-react'
+import { Database, Moon, Sun, User } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/store/useUiStore'
@@ -10,9 +10,6 @@ interface TopBarProps {
   username?: string
   onLogout?: () => void
   postgresConnected?: boolean
-  activeSection?: 'dashboard' | 'chat'
-  onNavigateDashboard?: () => void
-  onNavigateChat?: () => void
   snapshotLabel?: string
 }
 
@@ -24,9 +21,6 @@ export function TopBar({
   username,
   onLogout,
   postgresConnected = false,
-  activeSection,
-  onNavigateDashboard,
-  onNavigateChat,
   snapshotLabel,
 }: TopBarProps) {
   const theme = useUiStore((s) => s.theme)
@@ -48,30 +42,6 @@ export function TopBar({
             제조 데이터 어시스턴트
           </span>
         </button>
-        {activeSection ? (
-          <nav className="flex items-center gap-1" aria-label="주요 화면">
-            <Button
-              type="button"
-              variant={activeSection === 'dashboard' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={onNavigateDashboard}
-              aria-current={activeSection === 'dashboard' ? 'page' : undefined}
-            >
-              <LayoutDashboard />
-              전체 현황
-            </Button>
-            <Button
-              type="button"
-              variant={activeSection === 'chat' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={onNavigateChat}
-              aria-current={activeSection === 'chat' ? 'page' : undefined}
-            >
-              <MessageSquareText />
-              AI Chat
-            </Button>
-          </nav>
-        ) : null}
       </div>
       <div className="flex min-w-0 items-center gap-2">
         {snapshotLabel ? (
@@ -89,7 +59,7 @@ export function TopBar({
           />
           {connected && postgresConnected ? 'DB 연결됨' : 'DB 연결 확인 필요'}
         </Badge>
-        {connected && !activeSection ? (
+        {connected && !username ? (
           <Badge
             variant="outline"
             className="rounded-full border-border-strong px-3 py-1 text-[11.5px] font-normal text-text"

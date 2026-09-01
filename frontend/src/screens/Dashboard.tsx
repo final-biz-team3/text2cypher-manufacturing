@@ -195,10 +195,7 @@ export function Dashboard() {
         connected={neo4jConnected}
         postgresConnected={postgresConnected}
         readOnly={READ_ONLY}
-        onNavigateHome={() => navigate('/dashboard')}
-        activeSection="chat"
-        onNavigateDashboard={() => navigate('/dashboard')}
-        onNavigateChat={handleNavigateHome}
+        onNavigateHome={handleNavigateHome}
         username={user?.username}
         onLogout={logout}
       />
@@ -208,6 +205,8 @@ export function Dashboard() {
           relationships={RELATIONSHIPS}
           history={history}
           onSelectHistoryItem={handleSelectHistoryItem}
+          onNavigateDashboard={() => navigate('/dashboard')}
+          onNavigateChat={handleNavigateHome}
         />
         <main className="flex flex-1 flex-col overflow-y-auto p-6">
           {activeScreen === 'idle' && (

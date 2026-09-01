@@ -54,4 +54,14 @@ describe('toDisplayResult', () => {
     expect(result.answer).not.toContain('COMPOSED:')
     expect(result.answer).toContain('현재 LLM')
   })
+
+  it.each(['GRAPH:', 'SQL:'])('does not present legacy %s dumps as an AI answer', (prefix) => {
+    const result = toDisplayResult({
+      query: '조회 질문',
+      final_answer: `${prefix} {'result': [{'productId': 680}]}`,
+    })
+
+    expect(result.answer).not.toContain(prefix)
+    expect(result.answer).toContain('현재 LLM')
+  })
 })

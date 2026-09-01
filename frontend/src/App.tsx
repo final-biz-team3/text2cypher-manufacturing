@@ -41,7 +41,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route
           path="/dashboard"
           element={
@@ -58,7 +58,7 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/chat" replace />} />
       </Routes>
     </BrowserRouter>
   )

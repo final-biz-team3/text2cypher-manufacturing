@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar } from '@/components/layout/TopBar'
+import { AppSidebar } from '@/components/layout/AppSidebar'
 import { AnalysisCard } from '@/components/dashboard/AnalysisCard'
 import { DashboardDrawer } from '@/components/dashboard/DashboardDrawer'
 import { formatSnapshotDateTime } from '@/components/dashboard/dashboardFormatters'
@@ -146,117 +147,128 @@ export function OverviewDashboard() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-bg">
+    <div className="flex h-screen flex-col overflow-hidden bg-bg">
       <TopBar
         connected={neo4jConnected}
         postgresConnected={postgresConnected}
         readOnly
-        onNavigateHome={() => navigate('/dashboard')}
-        activeSection="dashboard"
-        onNavigateDashboard={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-        onNavigateChat={() => goToChat()}
+        onNavigateHome={() => goToChat()}
         snapshotLabel={overview?.snapshot.label}
         username={user?.username}
         onLogout={logout}
       />
-      <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-5 sm:px-6 lg:px-8">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[22px] font-bold tracking-tight text-text">전체 현황</h1>
-              {overview ? (
-                <>
-                  <span className="rounded-sm border border-border bg-panel px-2 py-1 text-[10px] text-text-muted">
-                    데이터 동기화 {formatSnapshotDateTime(overview.snapshot.syncedAt)}
-                  </span>
-                  <span className="rounded-sm border border-border bg-panel px-2 py-1 text-[10px] text-text-muted">
-                    BOM 기준 {overview.snapshot.bomAsOfDate}
-                  </span>
-                </>
-              ) : null}
+      <div className="flex min-h-0 flex-1">
+        <AppSidebar
+          activeSection="dashboard"
+          onNavigateDashboard={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          onNavigateChat={() => goToChat()}
+        />
+        <main className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
+          <div className="mx-auto w-full max-w-[1600px]">
+            <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-[22px] font-bold tracking-tight text-text">전체 현황</h1>
+                  {overview ? (
+                    <>
+                      <span className="rounded-sm border border-border bg-panel px-2 py-1 text-[10px] text-text-muted">
+                        데이터 동기화 {formatSnapshotDateTime(overview.snapshot.syncedAt)}
+                      </span>
+                      <span className="rounded-sm border border-border bg-panel px-2 py-1 text-[10px] text-text-muted">
+                        BOM 기준 {overview.snapshot.bomAsOfDate}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-[11.5px] text-text-muted">
+                  {overview
+                    ? `${overview.snapshot.scope}로 제품·재고·공급업체·작업지시 정보를 조회합니다.`
+                    : 'AdventureWorks 전체 데이터 스냅샷을 불러오는 중입니다.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => loadOverview()}
+                  disabled={loading}
+                >
+                  <RefreshCw className={loading ? 'animate-spin' : ''} />
+                  새로고침
+                </Button>
+                <Button type="button" size="lg" onClick={() => goToChat()}>
+                  <MessageSquareText />
+                  AI Chat으로 이동
+                  <ArrowRight />
+                </Button>
+              </div>
             </div>
-            <p className="mt-1 text-[11.5px] text-text-muted">
-              {overview
-                ? `${overview.snapshot.scope}로 제품·재고·공급업체·작업지시 정보를 조회합니다.`
-                : 'AdventureWorks 전체 데이터 스냅샷을 불러오는 중입니다.'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => loadOverview()}
-              disabled={loading}
-            >
-              <RefreshCw className={loading ? 'animate-spin' : ''} />
-              새로고침
-            </Button>
-            <Button type="button" size="lg" onClick={() => goToChat()}>
-              <MessageSquareText />
-              AI Chat으로 이동
-              <ArrowRight />
-            </Button>
-          </div>
-        </div>
 
-        {error && !overview ? (
-          <div
-            role="alert"
-            className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-md border border-fail/30 bg-panel px-5 text-center"
-          >
-            <AlertTriangle className="size-6 text-fail" />
-            <p className="text-[13px] font-medium text-fail">{error}</p>
-            <Button type="button" variant="outline" onClick={() => loadOverview()}>
-              다시 시도
-            </Button>
-          </div>
-        ) : loading && !overview ? (
-          <DashboardSkeleton />
-        ) : overview ? (
-          <>
-            <section
-              aria-label="핵심 지표"
-              className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
-            >
-              {overview.kpis.map((kpi) => (
-                <KpiCard key={kpi.key} kpi={kpi} />
-              ))}
-            </section>
-            {overview.errors.length > 0 ? (
-              <p role="status" className="mt-3 text-[11px] text-warn">
-                일부 항목을 불러오지 못했습니다. 표시된 다른 항목은 계속 사용할 수 있습니다.
-              </p>
+            {error && !overview ? (
+              <div
+                role="alert"
+                className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-md border border-fail/30 bg-panel px-5 text-center"
+              >
+                <AlertTriangle className="size-6 text-fail" />
+                <p className="text-[13px] font-medium text-fail">{error}</p>
+                <Button type="button" variant="outline" onClick={() => loadOverview()}>
+                  다시 시도
+                </Button>
+              </div>
+            ) : loading && !overview ? (
+              <DashboardSkeleton />
+            ) : overview ? (
+              <>
+                <section
+                  aria-label="핵심 지표"
+                  className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+                >
+                  {overview.kpis.map((kpi) => (
+                    <KpiCard key={kpi.key} kpi={kpi} />
+                  ))}
+                </section>
+                {overview.errors.length > 0 ? (
+                  <p role="status" className="mt-3 text-[11px] text-warn">
+                    일부 항목을 불러오지 못했습니다. 표시된 다른 항목은 계속 사용할 수 있습니다.
+                  </p>
+                ) : null}
+                <section
+                  aria-label="분석 목록"
+                  className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2"
+                >
+                  {overview.cards.map((card) => (
+                    <AnalysisCard
+                      key={card.key}
+                      card={card}
+                      selectedEntityId={
+                        selectedEntity && selectedEntity.type === card.entityType
+                          ? selectedEntity.id
+                          : null
+                      }
+                      onOpenAll={(trigger) => {
+                        returnFocusRef.current = trigger
+                        setSelectedCardKey(card.key)
+                      }}
+                      onAsk={() =>
+                        goToChat(CARD_QUESTIONS[card.key] ?? `${card.title} 정보를 알려줘.`)
+                      }
+                      onSelectRow={(row, trigger) => {
+                        const id = card.entityIdField ? row[card.entityIdField] : null
+                        if (!card.entityType || (typeof id !== 'string' && typeof id !== 'number'))
+                          return
+                        returnFocusRef.current = trigger
+                        setSelectedCardKey(card.key)
+                        setSelectedEntity({ type: card.entityType, id })
+                      }}
+                    />
+                  ))}
+                </section>
+              </>
             ) : null}
-            <section aria-label="분석 목록" className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {overview.cards.map((card) => (
-                <AnalysisCard
-                  key={card.key}
-                  card={card}
-                  selectedEntityId={
-                    selectedEntity && selectedEntity.type === card.entityType
-                      ? selectedEntity.id
-                      : null
-                  }
-                  onOpenAll={(trigger) => {
-                    returnFocusRef.current = trigger
-                    setSelectedCardKey(card.key)
-                  }}
-                  onAsk={() => goToChat(CARD_QUESTIONS[card.key] ?? `${card.title} 정보를 알려줘.`)}
-                  onSelectRow={(row, trigger) => {
-                    const id = card.entityIdField ? row[card.entityIdField] : null
-                    if (!card.entityType || (typeof id !== 'string' && typeof id !== 'number'))
-                      return
-                    returnFocusRef.current = trigger
-                    setSelectedCardKey(card.key)
-                    setSelectedEntity({ type: card.entityType, id })
-                  }}
-                />
-              ))}
-            </section>
-          </>
-        ) : null}
-      </main>
+          </div>
+        </main>
+      </div>
       <DashboardDrawer onAsk={goToChat} returnFocusRef={returnFocusRef} />
     </div>
   )

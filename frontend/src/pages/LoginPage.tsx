@@ -7,7 +7,7 @@ import { useHealthStore } from '@/store/useHealthStore'
 import { useLoginPrefsStore } from '@/store/useLoginPrefsStore'
 import { AuthError } from '@/lib/api'
 
-// 로그인 화면: 아이디/비밀번호 입력 후 인증하고 성공 시 대시보드로 이동한다
+// 로그인 화면: 아이디/비밀번호 입력 후 인증하고 성공 시 AI Chat으로 이동한다
 export function LoginPage() {
   const navigate = useNavigate()
   const login = useAuthStore((s) => s.login)
@@ -29,7 +29,7 @@ export function LoginPage() {
     try {
       await login(username, password)
       setSavedUsername(rememberId ? username : '')
-      navigate('/dashboard')
+      navigate('/chat')
     } catch (err) {
       setErrorMessage(err instanceof AuthError ? err.message : '로그인 중 오류가 발생했습니다')
     } finally {
@@ -45,7 +45,7 @@ export function LoginPage() {
         connected={neo4jConnected}
         postgresConnected={postgresConnected}
         readOnly
-        onNavigateHome={() => navigate('/dashboard')}
+        onNavigateHome={() => navigate('/chat')}
       />
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 items-center justify-center p-6">

@@ -1,11 +1,11 @@
 import type { ChatResponse, HistoryEntry } from './schemas'
 import type { DisplayResult, ResultColumn } from '@/types/query'
 
-const LEGACY_COMPOSED_ANSWER = /^\s*COMPOSED:\s*/i
+const LEGACY_RAW_ANSWER = /^\s*(?:COMPOSED|GRAPH|SQL):\s*/i
 
 function toDisplayAnswer(answer: string | null | undefined): string {
   if (!answer) return '답변을 생성하지 못했습니다.'
-  if (LEGACY_COMPOSED_ANSWER.test(answer)) {
+  if (LEGACY_RAW_ANSWER.test(answer)) {
     return '이 기록은 AI 정리 답변 기능이 적용되기 전에 저장된 결과입니다. 동일한 질문을 다시 실행하면 현재 LLM이 조회 결과를 정리해 답변합니다.'
   }
   return answer
