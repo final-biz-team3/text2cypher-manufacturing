@@ -1,10 +1,17 @@
 """사용자 요청 자체의 쓰기 의도를 조회 계획 전에 차단한다."""
 
+import logging
 import re
 from collections.abc import Awaitable, Callable
 
+from starlette.concurrency import run_in_threadpool
+
+from orchestrator.guards.audit import log_guard_decision
+from orchestrator.guards.shared import CYPHER_WRITE_KEYWORDS, SQL_WRITE_KEYWORDS
 from orchestrator.query_failures import make_query_failure
 from orchestrator.state import OrchestratorState
+
+logger = logging.getLogger(__name__)
 
 _KOREAN_FORMAL_WRITE_REQUEST = re.compile(
     r"(?:삭제|제거|수정|변경|추가|삽입|생성|초기화|파기|폐기|갱신|등록)"
@@ -25,6 +32,14 @@ _SQL_WRITE_SYNTAX = re.compile(
     r"insert\s+into|drop\s+(?:table|database|schema)|truncate\s+(?:table\s+)?|"
     r"alter\s+(?:table|database|schema)|create\s+(?:table|database|schema))\b"
 )
+_SHARED_WRITE_KEYWORD = re.compile(
+    r"(?i)^\s*(?:"
+    + "|".join(
+        re.escape(keyword)
+        for keyword in sorted(SQL_WRITE_KEYWORDS | CYPHER_WRITE_KEYWORDS)
+    )
+    + r")\b"
+)
 _ENGLISH_WRITE_REQUEST = re.compile(
     r"(?i)^\s*(?:(?:please|kindly)\s+|(?:can|could|would|will)\s+you\s+)?"
     r"(?:delete|remove|update|insert|drop|truncate|alter|modify|change|add|create|"
@@ -41,6 +56,7 @@ def has_write_intent(query: str) -> bool:
             _KOREAN_COLLOQUIAL_WRITE_REQUEST,
             _KOREAN_TERSE_WRITE_REQUEST,
             _SQL_WRITE_SYNTAX,
+            _SHARED_WRITE_KEYWORD,
             _ENGLISH_WRITE_REQUEST,
         )
     )
@@ -48,7 +64,19 @@ def has_write_intent(query: str) -> bool:
 
 def make_guard_request_node() -> Callable[[OrchestratorState], Awaitable[dict]]:
     async def guard_request(state: OrchestratorState) -> dict:
-        if not has_write_intent(state["query"]):
+        blocked = has_write_intent(state["query"])
+        try:
+            await run_in_threadpool(
+                log_guard_decision,
+                query_type="request",
+                intent=state["query"],
+                decision="BLOCK" if blocked else "ALLOW",
+                stage="request_guard",
+                reason="WRITE_INTENT_DETECTED" if blocked else None,
+            )
+        except Exception as exc:
+            logger.error("요청 가드 감사 로그 기록 실패(무시하고 계속): %s", exc)
+        if not blocked:
             return {"query_failure": None}
         return {
             "query_failure": make_query_failure(

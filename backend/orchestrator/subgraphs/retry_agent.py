@@ -149,25 +149,48 @@ def make_retry_agent_subgraph(
                 "failure": safe_failure,
             }
 
-        if guard is not None:
+        try:
             missing_filters = missing_numeric_filter_literals(
                 state["query"], query_text
             )
-            if missing_filters:
-                return failure(
-                    "원본 질문의 명시적 숫자 필터가 생성 쿼리에서 누락되었습니다.",
+        except Exception as exc:
+            logger.error(
+                "%s: 숫자 필터 검증 중 예외(재시도 대상 아님, 안전망): %s",
+                label,
+                exc,
+                exc_info=True,
+            )
+            return failure(
+                "쿼리 검증 중 오류가 발생했습니다.",
+                retryable=False,
+                safe_failure=make_query_failure(
+                    code="QUERY_VALIDATION_INTERNAL_ERROR",
+                    stage="validation",
+                    category="INTERNAL_QUERY_FAILURE",
+                    kind="internal",
+                    retryable=False,
+                    user_safe_reason="질의를 검증하는 과정에서 내부 오류가 발생했습니다.",
+                    suggested_action="잠시 후 다시 시도해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
+        if missing_filters:
+            return failure(
+                "원본 질문의 명시적 숫자 필터가 생성 쿼리에서 누락되었습니다.",
+                retryable=True,
+                safe_failure=make_query_failure(
+                    code="QUERY_FILTER_DROPPED",
+                    stage="validation",
+                    category="QUERY_INVALID",
+                    kind="user_correctable",
                     retryable=True,
-                    safe_failure=make_query_failure(
-                        code="QUERY_FILTER_DROPPED",
-                        stage="validation",
-                        category="QUERY_INVALID",
-                        kind="user_correctable",
-                        retryable=True,
-                        user_safe_reason="질문의 필터 조건을 모두 반영한 조회를 만들지 못했습니다.",
-                        suggested_action="필터 대상과 비교 조건을 더 명확하게 지정해 주세요.",
-                        failed_tool=tool_name,
-                    ),
-                )
+                    user_safe_reason="질문의 필터 조건을 모두 반영한 조회를 만들지 못했습니다.",
+                    suggested_action="필터 대상과 비교 조건을 더 명확하게 지정해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
+
+        if guard is not None:
             try:
                 guard_result = guard(query_text)
             except Exception as exc:

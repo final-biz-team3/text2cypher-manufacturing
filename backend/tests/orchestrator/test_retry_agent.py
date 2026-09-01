@@ -95,6 +95,48 @@ async def test_guard_exception_does_not_propagate_and_is_not_retried() -> None:
     assert result["failure"]["kind"] == "internal"
 
 
+async def test_numeric_filter_validation_runs_without_optional_query_guard() -> None:
+    async def generate(state, previous_query, previous_error) -> str:
+        return "SELECT * FROM product"
+
+    async def execute(query: str) -> list[dict]:
+        raise AssertionError("execute must not be called")
+
+    subgraph = make_retry_agent_subgraph(
+        logger=logger,
+        label="test_agent",
+        generate=generate,
+        execute=execute,
+        connection_exceptions=(),
+        retryable_exceptions=(),
+        empty_result_feedback="EMPTY",
+        guard=None,
+    )
+
+    result = await subgraph.ainvoke(_initial_state("가격이 100 이상인 제품"))
+
+    assert result["failure"]["code"] == "QUERY_FILTER_DROPPED"
+    assert len(result["attempts"]) == 3
+
+
+async def test_numeric_filter_validation_exception_is_fail_closed(monkeypatch) -> None:
+    def broken_validation(question: str, generated_query: str) -> set[str]:
+        raise RuntimeError("parser bug")
+
+    monkeypatch.setattr(
+        retry_agent_module,
+        "missing_numeric_filter_literals",
+        broken_validation,
+    )
+    subgraph = _make_subgraph(guard=None)
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert result["failure"]["code"] == "QUERY_VALIDATION_INTERNAL_ERROR"
+    assert result["failure"]["kind"] == "internal"
+    assert len(result["attempts"]) == 1
+
+
 async def test_audit_log_failure_does_not_propagate_or_block_guard_decision(
     monkeypatch,
 ) -> None:

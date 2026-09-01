@@ -17,6 +17,10 @@ from orchestrator.nodes.guard_request import has_write_intent, make_guard_reques
         "please remove all products",
         "모든 제품 삭제",
         "모든 제품을 지워줘.",
+        "MERGE (p:Product {id: 1}) RETURN p",
+        "VACUUM production.product",
+        "GRANT SELECT ON production.product TO analyst",
+        "CALL db.labels()",
     ],
 )
 def test_has_write_intent_blocks_mutation_requests(query: str) -> None:
