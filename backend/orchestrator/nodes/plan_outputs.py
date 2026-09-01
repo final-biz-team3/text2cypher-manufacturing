@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any, cast
 
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
@@ -27,14 +28,22 @@ _SYSTEM_PROMPT = """당신은 제조 데이터 질의의 schema-aware output pla
 catalog에서 선택하세요.
 
 규칙:
-- 질문에 표시해야 하는 identity, name, physical scalar, aggregate, derived value,
-  path output을 선택합니다.
+- requiredOutputs에는 질문에 표시해야 하는 identity, name, physical scalar,
+  aggregate, derived value, path output을 완전하게 선택합니다.
+- displayEntities에는 사람이 결과에서 식별해야 하는 엔티티 역할만 넣습니다.
+  특정 엔티티로 필터했더라도 결과가 그 엔티티의 속성이나 측정값을 설명하면
+  포함합니다. 단지 필터 범위만 제한하는 엔티티는 넣지 않습니다.
+- 전체 결과가 하나의 scalar 집계이면 displayEntities를 비울 수 있습니다.
+- displayEntities는 requiredOutputs를 대체하지 않습니다. compiler는 catalog에
+  선언된 key와 label만 requiredOutputs 뒤에 보완하며 계산값, 계산 입력, path
+  묶음을 대신 추론하지 않습니다.
 - 필터나 정렬에만 사용하는 필드는 결과로 요청된 경우에만 선택합니다.
 - alias의 source ownership을 바꾸거나 새 alias를 만들지 않습니다.
-- 같은 alias를 중복하지 않고 결과에 적합한 열 순서로 반환합니다.
+- 같은 role이나 alias를 중복하지 않고 결과에 적합한 순서로 반환합니다.
 - join key와 downstream binding source는 구조 finalizer가 추가합니다.
-- catalog의 kind, canonical meaning, terms, paths, grain, operation, inputs를 근거로
-  판단합니다.
+- entity role catalog와 output catalog의 kind, canonical meaning, terms, paths,
+  grain, operation, inputs를 근거로 판단합니다.
+- 불확실할 때는 requiredOutputs의 완전성과 기존 직접 선택을 우선합니다.
 - 평가 ID, fixture 또는 정답 query를 추론하거나 언급하지 않습니다.
 """
 
@@ -45,6 +54,12 @@ class OutputPlanningError(ValueError):
     def __init__(self, message: str, raw_response: str) -> None:
         super().__init__(message)
         self.raw_response = raw_response
+
+
+@dataclass(frozen=True)
+class SemanticOutputPlan:
+    required_outputs: tuple[str, ...]
+    display_entities: tuple[str, ...]
 
 
 def output_plan_json_schema(catalog: OutputCatalog, tool: str) -> dict[str, Any]:
@@ -58,30 +73,70 @@ def output_plan_json_schema(catalog: OutputCatalog, tool: str) -> dict[str, Any]
                     "enum": list(catalog.allowed_aliases(tool)),
                 },
                 "minItems": 1,
-            }
+            },
+            "displayEntities": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": list(catalog.allowed_entity_roles(tool)),
+                },
+            },
         },
-        "required": ["requiredOutputs"],
+        "required": ["requiredOutputs", "displayEntities"],
         "additionalProperties": False,
     }
 
 
-def _parse_outputs(content: str, *, tool: str, catalog: OutputCatalog) -> list[str]:
-    raw = json.loads(content)
-    if not isinstance(raw, dict) or set(raw) != {"requiredOutputs"}:
-        raise ValueError("output planner response must contain only requiredOutputs")
-    outputs = raw["requiredOutputs"]
-    if not isinstance(outputs, list) or not outputs:
-        raise ValueError("requiredOutputs must be a non-empty string array")
-    if any(not isinstance(alias, str) or not alias.strip() for alias in outputs):
-        raise ValueError("requiredOutputs must be a non-empty string array")
+def _parse_alias_array(
+    value: object,
+    *,
+    field_name: str,
+    allowed: Iterable[str],
+    allow_empty: bool,
+) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(alias, str) or not alias.strip() for alias in value
+    ):
+        raise ValueError(f"{field_name} must be a string array")
+    outputs = cast(list[str], value)
+    if not allow_empty and not outputs:
+        raise ValueError(f"{field_name} must be a non-empty string array")
     if len(outputs) != len(set(outputs)):
-        raise ValueError("requiredOutputs contains duplicate aliases")
-    unknown = set(outputs) - set(catalog.allowed_aliases(tool))
+        raise ValueError(f"{field_name} contains duplicate values")
+    unknown = set(outputs) - set(allowed)
     if unknown:
         raise ValueError(
-            f"{tool} output source ownership violation: " + ", ".join(sorted(unknown))
+            f"{field_name} contains unavailable values: " + ", ".join(sorted(unknown))
         )
-    return list(outputs)
+    return tuple(outputs)
+
+
+def _parse_output_plan(
+    content: str, *, tool: str, catalog: OutputCatalog
+) -> SemanticOutputPlan:
+    raw = json.loads(content)
+    if not isinstance(raw, dict) or set(raw) != {
+        "requiredOutputs",
+        "displayEntities",
+    }:
+        raise ValueError(
+            "output planner response must contain only requiredOutputs and "
+            "displayEntities"
+        )
+    return SemanticOutputPlan(
+        required_outputs=_parse_alias_array(
+            raw["requiredOutputs"],
+            field_name="requiredOutputs",
+            allowed=catalog.allowed_aliases(tool),
+            allow_empty=False,
+        ),
+        display_entities=_parse_alias_array(
+            raw["displayEntities"],
+            field_name="displayEntities",
+            allowed=catalog.allowed_entity_roles(tool),
+            allow_empty=True,
+        ),
+    )
 
 
 def _ordered_union(*groups: Iterable[str]) -> list[str]:
@@ -91,6 +146,21 @@ def _ordered_union(*groups: Iterable[str]) -> list[str]:
             if item not in result:
                 result.append(item)
     return result
+
+
+def compile_semantic_output_plan(
+    plan: SemanticOutputPlan,
+    catalog: OutputCatalog,
+    *,
+    tool: str,
+) -> list[str]:
+    """Add catalog identity projections without replacing model-selected aliases."""
+    identity_outputs = [
+        alias
+        for role in plan.display_entities
+        for alias in catalog.identity_projection(role, tool).display_aliases
+    ]
+    return _ordered_union(plan.required_outputs, identity_outputs)
 
 
 def finalize_required_outputs(
@@ -159,7 +229,7 @@ def _with_required_outputs(
     return item
 
 
-async def _select_outputs(
+async def _select_output_plan(
     *,
     openai_client: Any,
     route_subquery: RouteSubquery,
@@ -167,7 +237,7 @@ async def _select_outputs(
     entity: object | None,
     catalog: OutputCatalog,
     reasoning_effort: ReasoningEffort,
-) -> list[str]:
+) -> SemanticOutputPlan:
     tool = route_subquery["tool"]
     user_content = (
         f"source: {tool}\n"
@@ -175,6 +245,8 @@ async def _select_outputs(
         f"subquery: {route_subquery['question']}\n"
         f"resolved entity: {json.dumps(entity, ensure_ascii=False)}\n"
         f"join keys: {json.dumps(route_subquery['joinKeys'])}\n"
+        "entity role catalog:\n"
+        f"{catalog.describe_entity_roles(tool)}\n"
         "output catalog:\n"
         f"{catalog.describe(tool)}\n"
         "JSON:"
@@ -204,7 +276,7 @@ async def _select_outputs(
         try:
             if not isinstance(content, str):
                 raise ValueError("output planner returned an empty response")
-            return _parse_outputs(content, tool=tool, catalog=catalog)
+            return _parse_output_plan(content, tool=tool, catalog=catalog)
         except (json.JSONDecodeError, ValueError) as exc:
             if attempt == 1:
                 raise OutputPlanningError(str(exc), last_content) from exc
@@ -215,7 +287,8 @@ async def _select_outputs(
                     "role": "user",
                     "content": (
                         "The output plan failed structural validation: "
-                        f"{exc}\nReturn the complete JSON object using only catalog aliases."
+                        f"{exc}\nReturn the complete JSON object using only catalog "
+                        "roles and aliases. Keep requiredOutputs complete."
                     ),
                 },
             ]
@@ -252,13 +325,18 @@ def make_plan_outputs_node(
                 generator_rules = list(spec.generator_rules[tool])
             else:
                 generator_rules = []
-                selected = await _select_outputs(
+                semantic_plan = await _select_output_plan(
                     openai_client=openai_client,
                     route_subquery=route_subquery,
                     original_question=state["query"],
                     entity=state.get("entity"),
                     catalog=catalog,
                     reasoning_effort=reasoning_effort,
+                )
+                selected = compile_semantic_output_plan(
+                    semantic_plan,
+                    catalog,
+                    tool=tool,
                 )
             outputs = finalize_required_outputs(
                 selected,
@@ -303,6 +381,8 @@ def make_plan_outputs_node(
 
 __all__ = [
     "OutputPlanningError",
+    "SemanticOutputPlan",
+    "compile_semantic_output_plan",
     "finalize_required_outputs",
     "make_plan_outputs_node",
     "output_plan_json_schema",

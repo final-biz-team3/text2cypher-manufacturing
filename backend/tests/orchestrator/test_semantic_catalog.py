@@ -56,6 +56,9 @@ def test_package_loader_and_explicit_loader_have_the_same_fingerprint() -> None:
         lambda data: data["outputRoles"][1].update(
             roleId=data["outputRoles"][0]["roleId"]
         ),
+        lambda data: data["entityRoles"][1].update(
+            roleId=data["entityRoles"][0]["roleId"]
+        ),
     ],
 )
 def test_duplicate_semantic_ids_are_rejected(mutation) -> None:
@@ -69,6 +72,14 @@ def test_duplicate_semantic_ids_are_rejected(mutation) -> None:
 def test_empty_normalized_term_is_rejected() -> None:
     data = _ontology_data()
     data["businessConcepts"][0]["terms"] = ["   "]
+
+    with pytest.raises(ValidationError):
+        ManufacturingOntology.model_validate(data)
+
+
+def test_empty_entity_role_catalog_is_rejected() -> None:
+    data = _ontology_data()
+    data["entityRoles"] = []
 
     with pytest.raises(ValidationError):
         ManufacturingOntology.model_validate(data)
@@ -142,10 +153,41 @@ def test_unknown_role_mapping_path_is_rejected() -> None:
         _compile(data)
 
 
+def test_entity_identity_projection_requires_owned_identity_and_name_aliases() -> None:
+    data = _ontology_data()
+    product = next(item for item in data["entityRoles"] if item["roleId"] == "product")
+    product["identityProjection"]["sql"]["keys"] = ["listPrice"]
+
+    with pytest.raises(ValueError, match="non-identity"):
+        _compile(data)
+
+    data = _ontology_data()
+    product = next(item for item in data["entityRoles"] if item["roleId"] == "product")
+    product["identityProjection"]["sql"]["labels"] = ["actualStock"]
+
+    with pytest.raises(ValueError, match="non-display"):
+        _compile(data)
+
+
+def test_entity_role_projection_is_source_scoped_and_described() -> None:
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    assert catalog.identity_projection("product", "sql").display_aliases == (
+        "productId",
+        "productName",
+    )
+    assert catalog.by_tool["sql"]["productName"].value_type == "name"
+    assert "category" in catalog.allowed_entity_roles("sql")
+    assert "category" not in catalog.allowed_entity_roles("graph")
+    assert "keys=productId" in catalog.describe_entity_roles("sql")
+
+
 def test_alternative_term_order_does_not_change_compiled_semantics() -> None:
     original = _ontology_data()
     reordered = deepcopy(original)
     for role in reordered["outputRoles"]:
+        role["terms"].reverse()
+    for role in reordered["entityRoles"]:
         role["terms"].reverse()
     for concept in reordered["businessConcepts"]:
         concept["terms"].reverse()

@@ -24,6 +24,7 @@ from tests.mocks.openai import (
     MockOpenAIClient,
     make_content_response,
     make_no_tool_call_response,
+    make_output_plan_response,
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
 
@@ -65,7 +66,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_output_plan_response(required_outputs=["listPrice"]),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product '
             "WHERE productid = 956"
@@ -124,7 +125,7 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_output_plan_response(required_outputs=["listPrice"]),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product'
         ),
@@ -195,7 +196,7 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_output_plan_response(required_outputs=["listPrice"]),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product'
         ),
@@ -262,7 +263,7 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     openai_client = _answering_client(
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
-        make_content_response('{"requiredOutputs":["listPrice"]}'),
+        make_output_plan_response(required_outputs=["listPrice"]),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product'
         ),
@@ -540,8 +541,8 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
                 ensure_ascii=False,
             )
         ),
-        make_content_response('{"requiredOutputs":["listPrice"]}'),
-        make_content_response('{"requiredOutputs":["productId"]}'),
+        make_output_plan_response(required_outputs=["listPrice"]),
+        make_output_plan_response(required_outputs=["productId"]),
         make_content_response(
             'SELECT listprice AS "listPrice" FROM production.product'
         ),
@@ -630,8 +631,8 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
     openai_client = MockOpenAIClient(
         make_no_tool_call_response(),
         make_content_response(route_plan),
-        make_content_response('{"requiredOutputs":["productId"]}'),
-        make_content_response('{"requiredOutputs":["productId"]}'),
+        make_output_plan_response(required_outputs=["productId"]),
+        make_output_plan_response(required_outputs=["productId"]),
         make_content_response("SELECT 1 AS productId, 'SQL Product' AS productName"),
         make_content_response(
             "MATCH (p:Product) RETURN p.productId AS productId, "

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Annotated, Literal, Self
@@ -73,6 +73,39 @@ class OutputRoleDefinition(_SemanticModel):
         return self
 
 
+class IdentityProjectionDefinition(_SemanticModel):
+    keys: list[NonEmptyString] = Field(min_length=1)
+    labels: list[NonEmptyString] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_aliases(self) -> Self:
+        _validate_unique(self.keys, "identity key alias")
+        _validate_unique(self.labels, "identity label alias")
+        overlap = set(self.keys) & set(self.labels)
+        if overlap:
+            raise ValueError(
+                "identity keys and labels must be disjoint: "
+                + ", ".join(sorted(overlap))
+            )
+        return self
+
+
+class EntityRoleDefinition(_SemanticModel):
+    role_id: NonEmptyString = Field(alias="roleId")
+    canonical: NonEmptyString
+    terms: list[NonEmptyString] = Field(default_factory=list)
+    identity_projection: dict[ToolName, IdentityProjectionDefinition] = Field(
+        alias="identityProjection"
+    )
+
+    @model_validator(mode="after")
+    def validate_definition(self) -> Self:
+        _validate_local_terms(self.canonical, self.terms, self.role_id)
+        if not self.identity_projection:
+            raise ValueError("entity role must define at least one source projection")
+        return self
+
+
 class TypedPredicate(_SemanticModel):
     field: NonEmptyString
     operator: PredicateOperator
@@ -127,6 +160,7 @@ class ManufacturingOntology(_SemanticModel):
     output_roles: list[OutputRoleDefinition] = Field(
         default_factory=list, alias="outputRoles"
     )
+    entity_roles: list[EntityRoleDefinition] = Field(alias="entityRoles", min_length=1)
     business_concepts: list[BusinessConceptDefinition] = Field(
         default_factory=list, alias="businessConcepts"
     )
@@ -135,6 +169,7 @@ class ManufacturingOntology(_SemanticModel):
     @model_validator(mode="after")
     def validate_identifiers(self) -> Self:
         _validate_unique([role.role_id for role in self.output_roles], "output role ID")
+        _validate_unique([role.role_id for role in self.entity_roles], "entity role ID")
         _validate_unique(
             [concept.concept_id for concept in self.business_concepts],
             "business concept ID",
@@ -209,11 +244,30 @@ class TransformSpec:
 
 
 @dataclass(frozen=True)
+class IdentityProjection:
+    keys: tuple[str, ...]
+    labels: tuple[str, ...]
+
+    @property
+    def display_aliases(self) -> tuple[str, ...]:
+        return (*self.keys, *self.labels)
+
+
+@dataclass(frozen=True)
+class EntityRoleSpec:
+    role_id: str
+    canonical: str
+    terms: tuple[str, ...]
+    projections: Mapping[ToolName, IdentityProjection]
+
+
+@dataclass(frozen=True)
 class QuerySemanticCatalog:
     ontology_version: str
     by_tool: Mapping[ToolName, Mapping[str, AliasSpec]]
     identity_aliases_by_tool: Mapping[ToolName, frozenset[str]]
     shared_join_aliases: frozenset[str]
+    entity_roles: Mapping[str, EntityRoleSpec]
     transforms: Mapping[str, TransformSpec]
     fingerprint: str
 
@@ -251,6 +305,43 @@ class QuerySemanticCatalog:
                 )
                 details.append(f"predicates={predicates}")
             lines.append(f"- {alias}: " + "; ".join(details))
+        return "\n".join(lines)
+
+    def allowed_entity_roles(self, tool: str) -> tuple[str, ...]:
+        source = _tool_name(tool)
+        return tuple(
+            sorted(
+                role_id
+                for role_id, spec in self.entity_roles.items()
+                if source in spec.projections
+            )
+        )
+
+    def identity_projection(self, role_id: str, tool: str) -> IdentityProjection:
+        source = _tool_name(tool)
+        try:
+            role = self.entity_roles[role_id]
+        except KeyError as exc:
+            raise ValueError(f"unknown entity role: {role_id!r}") from exc
+        try:
+            return role.projections[source]
+        except KeyError as exc:
+            raise ValueError(
+                f"entity role {role_id!r} is unavailable from {source}"
+            ) from exc
+
+    def describe_entity_roles(self, tool: str) -> str:
+        source = _tool_name(tool)
+        lines: list[str] = []
+        for role_id in self.allowed_entity_roles(source):
+            role = self.entity_roles[role_id]
+            projection = role.projections[source]
+            labels = ", ".join(projection.labels) if projection.labels else "none"
+            lines.append(
+                f"- {role_id}: meaning={role.canonical}; "
+                f"terms={', '.join(role.terms)}; keys={', '.join(projection.keys)}; "
+                f"labels={labels}"
+            )
         return "\n".join(lines)
 
     def transform(self, transform_id: str) -> TransformSpec:
@@ -294,32 +385,32 @@ def build_query_semantic_catalog(
         "graph": graph_paths,
     }
 
-    for role in ontology.output_roles:
+    for output_role in ontology.output_roles:
         source_names: tuple[ToolName, ...] = ("sql", "graph")
         role_sources: frozenset[ToolName] = frozenset(
-            source for source in source_names if getattr(role.mappings, source)
+            source for source in source_names if getattr(output_role.mappings, source)
         )
         for source in role_sources:
-            mappings = tuple(getattr(role.mappings, source))
+            mappings = tuple(getattr(output_role.mappings, source))
             unknown_paths = set(mappings) - available_paths[source]
             if unknown_paths:
                 raise ValueError(
-                    f"role {role.role_id!r} references unknown {source} paths: "
+                    f"role {output_role.role_id!r} references unknown {source} paths: "
                     + ", ".join(sorted(unknown_paths))
                 )
-            _reject_alias_collision(by_tool[source], role.alias, "output role")
-            by_tool[source][role.alias] = AliasSpec(
-                alias=role.alias,
-                canonical=role.canonical,
+            _reject_alias_collision(by_tool[source], output_role.alias, "output role")
+            by_tool[source][output_role.alias] = AliasSpec(
+                alias=output_role.alias,
+                canonical=output_role.canonical,
                 canonical_source=source,
                 sources=role_sources,
                 kind="role",
-                value_type=role.value_type,
+                value_type=output_role.value_type,
                 schema_paths=mappings,
                 terms=(
-                    role.alias,
-                    role.canonical,
-                    *sorted(role.terms, key=_normalized_term),
+                    output_role.alias,
+                    output_role.canonical,
+                    *sorted(output_role.terms, key=_normalized_term),
                 ),
                 owner_terms=tuple(
                     dict.fromkeys(path.rsplit(".", 1)[0] for path in mappings)
@@ -330,8 +421,8 @@ def build_query_semantic_catalog(
                 ),
                 operation="roleProjection",
             )
-            if role.value_type == "identity":
-                identity_aliases[source].add(role.alias)
+            if output_role.value_type == "identity":
+                identity_aliases[source].add(output_role.alias)
 
     for concept in ontology.business_concepts:
         for source in concept.sources:
@@ -369,6 +460,60 @@ def build_query_semantic_catalog(
                 inputs=tuple(concept.inputs),
                 predicates=tuple(concept.predicates),
             )
+
+    entity_roles: dict[str, EntityRoleSpec] = {}
+    for entity_role in ontology.entity_roles:
+        projections: dict[ToolName, IdentityProjection] = {}
+        for source, definition in entity_role.identity_projection.items():
+            available = by_tool[source]
+            projection_aliases = {*definition.keys, *definition.labels}
+            unknown = projection_aliases - set(available)
+            if unknown:
+                raise ValueError(
+                    f"entity role {entity_role.role_id!r} references aliases unavailable "
+                    f"from {source}: {', '.join(sorted(unknown))}"
+                )
+            invalid_keys = [
+                alias
+                for alias in definition.keys
+                if available[alias].value_type != "identity"
+            ]
+            if invalid_keys:
+                raise ValueError(
+                    f"entity role {entity_role.role_id!r} has non-identity "
+                    f"{source} keys: " + ", ".join(sorted(invalid_keys))
+                )
+            invalid_labels = [
+                alias
+                for alias in definition.labels
+                if available[alias].value_type in {"identity", "path"}
+                or available[alias].kind in {"aggregate", "derived", "path"}
+            ]
+            if invalid_labels:
+                raise ValueError(
+                    f"entity role {entity_role.role_id!r} has non-display "
+                    f"{source} labels: " + ", ".join(sorted(invalid_labels))
+                )
+            for alias in definition.labels:
+                if available[alias].value_type == "scalar":
+                    available[alias] = replace(available[alias], value_type="name")
+            projections[source] = IdentityProjection(
+                keys=tuple(definition.keys),
+                labels=tuple(definition.labels),
+            )
+        entity_roles[entity_role.role_id] = EntityRoleSpec(
+            role_id=entity_role.role_id,
+            canonical=entity_role.canonical,
+            terms=(
+                entity_role.role_id,
+                entity_role.canonical,
+                *sorted(entity_role.terms, key=_normalized_term),
+            ),
+            projections=MappingProxyType(projections),
+        )
+    for source in ("sql", "graph"):
+        if not any(source in role.projections for role in entity_roles.values()):
+            raise ValueError(f"semantic catalog has no {source} entity roles")
 
     transforms: dict[str, TransformSpec] = {}
     for transform in ontology.transforms:
@@ -435,6 +580,20 @@ def build_query_semantic_catalog(
             }
             for transform_id, spec in sorted(transforms.items())
         },
+        "entityRoles": {
+            role_id: {
+                "canonical": role.canonical,
+                "terms": sorted(role.terms, key=_normalized_term),
+                "identityProjection": {
+                    source: {
+                        "keys": projection.keys,
+                        "labels": projection.labels,
+                    }
+                    for source, projection in sorted(role.projections.items())
+                },
+            }
+            for role_id, role in sorted(entity_roles.items())
+        },
     }
     fingerprint = hashlib.sha256(
         json.dumps(
@@ -456,6 +615,7 @@ def build_query_semantic_catalog(
             {source: frozenset(aliases) for source, aliases in identity_aliases.items()}
         ),
         shared_join_aliases=frozenset(shared_join_aliases),
+        entity_roles=MappingProxyType(dict(entity_roles)),
         transforms=MappingProxyType(dict(transforms)),
         fingerprint=fingerprint,
     )

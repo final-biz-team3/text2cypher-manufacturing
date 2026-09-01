@@ -11,6 +11,8 @@ import pytest
 from agents.cypher.schema.loader import load_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from orchestrator.nodes.plan_outputs import (
+    SemanticOutputPlan,
+    compile_semantic_output_plan,
     finalize_required_outputs,
     make_plan_outputs_node,
     output_plan_json_schema,
@@ -18,7 +20,10 @@ from orchestrator.nodes.plan_outputs import (
 from orchestrator.output_catalog import OutputCatalog, build_output_catalog
 from orchestrator.planning import BomShortageTransform, RouteSubquery
 from orchestrator.state import OrchestratorState
-from tests.mocks.openai import MockOpenAIClient, make_content_response
+from tests.mocks.openai import (
+    MockOpenAIClient,
+    make_output_plan_response,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -65,6 +70,54 @@ def test_output_schema_uses_provider_supported_shape() -> None:
     schema = output_plan_json_schema(_catalog(), "sql")
 
     assert "uniqueItems" not in schema["properties"]["requiredOutputs"]
+    assert schema["required"] == ["requiredOutputs", "displayEntities"]
+
+
+def test_semantic_compiler_adds_identity_without_replacing_direct_selection() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("listPrice", "standardCost"),
+        display_entities=("product",),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="sql") == [
+        "listPrice",
+        "standardCost",
+        "productId",
+        "productName",
+    ]
+
+
+def test_semantic_compiler_does_not_expand_derived_inputs_or_path_bundles() -> None:
+    shortage_plan = SemanticOutputPlan(
+        required_outputs=("shortageQty",),
+        display_entities=("product",),
+    )
+    path_plan = SemanticOutputPlan(
+        required_outputs=("minDepth",),
+        display_entities=("component",),
+    )
+
+    assert compile_semantic_output_plan(shortage_plan, _catalog(), tool="sql") == [
+        "shortageQty",
+        "productId",
+        "productName",
+    ]
+    assert compile_semantic_output_plan(path_plan, _catalog(), tool="graph") == [
+        "minDepth",
+        "componentId",
+        "componentName",
+    ]
+
+
+def test_scalar_output_without_display_entity_is_unchanged() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("productCount",),
+        display_entities=(),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="sql") == [
+        "productCount"
+    ]
 
 
 def test_finalizer_preserves_selection_order_and_adds_only_structure() -> None:
@@ -149,11 +202,7 @@ async def test_model_output_is_authoritative_and_question_is_unchanged(
         if all(alias in _catalog().by_tool["sql"] for alias in selected)
         else "graph"
     )
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":[' + ",".join(f'"{alias}"' for alias in selected) + "]}"
-        )
-    )
+    client = MockOpenAIClient(make_output_plan_response(required_outputs=selected))
     subquery: RouteSubquery = {
         "id": f"{tool}_synthetic",
         "tool": tool,
@@ -177,7 +226,7 @@ async def test_entity_names_with_domain_words_do_not_rewrite_the_subquery() -> N
         "productName": "warehouse 공급 폐기 location",
     }
     client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["productId","color"]}')
+        make_output_plan_response(required_outputs=["productId", "color"])
     )
     subquery: RouteSubquery = {
         "id": "sql_color",
@@ -197,8 +246,8 @@ async def test_entity_names_with_domain_words_do_not_rewrite_the_subquery() -> N
 
 async def test_downstream_non_identity_binding_is_added_to_producer_outputs() -> None:
     client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["componentName"]}'),
-        make_content_response('{"requiredOutputs":["actualStock"]}'),
+        make_output_plan_response(required_outputs=["componentName"]),
+        make_output_plan_response(required_outputs=["actualStock"]),
     )
     subqueries: list[RouteSubquery] = [
         {
@@ -241,7 +290,7 @@ async def test_independent_output_selection_calls_run_concurrently() -> None:
                 both_started.set()
             await asyncio.wait_for(both_started.wait(), timeout=0.2)
             output = "productCount" if tool == "sql" else "minDepth"
-            return make_content_response(f'{{"requiredOutputs":["{output}"]}}')
+            return make_output_plan_response(required_outputs=[output])
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=_ConcurrentCompletions()))
     subqueries: list[RouteSubquery] = [
@@ -272,8 +321,8 @@ async def test_independent_output_selection_calls_run_concurrently() -> None:
 
 async def test_structural_retry_does_not_add_an_extra_planning_stage() -> None:
     client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["pathProductIds"]}'),
-        make_content_response('{"requiredOutputs":["productCount"]}'),
+        make_output_plan_response(required_outputs=["pathProductIds"]),
+        make_output_plan_response(required_outputs=["productCount"]),
     )
     subquery: RouteSubquery = {
         "id": "sql_count",
