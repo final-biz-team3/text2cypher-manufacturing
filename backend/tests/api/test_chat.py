@@ -315,6 +315,44 @@ class _FailedResultGraph:
         }
 
 
+class _PartiallyFailedResultGraph:
+    async def ainvoke(self, state: dict) -> dict:
+        return {
+            "query": state["query"],
+            "sql_query": "SELECT product_id FROM production.product",
+            "cypher_query": "MATCH (secret) RETURN secret",
+            "sql_result": {
+                "result": [{"product_id": 1}],
+                "error": None,
+                "attempts": [
+                    {
+                        "query": "SELECT product_id FROM production.product",
+                        "error": None,
+                    }
+                ],
+            },
+            "graph_result": {
+                "result": None,
+                "error": "secret graph error",
+                "attempts": [
+                    {"query": "MATCH (secret) RETURN secret", "error": "secret"}
+                ],
+            },
+            "query_failure": {
+                "code": "QUERY_EXECUTION_FAILED",
+                "stage": "execution",
+                "category": "QUERY_INVALID",
+                "kind": "user_correctable",
+                "retryable": True,
+                "user_safe_reason": "조회에 실패했습니다.",
+                "suggested_action": "조건을 구체화해 주세요.",
+                "failed_tool": "graph",
+                "dependent_failure": False,
+            },
+            "final_answer": "그래프 조회 조건을 확인해 주세요.",
+        }
+
+
 def test_chat_endpoint_returns_502_and_does_not_save_on_answer_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -402,6 +440,27 @@ async def test_chat_removes_raw_query_and_error_from_failed_response_and_history
     assert "QUERY_EXECUTION_FAILED" not in serialized_response
     assert "secret_table" not in serialized_history
     assert "database secret error" not in serialized_history
+
+
+async def test_chat_preserves_successful_tool_attempts_on_partial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_pool = MockAsyncWritePool()
+    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
+    app = FastAPI()
+    app.state.graph = _PartiallyFailedResultGraph()
+
+    result = await chat(
+        ChatRequest(query="제품과 공정 조회"),
+        request=Request({"type": "http", "app": app, "headers": []}),
+        user=CurrentUser(username="kim.quality", role="user"),
+    )
+
+    assert result["sql_query"] == "SELECT product_id FROM production.product"
+    assert result["sql_result"]["attempts"][0]["error"] is None
+    assert result["cypher_query"] is None
+    assert result["graph_result"]["attempts"] == []
+    assert "secret" not in json.dumps(result["graph_result"], ensure_ascii=False)
 
 
 async def test_early_failure_answer_generation_error_does_not_save_history(

@@ -61,6 +61,14 @@ def _safe_failed_result(value: Any) -> Any:
     }
 
 
+def _tool_failed(failure: QueryFailure | None, tool: str) -> bool:
+    """실패 도구만 숨기되 도구를 특정할 수 없는 조기 실패는 모두 숨긴다."""
+    if failure is None:
+        return False
+    failed_tool = failure.get("failed_tool")
+    return failed_tool is None or failed_tool == tool
+
+
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -127,23 +135,23 @@ async def chat(
     # 변환하면 나중에 다른 필드에서 같은 버그가 재현될 수 있다 - response
     # 전체를 한 번에 감싼다.
     query_failure: QueryFailure | None = result.get("query_failure")
+    sql_failed = _tool_failed(query_failure, "sql")
+    graph_failed = _tool_failed(query_failure, "graph")
     response = _to_json_safe(
         {
             "query": result["query"],
             "entity": result.get("entity"),
             "tool_plan": result.get("tool_plan"),
-            "sql_query": None if query_failure is not None else result.get("sql_query"),
-            "cypher_query": (
-                None if query_failure is not None else result.get("cypher_query")
-            ),
+            "sql_query": None if sql_failed else result.get("sql_query"),
+            "cypher_query": (None if graph_failed else result.get("cypher_query")),
             "sql_result": (
                 _safe_failed_result(result.get("sql_result"))
-                if query_failure is not None
+                if sql_failed
                 else result.get("sql_result")
             ),
             "graph_result": (
                 _safe_failed_result(result.get("graph_result"))
-                if query_failure is not None
+                if graph_failed
                 else result.get("graph_result")
             ),
             "final_answer": result.get("final_answer"),
