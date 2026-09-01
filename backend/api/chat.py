@@ -128,11 +128,7 @@ async def chat(
             }
         )
     except EntityNotFoundError:
-        final_answer = await generate_failure_answer(
-            get_openai_client(),
-            query=chat_request.query,
-            failure=entity_not_found_failure(),
-        )
+        final_answer = generate_failure_answer(entity_not_found_failure())
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
@@ -140,33 +136,21 @@ async def chat(
         }
     except EntityExtractionError:
         failure = query_understanding_failure("entity_resolution")
-        final_answer = await generate_failure_answer(
-            get_openai_client(),
-            query=chat_request.query,
-            failure=failure,
-        )
+        final_answer = generate_failure_answer(failure)
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
             "query_failure": failure,
         }
     except RoutePlanError:
-        final_answer = await generate_failure_answer(
-            get_openai_client(),
-            query=chat_request.query,
-            failure=query_understanding_failure("routing"),
-        )
+        final_answer = generate_failure_answer(query_understanding_failure("routing"))
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
             "query_failure": query_understanding_failure("routing"),
         }
     except OutputPlanningError:
-        final_answer = await generate_failure_answer(
-            get_openai_client(),
-            query=chat_request.query,
-            failure=query_understanding_failure("planning"),
-        )
+        final_answer = generate_failure_answer(query_understanding_failure("planning"))
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,

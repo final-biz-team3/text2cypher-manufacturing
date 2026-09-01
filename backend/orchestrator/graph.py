@@ -13,6 +13,7 @@ from agents.sql.schema.models import SqlSchema
 from agents.sql.schema.serializer import serialize_sql_schema
 from orchestrator.execution.cypher_executor import execute_cypher
 from orchestrator.execution.sql_executor import execute_sql
+from orchestrator.nodes.classify_topic import make_classify_topic_node
 from orchestrator.nodes.compose_results import make_compose_results_node
 from orchestrator.nodes.execute_plan import make_execute_plan_node
 from orchestrator.nodes.generate_answer import make_generate_answer_node
@@ -26,6 +27,11 @@ from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
 from orchestrator.subgraphs.sql_agent import make_sql_agent_subgraph
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _route_by_query_failure(state: OrchestratorState) -> str:
+    """guard_request/classify_topic 공용: query_failure가 있으면 즉시 답변으로 뺀다."""
+    return "blocked" if state.get("query_failure") is not None else "allowed"
 
 
 def _load_schema_context() -> tuple[SqlSchema, str, GraphSchema, str]:
@@ -44,8 +50,8 @@ def _load_schema_context() -> tuple[SqlSchema, str, GraphSchema, str]:
 
 
 # OpenAI 클라이언트/PostgreSQL 풀을 주입받아 컴파일된 그래프를 반환
-# START -> guard_request -> resolve_entity -> route_query -> plan_outputs -> execute_plan
-# -> compose_results -> generate_answer -> END
+# START -> guard_request -> classify_topic -> resolve_entity -> route_query
+# -> plan_outputs -> execute_plan -> compose_results -> generate_answer -> END
 def build_orchestrator_graph(
     openai_client: Any,
     pool: Any,
@@ -76,6 +82,13 @@ def build_orchestrator_graph(
 
     graph = StateGraph(OrchestratorState)
     graph.add_node("guard_request", cast(Any, make_guard_request_node()))
+    graph.add_node(
+        "classify_topic",
+        cast(
+            Any,
+            make_classify_topic_node(openai_client, reasoning_effort=reasoning_effort),
+        ),
+    )
     # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다
     # (async Callable의 런타임 시그니처는 StateGraph 노드 계약과 일치한다).
     graph.add_node(
@@ -133,9 +146,12 @@ def build_orchestrator_graph(
     graph.add_edge(START, "guard_request")
     graph.add_conditional_edges(
         "guard_request",
-        lambda state: (
-            "blocked" if state.get("query_failure") is not None else "allowed"
-        ),
+        _route_by_query_failure,
+        {"blocked": "generate_answer", "allowed": "classify_topic"},
+    )
+    graph.add_conditional_edges(
+        "classify_topic",
+        _route_by_query_failure,
         {"blocked": "generate_answer", "allowed": "resolve_entity"},
     )
     graph.add_edge("resolve_entity", "route_query")
