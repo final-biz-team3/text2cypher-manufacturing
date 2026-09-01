@@ -5,7 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: Pretendard, -apple-system, 'Malgun Gothic', sans-serif;
+  --font-sans:
+    'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Malgun Gothic',
+    sans-serif;
   --font-mono: ui-monospace, Menlo, monospace;
 
   --color-background: var(--background);
@@ -147,6 +149,11 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   html {
     @apply font-sans;

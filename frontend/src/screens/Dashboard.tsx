@@ -7,6 +7,7 @@ import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnsw
 import { ClarificationPrompt } from '@/components/query/ClarificationPrompt'
 import { ResultsTable } from '@/components/result/ResultsTable'
 import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
+import { PathGraphCanvas } from '@/components/graph/PathGraphCanvas'
 import { useUiStore } from '@/store/useUiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useHealthStore } from '@/store/useHealthStore'
@@ -14,8 +15,9 @@ import { SCHEMA_NODES, RELATIONSHIPS } from '@/lib/schemaNodes'
 import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { fetchHistory } from '@/lib/history'
 import { formatCypherError } from '@/lib/formatCypherError'
-import type { AmbiguousCandidate, ChatResponse, HistoryEntry } from '@/lib/schemas'
-import type { DisplayResult, ResultColumn, RetryAttempt, SelfCorrectionStep } from '@/types/query'
+import { toDisplayResult } from '@/lib/displayResult'
+import type { AmbiguousCandidate, HistoryEntry } from '@/lib/schemas'
+import type { RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
 // 모호한 이름이 여러 개면 한 번에 하나씩 확정되므로, 지금까지 확정한 후보들과
 // 원래 질문, 그리고 방금 받은 새 후보 목록을 함께 들고 있어야 한다
@@ -34,28 +36,6 @@ const EXAMPLE_QUESTIONS: string[] = [
 ]
 
 const READ_ONLY = true
-
-// /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있는 형태로 정리한다
-function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
-  const rowsRaw = response.sql_result?.result ?? response.graph_result?.result ?? []
-  const columns: ResultColumn[] =
-    rowsRaw.length > 0 ? Object.keys(rowsRaw[0]).map((key) => ({ key, label: key })) : []
-  const rows = rowsRaw.map((row) =>
-    Object.fromEntries(
-      Object.entries(row).map(([key, value]) => [key, value == null ? '' : String(value)]),
-    ),
-  )
-  return {
-    query: response.query,
-    answer: response.final_answer ?? '답변을 생성하지 못했습니다.',
-    sql: response.sql_query ?? null,
-    cypher: response.cypher_query ?? null,
-    columns,
-    rows,
-    sqlAttempts: response.sql_result?.attempts ?? [],
-    cypherAttempts: response.graph_result?.attempts ?? [],
-  }
-}
 
 // 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다.
 // 실패 다음에 또 다른 시도가 이어졌다면(=실제로 재시도됨) "다시 시도합니다."를 덧붙인다.
@@ -104,7 +84,6 @@ export function Dashboard() {
   const [pendingClarification, setPendingClarification] = useState<PendingClarification | null>(
     null,
   )
-
   // 대화기록을 다시 불러와 사이드바 목록을 갱신한다
   const refreshHistory = () => {
     fetchHistory()
@@ -273,6 +252,13 @@ export function Dashboard() {
             <div className="flex flex-col gap-4">
               {queryInputBar}
               <NaturalLanguageAnswerBox answer={result.answer} />
+              {result.hasGraphResult ? (
+                <PathGraphCanvas
+                  rows={result.graphRows}
+                  error={result.graphError}
+                  emptyReason={result.graphEmptyReason}
+                />
+              ) : null}
               {result.columns.length > 0 ? (
                 <ResultsTable columns={result.columns} rows={result.rows} />
               ) : null}
