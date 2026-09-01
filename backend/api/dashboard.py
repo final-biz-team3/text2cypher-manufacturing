@@ -35,10 +35,11 @@ async def overview(
 async def process_overview(
     from_value: str | None = Query(default=None, alias="from"),
     to_value: str | None = Query(default=None, alias="to"),
+    granularity: str | None = Query(default=None),
     _user: CurrentUser = Depends(get_current_user),  # noqa: B008
 ):
     try:
-        return await get_process_overview(from_value, to_value)
+        return await get_process_overview(from_value, to_value, granularity)
     except DashboardServiceError as error:
         return _error_response(error)
 

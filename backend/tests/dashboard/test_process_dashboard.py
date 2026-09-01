@@ -48,8 +48,27 @@ def test_default_process_period_is_latest_thirty_days() -> None:
     assert result == (date(2014, 5, 30), date(2014, 6, 28))
 
 
-async def test_process_overview_uses_month_buckets_for_long_period(
+def test_process_granularity_validation() -> None:
+    with pytest.raises(DashboardServiceError) as exc_info:
+        process._resolve_granularity(
+            "week",
+            date(2014, 5, 1),
+            date(2014, 5, 31),
+            93,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.code == "INVALID_GRANULARITY"
+
+
+@pytest.mark.parametrize(
+    ("requested_granularity", "expected_granularity"),
+    [(None, "month"), ("year", "year")],
+)
+async def test_process_overview_uses_requested_or_automatic_granularity(
     monkeypatch: pytest.MonkeyPatch,
+    requested_granularity: str | None,
+    expected_granularity: str,
 ) -> None:
     calls: list[tuple[str, tuple[Any, ...]]] = []
 
@@ -83,10 +102,12 @@ async def test_process_overview_uses_month_buckets_for_long_period(
     monkeypatch.setattr(process, "_execute_with_timeout", fake_execute)
     process.clear_process_cache()
 
-    result = await process.get_process_overview("2014-01-01", "2014-06-28")
+    result = await process.get_process_overview(
+        "2014-01-01", "2014-06-28", requested_granularity
+    )
 
-    assert result["period"]["granularity"] == "month"
+    assert result["period"]["granularity"] == expected_granularity
     assert result["kpis"][0]["value"] == 10
     trend_query = next(sql for sql, _ in calls if "generate_series" in sql)
-    assert "date_trunc('month'" in trend_query
+    assert f"date_trunc('{expected_granularity}'" in trend_query
     assert result["locations"][0]["locationId"] == 1

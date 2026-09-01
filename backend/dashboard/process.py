@@ -12,8 +12,9 @@ from dashboard.service import DashboardServiceError, _execute_with_timeout
 
 PROCESS_CACHE_TTL_SECONDS = 300.0
 MAX_CACHE_ENTRIES = 128
+PROCESS_GRANULARITIES = {"day", "month", "year"}
 
-_process_cache: dict[tuple[date, date], tuple[float, dict[str, Any]]] = {}
+_process_cache: dict[tuple[date, date, str], tuple[float, dict[str, Any]]] = {}
 _process_cache_lock = asyncio.Lock()
 
 
@@ -72,15 +73,33 @@ def _resolve_period(
     return from_date, to_date
 
 
+def _resolve_granularity(
+    value: str | None,
+    from_date: date,
+    to_date: date,
+    daily_max_days: int,
+) -> str:
+    if value is not None:
+        if value not in PROCESS_GRANULARITIES:
+            raise DashboardServiceError(
+                400,
+                "INVALID_GRANULARITY",
+                "granularity는 day, month, year 중 하나여야 합니다.",
+            )
+        return value
+
+    day_count = (to_date - from_date).days + 1
+    return "day" if day_count <= daily_max_days else "month"
+
+
 async def _build_process_overview(
     from_date: date,
     to_date: date,
     available_from: date,
     available_to: date,
+    granularity: str,
 ) -> dict[str, Any]:
     contracts = load_process_dashboard_contracts()
-    day_count = (to_date - from_date).days + 1
-    granularity = "day" if day_count <= contracts["trend"]["dailyMaxDays"] else "month"
     trend_sql = contracts["trend"]["sql"].format(bucket=granularity)
     params = (from_date, to_date)
 
@@ -116,14 +135,23 @@ async def _build_process_overview(
 
 
 async def get_process_overview(
-    from_value: str | None = None, to_value: str | None = None
+    from_value: str | None = None,
+    to_value: str | None = None,
+    granularity: str | None = None,
 ) -> dict[str, Any]:
     try:
         available_from, available_to = await _load_available_range()
         from_date, to_date = _resolve_period(
             from_value, to_value, available_from, available_to
         )
-        cache_key = (from_date, to_date)
+        contracts = load_process_dashboard_contracts()
+        resolved_granularity = _resolve_granularity(
+            granularity,
+            from_date,
+            to_date,
+            contracts["trend"]["dailyMaxDays"],
+        )
+        cache_key = (from_date, to_date, resolved_granularity)
         cached = _process_cache.get(cache_key)
         now = time.monotonic()
         if cached and now - cached[0] < PROCESS_CACHE_TTL_SECONDS:
@@ -135,7 +163,11 @@ async def get_process_overview(
             if cached and now - cached[0] < PROCESS_CACHE_TTL_SECONDS:
                 return cached[1]
             result = await _build_process_overview(
-                from_date, to_date, available_from, available_to
+                from_date,
+                to_date,
+                available_from,
+                available_to,
+                resolved_granularity,
             )
             if len(_process_cache) >= MAX_CACHE_ENTRIES:
                 oldest_key = min(_process_cache, key=lambda key: _process_cache[key][0])
