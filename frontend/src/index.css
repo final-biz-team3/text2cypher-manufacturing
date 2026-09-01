@@ -157,6 +157,13 @@
   }
   html {
     @apply font-sans;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+  body,
+  #root {
+    max-width: 100%;
+    overflow-x: hidden;
   }
 }
 

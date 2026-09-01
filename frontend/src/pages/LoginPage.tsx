@@ -12,6 +12,7 @@ export function LoginPage() {
   const navigate = useNavigate()
   const login = useAuthStore((s) => s.login)
   const neo4jConnected = useHealthStore((s) => s.neo4jConnected)
+  const postgresConnected = useHealthStore((s) => s.postgresConnected)
   const { rememberId, savedUsername, setRememberId, setSavedUsername } = useLoginPrefsStore()
 
   const [username, setUsername] = useState(savedUsername)
@@ -28,7 +29,7 @@ export function LoginPage() {
     try {
       await login(username, password)
       setSavedUsername(rememberId ? username : '')
-      navigate('/')
+      navigate('/dashboard')
     } catch (err) {
       setErrorMessage(err instanceof AuthError ? err.message : '로그인 중 오류가 발생했습니다')
     } finally {
@@ -40,7 +41,12 @@ export function LoginPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-bg">
-      <TopBar connected={neo4jConnected} readOnly onNavigateHome={() => {}} />
+      <TopBar
+        connected={neo4jConnected}
+        postgresConnected={postgresConnected}
+        readOnly
+        onNavigateHome={() => navigate('/dashboard')}
+      />
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 items-center justify-center p-6">
           <form onSubmit={handleSubmit} className="flex w-[400px] max-w-full flex-col gap-4">
