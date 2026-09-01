@@ -31,6 +31,45 @@ const KPI_ICONS = {
 
 type Preset = '7d' | '30d' | '90d' | 'all'
 
+function GranularityToggle({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string
+  value: ProcessGranularity
+  disabled: boolean
+  onChange: (granularity: ProcessGranularity) => void
+}) {
+  return (
+    <div
+      className="flex rounded-[4px] border border-border bg-panel-2 p-0.5"
+      role="group"
+      aria-label={label}
+    >
+      {(
+        [
+          ['day', '일'],
+          ['month', '월'],
+          ['year', '년'],
+        ] as const
+      ).map(([granularity, text]) => (
+        <button
+          key={granularity}
+          type="button"
+          onClick={() => onChange(granularity)}
+          disabled={disabled}
+          aria-pressed={value === granularity}
+          className="min-w-8 rounded-[3px] px-2 py-1.5 text-[10.5px] font-medium text-text-muted transition-colors hover:text-text aria-pressed:bg-accent-bg aria-pressed:text-info disabled:opacity-50"
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function addDays(value: string, days: number): string {
   const next = new Date(`${value}T00:00:00Z`)
   next.setUTCDate(next.getUTCDate() + days)
@@ -75,7 +114,15 @@ function ProcessMetric({ kpi }: { kpi: DashboardKpi }) {
   )
 }
 
-function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
+function WorkOrderTrendChart({
+  data,
+  loading,
+  onGranularityChange,
+}: {
+  data: ProcessOverview
+  loading: boolean
+  onGranularityChange: (granularity: ProcessGranularity) => void
+}) {
   const rows = data.trend
   const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
@@ -100,13 +147,21 @@ function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
             {granularityLabel(data.period.granularity)} 집계
           </p>
         </div>
-        <div className="flex gap-3 text-[10.5px] text-text-muted" aria-hidden="true">
-          <span className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-info" /> 시작
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-success" /> 완료
-          </span>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex gap-3 text-[10.5px] text-text-muted" aria-hidden="true">
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-info" /> 시작
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full bg-success" /> 완료
+            </span>
+          </div>
+          <GranularityToggle
+            label="작업지시 추이 집계 기준"
+            value={data.period.granularity}
+            disabled={loading}
+            onChange={onGranularityChange}
+          />
         </div>
       </div>
       <div className="mt-3 aspect-[720/236] w-full overflow-hidden">
@@ -201,7 +256,15 @@ function WorkOrderTrendChart({ data }: { data: ProcessOverview }) {
   )
 }
 
-function ScrapTrendChart({ data }: { data: ProcessOverview }) {
+function ScrapTrendChart({
+  data,
+  loading,
+  onGranularityChange,
+}: {
+  data: ProcessOverview
+  loading: boolean
+  onGranularityChange: (granularity: ProcessGranularity) => void
+}) {
   const rows = data.trend
   const plotWidth = CHART_WIDTH - CHART_PADDING.left - CHART_PADDING.right
   const plotHeight = CHART_HEIGHT - CHART_PADDING.top - CHART_PADDING.bottom
@@ -212,11 +275,19 @@ function ScrapTrendChart({ data }: { data: ProcessOverview }) {
 
   return (
     <section className="min-w-0 rounded-[5px] border border-border bg-panel p-4">
-      <div>
-        <h3 className="text-[13px] font-semibold text-text">폐기수량 추이</h3>
-        <p className="mt-0.5 text-[10.5px] text-text-muted">
-          작업지시 완료일 기준 · {granularityLabel(data.period.granularity)} 집계
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-[13px] font-semibold text-text">폐기수량 추이</h3>
+          <p className="mt-0.5 text-[10.5px] text-text-muted">
+            작업지시 완료일 기준 · {granularityLabel(data.period.granularity)} 집계
+          </p>
+        </div>
+        <GranularityToggle
+          label="폐기수량 추이 집계 기준"
+          value={data.period.granularity}
+          disabled={loading}
+          onChange={onGranularityChange}
+        />
       </div>
       <div className="mt-3 aspect-[720/236] w-full overflow-hidden">
         <svg
@@ -448,31 +519,6 @@ export function ProcessOverviewSection() {
           className="flex flex-wrap items-end gap-2"
           aria-label="공정 기간 선택"
         >
-          <fieldset className="grid gap-1" disabled={!data || loading}>
-            <legend className="text-[10px] text-text-muted">집계 기준</legend>
-            <div
-              className="flex rounded-[4px] border border-border bg-panel p-0.5"
-              aria-label="공정 집계 기준"
-            >
-              {(
-                [
-                  ['day', '일'],
-                  ['month', '월'],
-                  ['year', '년'],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => applyGranularity(value)}
-                  aria-pressed={granularity === value}
-                  className="min-w-8 rounded-[3px] px-2 py-1.5 text-[10.5px] font-medium text-text-muted transition-colors hover:text-text aria-pressed:bg-accent-bg aria-pressed:text-info disabled:opacity-50"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
           <div className="flex rounded-[4px] border border-border bg-panel p-0.5">
             {(
               [
@@ -550,8 +596,12 @@ export function ProcessOverviewSection() {
             <p className="mt-2 text-[11px] text-fail">{error} 기존 결과를 유지합니다.</p>
           ) : null}
           <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(280px,0.7fr)]">
-            <WorkOrderTrendChart data={data} />
-            <ScrapTrendChart data={data} />
+            <WorkOrderTrendChart
+              data={data}
+              loading={loading}
+              onGranularityChange={applyGranularity}
+            />
+            <ScrapTrendChart data={data} loading={loading} onGranularityChange={applyGranularity} />
             <LocationRanking data={data} />
           </div>
         </div>
