@@ -32,13 +32,13 @@ def normalize_row(
     docs/etl/2-structured_mvp_loading_rules.md의 MERGE 예시가 date(row.x)/localdatetime(row.x)로
     문자열을 기대하므로, psycopg2가 돌려주는 datetime.date/datetime 객체를 여기서
     미리 문자열로 바꿔 그 Cypher를 그대로 재사용할 수 있게 한다.
+
+    date_columns / datetime_columns를 나눈 건 스펙이 의도(날짜인지 시각인지)를
+    선언하기 위함이고, 변환 자체는 date.isoformat()·datetime.isoformat() 둘 다
+    같으므로 한 루프로 처리한다.
     """
     normalized = dict(row)
-    for column in date_columns:
-        value = normalized.get(column)
-        if value is not None:
-            normalized[column] = value.isoformat()
-    for column in datetime_columns:
+    for column in (*date_columns, *datetime_columns):
         value = normalized.get(column)
         if value is not None:
             normalized[column] = value.isoformat()

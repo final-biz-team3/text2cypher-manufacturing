@@ -29,6 +29,24 @@ def test_normalize_row_converts_date_to_iso_string() -> None:
     assert result["endDate"] is None
 
 
+def test_normalize_row_handles_date_and_datetime_columns_in_one_call() -> None:
+    row = {
+        "startDate": datetime.date(2011, 4, 25),
+        "sourceModifiedAt": datetime.datetime(2014, 6, 1, 10, 30, 5),
+        "other": "x",
+    }
+
+    result = normalize_row(
+        row,
+        date_columns=("startDate",),
+        datetime_columns=("sourceModifiedAt",),
+    )
+
+    assert result["startDate"] == "2011-04-25"
+    assert result["sourceModifiedAt"] == "2014-06-01T10:30:05"
+    assert result["other"] == "x"
+
+
 def test_normalize_row_leaves_null_datetime_as_none() -> None:
     row = {"scrapReasonId": None}
 
