@@ -6,7 +6,7 @@ from typing import Any
 import psycopg
 
 from core.postgres import get_pool
-from orchestrator.execution.result import QueryResultBatch
+from orchestrator.execution.result import QueryResultBatch, make_batch
 
 
 async def execute_sql_with_pool(
@@ -22,7 +22,7 @@ async def execute_sql_with_pool(
                 rows = await cur.fetchmany(row_limit + 1)
             finally:
                 await conn.rollback()
-    return {"rows": rows[:row_limit], "truncated": len(rows) > row_limit}
+    return make_batch(rows, row_limit)
 
 
 async def execute_sql(sql: str) -> QueryResultBatch:

@@ -7,34 +7,34 @@ import neo4j
 from neo4j import AsyncDriver
 from neo4j.exceptions import Forbidden
 
+from core.lazy_singleton import LazySingleton
 from core.neo4j import build_driver
-from orchestrator.execution.result import QueryResultBatch
-
-_reader_driver: AsyncDriver | None = None
+from orchestrator.execution.result import QueryResultBatch, make_batch
 
 _WRITE_PROBE_LABEL = "__reader_write_probe__"
 
+# execute_cypher 전용 reader 계정 드라이버 싱글턴. core/neo4j.py의 관리자
+# 계정 드라이버(헬스체크·스키마용)와는 별개다. 드라이버 생성 로직(및
+# NEO4J_URI 필수 요구)은 core.neo4j.build_driver를 공유한다 - 예전엔 이
+# 함수가 따로 AsyncGraphDatabase.driver(...)를 호출하고 있어서 관리자
+# 드라이버와 요구 조건이 미묘하게 달랐다. 지연 생성+close 뼈대는
+# core/neo4j.py의 관리자 드라이버, core/postgres.py의 읽기/쓰기 풀과
+# 동일한 패턴이라 LazySingleton으로 공유한다.
+_reader_driver_singleton: LazySingleton[AsyncDriver] = LazySingleton(
+    lambda: build_driver(
+        os.environ["NEO4J_READER_USER"],
+        os.environ["NEO4J_READER_PASSWORD"],
+    ),
+    lambda driver: driver.close(),
+)
+
 
 def get_reader_driver() -> AsyncDriver:
-    """execute_cypher 전용 reader 계정 드라이버 싱글턴.
-    core/neo4j.py의 관리자 계정 드라이버(헬스체크·스키마용)와는 별개다.
-    드라이버 생성 로직(및 NEO4J_URI 필수 요구)은 core.neo4j.build_driver를
-    공유한다 - 예전엔 이 함수가 따로 AsyncGraphDatabase.driver(...)를
-    호출하고 있어서 관리자 드라이버와 요구 조건이 미묘하게 달랐다."""
-    global _reader_driver
-    if _reader_driver is None:
-        _reader_driver = build_driver(
-            os.environ["NEO4J_READER_USER"],
-            os.environ["NEO4J_READER_PASSWORD"],
-        )
-    return _reader_driver
+    return _reader_driver_singleton.get()
 
 
 async def close_reader_driver() -> None:
-    global _reader_driver
-    if _reader_driver is not None:
-        await _reader_driver.close()
-        _reader_driver = None
+    await _reader_driver_singleton.close()
 
 
 async def verify_reader_is_read_only(driver: Any) -> None:
@@ -80,18 +80,15 @@ async def execute_cypher_with_driver(
 
     result.data()로 한 번에 다 읽지 않고 result.fetch(row_limit+1)로 상한을
     넘는지 확인 후 자른다 - execute_sql_with_pool의 fetchmany(N+1) 패턴과
-    동일하다. LLM이 만든 Cypher에 LIMIT이 없어도(SQL과 달리 SQL_ROW_LIMIT
-    같은 명시적 장치가 없었다) 결과 폭주를 막는다.
+    동일해서 make_batch()로 공유한다. LLM이 만든 Cypher에 LIMIT이 없어도
+    (SQL과 달리 SQL_ROW_LIMIT 같은 명시적 장치가 없었다) 결과 폭주를 막는다.
 
     예외는 여기서 감싸지 않고 원본 타입 그대로 전파한다."""
 
     async def _run(tx: Any) -> QueryResultBatch:
         result = await tx.run(cypher)
         records = await result.fetch(row_limit + 1)
-        return {
-            "rows": [record.data() for record in records[:row_limit]],
-            "truncated": len(records) > row_limit,
-        }
+        return make_batch(records, row_limit, extract=lambda record: record.data())
 
     run_with_timeout = neo4j.unit_of_work(timeout=timeout_sec)(_run)
 
