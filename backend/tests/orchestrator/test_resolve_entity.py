@@ -282,6 +282,36 @@ async def test_confirmed_entity_is_verified_and_deduplicated_with_extraction() -
     assert result == {"entity": confirmed}
 
 
+async def test_confirmed_entity_resolves_when_same_ambiguous_wording_is_resent() -> (
+    None
+):
+    """A client may resend the original question after the user picks a
+    candidate instead of rewriting the query with the resolved name, so the
+    same ambiguous wording gets extracted again. This must not raise the same
+    EntityAmbiguousError again just because the previously confirmed row no
+    longer lands in the small top-N shown to the user (settings.candidate_limit
+    is 7 here) once more than that many rows tie or nearly tie."""
+    confirmed = {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
+    client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "터치링 자전거"},
+        )
+    )
+    similar_rows = [(900 + i, f"Touring-{i}", 0.9 - i * 0.02) for i in range(7)]
+    similar_rows.append((956, "Touring-1000 Yellow, 54", 0.5))
+    pool = MockAsyncPostgresPool(
+        rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")},
+        similar_rows_by_name={"터치링 자전거": similar_rows},
+    )
+
+    result = await _node(client, pool)(
+        {"query": "터치링 자전거 정가 알려줘.", "confirmed_entity": confirmed}
+    )
+
+    assert result == {"entity": confirmed}
+
+
 async def test_same_name_in_multiple_types_uses_only_extracted_type_table() -> None:
     client = MockOpenAIClient(
         make_tool_call_response(

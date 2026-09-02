@@ -294,6 +294,59 @@ async def _confirmed_entity_exists(
     return row is not None
 
 
+async def _confirmed_entity_matches_name(
+    confirmed_entity: dict[str, Any],
+    name: str,
+    config: NamedEntityType,
+    pool: AsyncConnectionPool,
+    settings: EntityResolutionSettings,
+) -> bool:
+    """Check whether an already-confirmed entity is still a plausible match for
+    this specific extracted name, independent of the display candidate limit.
+
+    A client may resend the original wording alongside confirmed_entity
+    instead of rewriting the query with the resolved name. Re-running the
+    similarity search then and only recognizing the entity if it lands in the
+    small top-N shown to the user would make the same disambiguation prompt
+    reappear whenever more rows tie or nearly tie than that limit."""
+    if set(confirmed_entity) != {config.id_field, config.name_field}:
+        return False
+    async with pool.connection() as conn:
+        try:
+            cursor = await conn.execute(
+                f"SELECT similarity({config.name_column}, %s) >= %s "
+                f"FROM {config.table} "
+                f"WHERE {config.id_column} = %s AND {config.name_column} = %s",
+                (
+                    name,
+                    settings.similarity_threshold,
+                    confirmed_entity[config.id_field],
+                    confirmed_entity[config.name_field],
+                ),
+            )
+        except psycopg.errors.UndefinedFunction:
+            await conn.rollback()
+            return False
+        row = await cursor.fetchone()
+    return bool(row and row[0])
+
+
+async def _confirmed_entity_covers_lookup(
+    valid_confirmed: list[dict[str, Any]],
+    name: str,
+    config: NamedEntityType,
+    pool: AsyncConnectionPool,
+    settings: EntityResolutionSettings,
+) -> bool:
+    matches = await asyncio.gather(
+        *(
+            _confirmed_entity_matches_name(entity, name, config, pool, settings)
+            for entity in valid_confirmed
+        )
+    )
+    return any(matches)
+
+
 def _append_unique(target: list[dict[str, Any]], values: list[dict[str, Any]]) -> None:
     for value in values:
         if value not in target:
@@ -376,9 +429,16 @@ def make_resolve_entity_node(
             )
 
         # Every lookup has completed. Fail in question order so a successful claim
-        # can never hide another explicit unresolved claim.
+        # can never hide another explicit unresolved claim - except one already
+        # settled by a previously confirmed entity (a client may resend the
+        # original wording alongside confirmed_entity instead of rewriting the
+        # query with the resolved name).
         for index in missing_indices:
-            entity_type, entity_name, _ = lookups[index]
+            entity_type, entity_name, config = lookups[index]
+            if valid_confirmed and await _confirmed_entity_covers_lookup(
+                valid_confirmed, entity_name, config, pool, resolution_settings
+            ):
+                continue
             item_candidates = candidates_by_index[index]
             if item_candidates:
                 logger.info(
