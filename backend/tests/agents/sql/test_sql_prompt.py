@@ -1,59 +1,62 @@
-"""Text-to-SQL 프롬프트 구성 동작을 테스트한다."""
+"""PostgreSQL prompt provenance and structural contract tests."""
 
 import json
 
 from agents.sql.prompt import build_sql_prompt
 
 
-def test_build_sql_prompt_adds_postgresql_policy_and_dynamic_context() -> None:
-    """SQL 고유 규칙과 요청별 스키마·업무 문맥을 메시지에 포함한다."""
+def test_sql_prompt_uses_physical_schema_and_semantic_catalog_context() -> None:
     messages = build_sql_prompt(
-        query="제품의 재고를 알려줘.",
-        entity={"productId": 985},
-        schema_text="production.product {productid: INTEGER}",
-        business_rules=["확정된 제품 ID로 조회한다."],
+        query="가상 제품의 현재 값을 알려줘.",
+        entity={"productId": 4101},
+        schema_text="production.synthetic {productid: INTEGER}",
+        semantic_context=(
+            "actualStock | kind=aggregate | operation=sum | inputs=quantity | "
+            "grain=productId"
+        ),
+        business_rules=["선택한 snapshot 범위만 사용한다."],
         required_outputs=["productId", "actualStock"],
     )
 
-    system_content = messages[0]["content"]
-    assert messages[0]["role"] == "system"
-    assert "PostgreSQL" in system_content
-    assert "SELECT" in system_content
-    assert "production.product {productid: INTEGER}" in system_content
-    assert "해당 식별자로 조회하고 결과에 ID·이름" in system_content
-    assert "질문에서 요청한 값" in system_content
-    assert "관련 식별자를 기준" in system_content
-    assert '"외부 구매 부품"은 production.product.makeflag = false' in system_content
-    assert "COALESCE(SUM(quantity), 0)" in system_content
-    assert "GREATEST(safetystocklevel - 실제 재고, 0)" in system_content
-    assert "totalRejectedQty는 SUM(rejectedqty)" in system_content
-    assert "구매주문 건수가 아니다" in system_content
-    assert "purchaseorderid 건수를 별도로 계산하거나 정렬 기준으로 쓰지 않는다" in (
-        system_content
-    )
-    assert "실제 재고가 safetystocklevel보다 작은 행만" in system_content
-    assert "ID 배열이 이 subquery의 전체 대상" in system_content
-    assert "중복은 선행 결과의 행 multiplicity" in system_content
-    assert "SELECT DISTINCT로 ID를 집합화" in system_content
-    assert "WITH ORDINALITY의 순번을 GROUP BY" in system_content
-    assert "shelf·bin별 원본 quantity" in system_content
-    assert "locationid, shelf, bin 순" in system_content
-    assert "LEFT JOIN" in system_content
-    assert "lowerCamelCase" in system_content
-    assert '"totalRejectedQty"처럼 SELECT와 같은' in system_content
-    assert "double quote로 감쌉니다" in system_content
-    assert 'i."actualStock"' in system_content
-    assert "quoted lowerCamelCase" in system_content
-    assert "내부 alias는 actual_stock 같은 unquoted snake_case" in system_content
-    assert '최종 SELECT에서만 "actualStock"' in system_content
-    assert "사용자가 순위 번호를 요구한 경우에만" in system_content
-    assert "- 확정된 제품 ID로 조회한다." in system_content
-    assert "Required output aliases:" in system_content
-    assert "- productId" in system_content
-    assert "- actualStock" in system_content
-    assert "Return every field above using the exact alias." in system_content
-    assert "SQL만 반환" in system_content
+    system = messages[0]["content"]
+    assert "PostgreSQL" in system
+    assert "읽기 전용" in system
+    assert "production.synthetic {productid: INTEGER}" in system
+    assert "Semantic output catalog" in system
+    assert "operation=sum" in system
+    assert "grain=productId" in system
+    assert "- 선택한 snapshot 범위만 사용한다." in system
+    assert "- productId" in system
+    assert "- actualStock" in system
+    assert "원문의 filter, comparison, limit, date, quantity" in system
+    assert "특정 metric용 순위 recipe를 만들지 않습니다" in system
     assert json.loads(messages[1]["content"]) == {
-        "query": "제품의 재고를 알려줘.",
-        "entity": {"productId": 985},
+        "query": "가상 제품의 현재 값을 알려줘.",
+        "entity": {"productId": 4101},
     }
+
+
+def test_sql_prompt_describes_aligned_bindings_without_family_recipe() -> None:
+    messages = build_sql_prompt(
+        query="선행 행과 정렬된 두 값을 계산해줘.",
+        entity=None,
+        schema_text="production.synthetic {componentid: INTEGER}",
+        input_bindings={
+            "componentIds": [10, 10, 20],
+            "quantities": [2, 3, 1],
+        },
+        required_outputs=["componentId"],
+    )
+
+    system = messages[0]["content"]
+    user = json.loads(messages[1]["content"])
+    assert "WITH ORDINALITY" in system
+    assert "row alignment" in system
+    assert "중복과 NULL" in system
+    assert user["inputBindings"] == {
+        "componentIds": [10, 10, 20],
+        "quantities": [2, 3, 1],
+    }
+    assert "구매주문 건수가 아니다" not in system
+    assert "totalRejectedQty" not in system
+    assert "locationid, shelf, bin 순" not in system

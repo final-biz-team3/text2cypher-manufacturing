@@ -30,8 +30,10 @@ def build_prompt_messages(
     *,
     instructions: str,
     query: str,
+    source_scope: str | None = None,
     entity: object | None,
     schema_text: str,
+    semantic_context: str = "",
     business_rules: Sequence[str] = (),
     required_outputs: Sequence[str] = (),
     input_bindings: dict[str, list[Any]] | None = None,
@@ -41,10 +43,22 @@ def build_prompt_messages(
     """언어별 지침과 동적 질의 문맥을 system/user 메시지로 조립한다.
     previous_query·previous_error가 함께 있으면 self-correction 재시도용
     피드백 섹션을 system 메시지에 추가한다."""
-    system_sections = [
-        instructions.strip(),
-        f"Schema:\n{schema_text.strip()}",
-    ]
+    system_sections = [instructions.strip()]
+    if source_scope:
+        system_sections.append(
+            "Semantic authority:\n"
+            "- The original query is authoritative for requested facts, filters, "
+            "result grain, calculations, and output meaning.\n"
+            "- Source scope only narrows which source-owned portion to execute. "
+            "It must not add a filter, output, grain, calculation, or relationship "
+            "property that is not entailed by the original query.\n"
+            "- Required output aliases and Business rules are explicit execution "
+            "contracts and override conflicting wording in source scope."
+        )
+    system_sections.append(f"Schema:\n{schema_text.strip()}")
+
+    if semantic_context.strip():
+        system_sections.append("Semantic output catalog:\n" + semantic_context.strip())
 
     if business_rules:
         formatted_rules = "\n".join(f"- {rule}" for rule in business_rules)
@@ -75,6 +89,8 @@ def build_prompt_messages(
         )
 
     user_context: dict[str, Any] = {"query": query, "entity": entity}
+    if source_scope:
+        user_context["sourceScope"] = source_scope
     if input_bindings:
         user_context["inputBindings"] = input_bindings
     user_content = json.dumps(

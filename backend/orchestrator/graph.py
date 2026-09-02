@@ -63,6 +63,7 @@ def build_orchestrator_graph(
         execute_sql=execute_sql,
         sql_schema=sql_schema,
         reasoning_effort=reasoning_effort,
+        semantic_context=output_catalog.describe("sql"),
     )
     cypher_agent = make_cypher_agent_subgraph(
         openai_client,
@@ -70,6 +71,7 @@ def build_orchestrator_graph(
         query_policy=cypher_query_policy,
         graph_schema=cypher_schema,
         reasoning_effort=reasoning_effort,
+        semantic_context=output_catalog.describe("graph"),
     )
 
     graph = StateGraph(OrchestratorState)
@@ -88,6 +90,9 @@ def build_orchestrator_graph(
                 openai_client,
                 reasoning_effort=reasoning_effort,
                 shared_join_aliases=output_catalog.shared_join_aliases,
+                catalog=output_catalog,
+                sql_schema_text=sql_schema_text,
+                graph_schema_text=cypher_schema_text,
             ),
         ),
     )
@@ -116,7 +121,10 @@ def build_orchestrator_graph(
     )
     graph.add_node(
         "compose_results",
-        cast(Any, make_compose_results_node()),
+        cast(
+            Any,
+            make_compose_results_node(semantic_catalog=output_catalog),
+        ),
     )
     graph.add_node(
         "generate_answer",

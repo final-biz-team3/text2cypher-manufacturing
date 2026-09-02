@@ -43,8 +43,9 @@ nodes:
     constraintName: product_id
     source: {schema: production, table: product}
     outputAliases:
-      productId: [productId, componentId, finishedProductId, rootProductId, finishedProductIdA, finishedProductIdB]
-      name: [productName, componentName, finishedProductName, rootProductName]
+      productId: [productId]
+      name: [productName]
+      sellableFinishedGood: [sellableFinishedGood]
     properties:
       productId: {type: INTEGER, required: true, sourceColumn: productid, aliases: [제품 ID, 부품 ID, 완제품 ID]}
       name: {type: STRING, required: true, sourceColumn: name, aliases: [제품명, 부품명, 완제품명]}
@@ -58,8 +59,8 @@ nodes:
     constraintName: supplier_id
     source: {schema: purchasing, table: vendor}
     outputAliases:
-      supplierId: [supplierId, supplierIdA, supplierIdB]
-      name: [supplierName, supplierNameA, supplierNameB]
+      supplierId: [supplierId]
+      name: [supplierName]
       active: [active]
     properties:
       supplierId: {type: INTEGER, required: true, sourceColumn: businessentityid, aliases: [공급업체 ID, 업체 ID, 공급사 ID]}

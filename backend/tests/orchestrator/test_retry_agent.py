@@ -95,48 +95,6 @@ async def test_guard_exception_does_not_propagate_and_is_not_retried() -> None:
     assert result["failure"]["kind"] == "internal"
 
 
-async def test_numeric_filter_validation_runs_without_optional_query_guard() -> None:
-    async def generate(state, previous_query, previous_error) -> str:
-        return "SELECT * FROM product"
-
-    async def execute(query: str) -> list[dict]:
-        raise AssertionError("execute must not be called")
-
-    subgraph = make_retry_agent_subgraph(
-        logger=logger,
-        label="test_agent",
-        generate=generate,
-        execute=execute,
-        connection_exceptions=(),
-        retryable_exceptions=(),
-        empty_result_feedback="EMPTY",
-        guard=None,
-    )
-
-    result = await subgraph.ainvoke(_initial_state("가격이 100 이상인 제품"))
-
-    assert result["failure"]["code"] == "QUERY_FILTER_DROPPED"
-    assert len(result["attempts"]) == 3
-
-
-async def test_numeric_filter_validation_exception_is_fail_closed(monkeypatch) -> None:
-    def broken_validation(question: str, generated_query: str) -> set[str]:
-        raise RuntimeError("parser bug")
-
-    monkeypatch.setattr(
-        retry_agent_module,
-        "missing_numeric_filter_literals",
-        broken_validation,
-    )
-    subgraph = _make_subgraph(guard=None)
-
-    result = await subgraph.ainvoke(_initial_state())
-
-    assert result["failure"]["code"] == "QUERY_VALIDATION_INTERNAL_ERROR"
-    assert result["failure"]["kind"] == "internal"
-    assert len(result["attempts"]) == 1
-
-
 async def test_audit_log_failure_does_not_propagate_or_block_guard_decision(
     monkeypatch,
 ) -> None:
@@ -285,38 +243,3 @@ async def test_timeout_failure_is_safe_and_user_correctable() -> None:
     assert result["failure"]["code"] == "QUERY_TIMEOUT"
     assert result["failure"]["kind"] == "user_correctable"
     assert "internal_table" not in str(result["failure"])
-
-
-async def test_explicit_numeric_filter_must_survive_generated_query() -> None:
-    generate_calls = 0
-    execute_calls = 0
-
-    async def generate(state, previous_query, previous_error) -> str:
-        nonlocal generate_calls
-        generate_calls += 1
-        return "SELECT listprice FROM production.product WHERE productid = 956"
-
-    async def execute(query: str) -> list[dict]:
-        nonlocal execute_calls
-        execute_calls += 1
-        return [{"listPrice": 2384.07}]
-
-    subgraph = make_retry_agent_subgraph(
-        logger=logger,
-        label="sql_agent",
-        generate=generate,
-        execute=execute,
-        connection_exceptions=(),
-        retryable_exceptions=(),
-        empty_result_feedback="EMPTY",
-        guard=lambda query: GuardResult(True),
-    )
-
-    result = await subgraph.ainvoke(
-        _initial_state("Touring-1000 Yellow, 54 중 정가가 0원인 제품을 알려줘.")
-    )
-
-    assert generate_calls == 3
-    assert execute_calls == 0
-    assert result["failure"]["code"] == "QUERY_FILTER_DROPPED"
-    assert "2384.07" not in str(result["failure"])

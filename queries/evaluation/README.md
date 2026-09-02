@@ -1,6 +1,6 @@
 # RQ/HQ text-to-query 평가
 
-`manifest.json`은 canonical/robustness/holdout 질문, entity·route·subquery 계약, DB
+`manifest.json`은 canonical/robustness/complexity 질문, entity·route·subquery 계약, DB
 snapshot 검증값과 source별 Gold 쿼리를 연결한다. Gold 쿼리와 expected
 `businessRules`·`requiredOutputs`는 채점에만 사용하고 후보 생성에는 넣지 않는다.
 후보와 Gold는 동일한 읽기 전용 snapshot에서 실행해 결과 hash로 비교한다. 각
@@ -18,8 +18,8 @@ allowlist된 `bom_shortage_v1` 계산으로 경로별 BOM 수량, 재고와 외�
 
 - `canonical`: 동결된 RQ01~RQ20 질문·계약·Gold 20건
 - `robustness`: 각 RQ의 의미·파라미터·Gold는 유지하면서 표현만 바꾼 60건
-- `holdout`: 신규 방향 HQ01~HQ10 10건(SQL 6, GRAPH 2, HYBRID 2)
-- `all`: 독립 업무 계약 30개(canonical 20 + holdout 10)와 같은 계약의
+- `complexity`: 이미 열람·반복 실행된 HQ01~HQ10 진단 10건(SQL 6, GRAPH 2, HYBRID 2)
+- `all`: 독립 업무 계약 30개(canonical 20 + complexity 10)와 같은 계약의
   표현 변형 60개를 합한 전체 90 case
 
 robustness case ID의 `S`는 짧은 표현·문장 파편, `C`는 일상 구어체, `R`은
@@ -46,7 +46,7 @@ binding, query retry와 composer를 실행한 뒤에만 source/final Gold를 읽
 ./scripts/run-t2q-evaluation.sh --ids RQ16,RQ18-RQ20
 ./scripts/run-t2q-evaluation.sh --validate-gold
 ./scripts/run-t2q-evaluation.sh --suite robustness --ids RQ01-RQ20
-./scripts/run-t2q-evaluation.sh --suite holdout --ids HQ01-HQ10 --validate-gold
+./scripts/run-t2q-evaluation.sh --suite complexity --ids HQ01-HQ10 --validate-gold
 ```
 
 wrapper가 앞에 넣는 기본 옵션은 뒤에 전달한 같은 옵션으로 덮어쓸 수 있다. 따라서
@@ -91,36 +91,37 @@ PYTHONPATH=backend python -m evaluation \
 ## 실행 주기와 비용
 
 기본은 항상 `--runs 1`이다. canonical은 평상시 확인에 사용하고 robustness와
-holdout은 PR 마감 또는 릴리스 전에 수동 실행한다. 자동 CD gate, 별도 대시보드,
+complexity는 PR 마감 또는 릴리스 전에 수동 실행한다. 자동 CD gate, 별도 대시보드,
 추세 DB에는 연결하지 않는다. 단일 실행은 smoke 기준선이며 성능 개선을 주장할 때는
-같은 모델·snapshot에서 canonical과 현재 regression으로 사용하는 holdout을 각각
+같은 모델·snapshot에서 canonical과 현재 진단용 complexity suite를 각각
 `--runs 3`으로 실행해 case별 변동을 함께 확인한다. robustness는 같은 계약의 상관된
 표현 변형이므로 기본 1회를 유지한다.
 
 현재 단계별 모델 호출 수를 기준으로 canonical 20건은 약 63회, robustness
-60건은 약 189회, holdout 10건은 약 32회로 전체 90건에 약 284회가 필요하다.
+60건은 약 189회, complexity 10건은 약 32회로 전체 90건에 약 284회가 필요하다.
 전체를 `--runs 3`으로 실행하면 약 852회이므로 일상 smoke에는 사용하지 않고,
 모델·prompt 승격 직전 동일 snapshot의 최종 gate에서만 실행한다. 개별 실패 재현은
 canonical에서
 `--ids RQ12 --runs 3`, robustness는
-`--suite robustness --ids RQ12 --runs 3`(해당 RQ의 S/C/R 세 case), holdout은
-`--suite holdout --ids HQ07 --runs 3`처럼 suite와 ID를 함께 지정한다.
+`--suite robustness --ids RQ12 --runs 3`(해당 RQ의 S/C/R 세 case), complexity는
+`--suite complexity --ids HQ07 --runs 3`처럼 suite와 ID를 함께 지정한다.
 
-Holdout은 코드·프롬프트를 동결한 뒤 최초 capability 결과를 확인한다. HQ 질문과
-Gold가 같은 저장소에 공개되어 있으므로 이 suite는 최초 실행 전의 개발용 capability
-holdout이지, 접근이 차단된 blind holdout은 아니다. 그 결과를 보거나 성능을
-수정했다면 기존 HQ 세트는 regression으로 전환하고, 반복 실행은 모델 변동성 확인에만
-사용한다. 최종 일반화 평가는 개발자가 튜닝 중 보지 않은 신규 질의로 별도 수행한다.
+HQ 질문과 Gold는 이미 열람되고 반복 실행됐으므로 complexity suite는 구조적 난이도와
+known regression을 진단할 뿐 blind 일반화 점수를 제공하지 않는다. 반복 실행은 모델
+변동성 확인에만 사용한다. blind set은 외부 소유자가 질문·contract를 만들고 hash를
+사전에 고정한 뒤, 구현자가 튜닝 중 보지 않은 상태로 별도 평가해야 한다.
+기존 90/90 artifact는 오염된 historical diagnostic이며 새 구조의 일반화 증거로
+재사용하지 않는다. 새 blind set이 마련되기 전 일반화 점수는 `N/A`로 보고한다.
 RQ/HQ 계약·case·Gold 원문과 승인
-snapshot의 모든 canonical/holdout Gold 결과 행 수·hash는 테스트에 고정되어
+snapshot의 모든 canonical/complexity Gold 결과 행 수·hash는 테스트에 고정되어
 있으므로 의도적인 기준선 갱신 없이 변경할 수 없다.
 
 ## GitHub Actions에서 수동 실행
 
 `Text-to-query Manual Evaluation`에서 `Run workflow`를 누르고 대상 PR 브랜치를
-선택하면 기본값으로 canonical 20개를 1회 평가한다. workflow 입력에서 holdout과
+선택하면 기본값으로 canonical 20개를 1회 평가한다. workflow 입력에서 complexity와
 case별 1회/3회 실행을 선택할 수 있지만 실행은 계속 수동이다. 모델 호출 전에
-canonical/holdout Gold 결과 행 수·hash 통합 테스트를 실행해 승인 snapshot drift를
+canonical/complexity Gold 결과 행 수·hash 통합 테스트를 실행해 승인 snapshot drift를
 차단한다. 모델 결과 불일치는
 리포트에 남기되 workflow를 차단하지 않고, 환경·API·DB·snapshot·Gold 오류만
 실패로 처리한다.
@@ -133,7 +134,7 @@ Gold와 snapshot만 점검하려면 `--validate-gold`를 사용한다. 비밀번
 CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경변수에서만
 읽는다. 현재 승인 snapshot의 `syncRunId`와 모든 핵심 테이블·노드·관계 건수를
 실행 전에 검증하며, 계산된 snapshot hash도 artifact에 기록한다. snapshot을
-교체할 때는 canonical 23개와 holdout 12개 Gold 결과 행 수·hash, run ID를 함께
+교체할 때는 canonical 23개와 complexity 12개 Gold 결과 행 수·hash, run ID를 함께
 리뷰해야 한다.
 
 모델 평가 artifact는 내부에 기록된 정확한 commit과 작업 상태에 대한 증거다.

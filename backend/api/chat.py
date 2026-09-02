@@ -14,6 +14,7 @@ from orchestrator.errors import EntityNotFoundError
 from orchestrator.graph import build_orchestrator_graph
 from orchestrator.nodes.generate_answer import generate_failure_answer
 from orchestrator.nodes.plan_outputs import OutputPlanningError
+from orchestrator.nodes.resolve_entity import EntityExtractionError
 from orchestrator.nodes.route_query import RoutePlanError
 from orchestrator.query_failures import (
     entity_not_found_failure,
@@ -136,6 +137,18 @@ async def chat(
             "query": chat_request.query,
             "final_answer": final_answer,
             "query_failure": entity_not_found_failure(),
+        }
+    except EntityExtractionError:
+        failure = query_understanding_failure("entity_resolution")
+        final_answer = await generate_failure_answer(
+            get_openai_client(),
+            query=chat_request.query,
+            failure=failure,
+        )
+        result = {
+            "query": chat_request.query,
+            "final_answer": final_answer,
+            "query_failure": failure,
         }
     except RoutePlanError:
         final_answer = await generate_failure_answer(

@@ -1,16 +1,30 @@
+"""Lossless output planning and structural finalization contracts."""
+
 import asyncio
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from agents.cypher.schema.loader import load_graph_schema
 from agents.sql.schema.loader import load_sql_schema
-from orchestrator.nodes.plan_outputs import make_plan_outputs_node
+from orchestrator.nodes.plan_outputs import (
+    SemanticOutputPlan,
+    compile_graph_generator_rules,
+    compile_semantic_output_plan,
+    finalize_required_outputs,
+    make_plan_outputs_node,
+    output_plan_json_schema,
+)
 from orchestrator.output_catalog import OutputCatalog, build_output_catalog
-from orchestrator.planning import RouteSubquery, parse_route_draft
-from tests.mocks.openai import MockOpenAIClient, make_content_response
+from orchestrator.planning import BomShortageTransform, RouteSubquery
+from orchestrator.state import OrchestratorState
+from tests.mocks.openai import (
+    MockOpenAIClient,
+    make_output_plan_response,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -23,928 +37,667 @@ def _catalog() -> OutputCatalog:
     )
 
 
-def test_output_catalog_separates_source_identities_and_shared_join_aliases() -> None:
-    catalog = _catalog()
-
-    assert "categoryId" in catalog.identity_aliases_by_tool["sql"]
-    assert "categoryId" not in catalog.identity_aliases_by_tool["graph"]
-    assert "categoryId" not in catalog.shared_join_aliases
-    assert "componentId" in catalog.shared_join_aliases
-
-
-def test_router_rejects_sql_only_identity_as_graph_join_before_execution() -> None:
-    catalog = _catalog()
-    content = """{
-      "tool_plan": ["graph", "sql"],
-      "subqueries": [
-        {
-          "id": "graph_products",
-          "tool": "graph",
-          "question": "제품 관계를 조회한다.",
-          "dependsOn": [],
-          "joinKeys": ["categoryId"],
-          "inputBindings": {}
+def _state(
+    subqueries: list[RouteSubquery],
+    *,
+    query: str = "synthetic question",
+    entity: dict | list[dict] | None = None,
+    transform: BomShortageTransform | None = None,
+) -> OrchestratorState:
+    return {
+        "query": query,
+        "entity": entity,
+        "tool_plan": [item["tool"] for item in subqueries],
+        "routeDraft": {
+            "tool_plan": [item["tool"] for item in subqueries],
+            "subqueries": subqueries,
         },
-        {
-          "id": "sql_categories",
-          "tool": "sql",
-          "question": "분류 정보를 조회한다.",
-          "dependsOn": [],
-          "joinKeys": ["categoryId"],
-          "inputBindings": {}
-        }
-      ],
-      "resultTransform": null
-    }"""
-
-    with pytest.raises(ValueError, match="joinKeys.*identity alias"):
-        parse_route_draft(
-            content,
-            "제품 관계와 분류를 결합한다.",
-            shared_join_aliases=catalog.shared_join_aliases,
-        )
+        "resultTransform": transform,
+    }
 
 
-async def test_output_planner_uses_source_catalog_and_returns_execution_plan() -> None:
+def test_catalog_separates_physical_role_and_concept_aliases() -> None:
+    catalog = _catalog()
+
+    assert catalog.by_tool["sql"]["productId"].kind == "physical"
+    assert catalog.by_tool["graph"]["componentId"].kind == "role"
+    assert catalog.by_tool["sql"]["actualStock"].kind == "aggregate"
+    assert catalog.by_tool["graph"]["pathProductIds"].kind == "path"
+    assert "componentId" in catalog.shared_join_aliases
+    assert "categoryId" not in catalog.shared_join_aliases
+
+
+def test_output_schema_uses_provider_supported_shape() -> None:
+    schema = output_plan_json_schema(_catalog(), "sql")
+    graph_schema = output_plan_json_schema(_catalog(), "graph")
+
+    assert "uniqueItems" not in schema["properties"]["requiredOutputs"]
+    assert schema["properties"]["requiredOutputs"]["minItems"] == 1
+    assert "minItems" not in graph_schema["properties"]["requiredOutputs"]
+    assert schema["required"] == ["requiredOutputs", "displayEntities"]
+    assert "graphResultMode" not in graph_schema["properties"]
+    assert graph_schema["required"] == ["requiredOutputs", "displayEntities"]
+
+
+async def test_prompt_uses_composable_roles_without_query_family_recipes() -> None:
     client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["productId","productName","standardCost"]}'
+        make_output_plan_response(
+            required_outputs=["depth", "pathProductIds"],
+            display_entities=["component", "finishedProduct"],
         )
     )
-    node = make_plan_outputs_node(client, _catalog())
+    question = "부품을 사용하는 완제품을 최대 4단계까지 알려줘"
+    subquery: RouteSubquery = {
+        "id": "graph_component_usage",
+        "tool": "graph",
+        "question": "ROUTE_SCOPE_SENTINEL 경로 정보를 포함한다",
+        "dependsOn": [],
+        "joinKeys": [],
+    }
 
-    result = await node(
-        {
-            "query": "Nebula Bracket의 표준원가",
-            "entity": {"productId": 8001, "productName": "Nebula Bracket"},
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_cost",
-                        "tool": "sql",
-                        "question": "Nebula Bracket의 표준원가를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
+    await make_plan_outputs_node(client, _catalog())(_state([subquery], query=question))
+
+    system_prompt = client.calls[0]["messages"][0]["content"]
+    user_prompt = client.calls[0]["messages"][1]["content"]
+    assert "anchor에서" in system_prompt
+    assert "destination 순서" in system_prompt
+    assert "고정 출력 묶음" in system_prompt
+    assert "공급업체의 BOM 영향" not in system_prompt
+    assert "작업지시의 공정과 작업장" not in system_prompt
+    assert "resultGrain" not in system_prompt
+    assert "provenance" in system_prompt
+    assert "cardinality" in system_prompt
+    assert question in user_prompt
+    assert "ROUTE_SCOPE_SENTINEL" not in user_prompt
+
+
+async def test_single_source_raw_route_is_non_authoritative_clarification() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[
+                "productId",
+                "productName",
+                "locationId",
+                "locationName",
+                "shelf",
+                "bin",
+                "quantity",
+            ]
+        )
     )
+    original = "제품 재고 어디에 몇 개 있어?"
+    clarified = "제품의 위치 ID·이름, 선반, 보관함, 수량을 조회한다."
+    subquery: RouteSubquery = {
+        "id": "sql_inventory",
+        "tool": "sql",
+        "question": original,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+    state = _state([subquery], query=original)
+    state["rawRouteDraft"] = {
+        "subqueries": [
+            {
+                "id": "sql_inventory",
+                "tool": "sql",
+                "question": clarified,
+                "dependsOn": [],
+                "joinKeys": [],
+                "inputBindings": [],
+            }
+        ],
+        "resultTransform": None,
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(state)
+
+    prompt = client.calls[0]["messages"][1]["content"]
+    assert f"original question: {original}" in prompt
+    assert f"clarified interpretation: {clarified}" in prompt
+    assert result["subqueries"][0]["question"] == original
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+async def test_sql_prompt_preserves_complete_direct_output_selection() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[
+                "productId",
+                "productName",
+                "actualStock",
+                "safetyStockLevel",
+                "shortageQty",
+            ],
+            display_entities=["product"],
+        )
+    )
+    question = "제품의 실제 재고가 안전재고보다 얼마나 부족한지 보여줘"
+    subquery: RouteSubquery = {
+        "id": "sql_shortage",
+        "tool": "sql",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=question)
+    )
+
+    system_prompt = client.calls[0]["messages"][0]["content"]
+    assert "완전하게 직접 선택" in system_prompt
+    assert "requiredOutputs를 대체하지 않습니다" in system_prompt
+    assert "정렬이나 top-N만으로" in system_prompt
+    assert "graphResultMode" not in system_prompt
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "actualStock",
+        "safetyStockLevel",
+        "shortageQty",
+    ]
+
+
+async def test_graph_display_only_plan_compiles_entity_identity() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[],
+            display_entities=["product"],
+        )
+    )
+    subquery: RouteSubquery = {
+        "id": "graph_products",
+        "tool": "graph",
+        "question": "제품을 알려줘",
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(_state([subquery]))
 
     assert result["subqueries"][0]["requiredOutputs"] == [
         "productId",
         "productName",
-        "standardCost",
     ]
-    schema = client.calls[0]["response_format"]["json_schema"]["schema"]
-    aliases = schema["properties"]["requiredOutputs"]["items"]["enum"]
-    assert "standardCost" in aliases
-    assert "pathProductIds" not in aliases
-    prompt = client.calls[0]["messages"][0]["content"]
-    assert "workOrderId가 결과 행의 기준이면 폐기량은 scrappedQty" in prompt
-    assert "지정 완제품에서 부품까지의 연결 경로" in prompt
 
 
-async def test_output_planner_recovers_owner_qualified_short_property_name() -> None:
+async def test_sql_display_only_plan_is_retried_as_incomplete() -> None:
     client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["productId","productName","color","size"]}'
+        make_output_plan_response(
+            required_outputs=[],
+            display_entities=["product"],
+        ),
+        make_output_plan_response(
+            required_outputs=["productId", "productName"],
+            display_entities=["product"],
+        ),
+    )
+    subquery: RouteSubquery = {
+        "id": "sql_products",
+        "tool": "sql",
+        "question": "제품을 알려줘",
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(_state([subquery]))
+
+    assert len(client.calls) == 2
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+    ]
+
+
+def test_graph_path_rules_preserve_semantic_role_order_only() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("depth", "pathProductIds"),
+        display_entities=("component", "finishedProduct"),
+    )
+    selected = compile_semantic_output_plan(plan, _catalog(), tool="graph")
+
+    rules = compile_graph_generator_rules(plan, _catalog(), selected)
+
+    assert len(rules) == 1
+    assert "component" in rules[0]
+    assert "finishedProduct" in rules[0]
+    assert rules[0].index("component") < rules[0].index("finishedProduct")
+    assert "physical MATCH path direction" in rules[0]
+
+
+def test_non_path_graph_plan_adds_no_generator_rule() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("sequence",),
+        display_entities=("workOrder", "routingOperation", "location"),
+    )
+    selected = compile_semantic_output_plan(plan, _catalog(), tool="graph")
+
+    assert compile_graph_generator_rules(plan, _catalog(), selected) == []
+
+
+def test_path_outputs_are_compiled_only_when_selected_directly() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("depth", "pathProductIds"),
+        display_entities=("component", "finishedProduct"),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="graph") == [
+        "depth",
+        "pathProductIds",
+        "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
+    ]
+
+
+def test_path_names_are_not_added_to_id_only_path_selection() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("depth", "pathProductIds"),
+        display_entities=("component", "finishedProduct"),
+    )
+
+    assert "pathProductNames" not in compile_semantic_output_plan(
+        plan, _catalog(), tool="graph"
+    )
+
+
+def test_physical_scalar_does_not_add_an_implicit_owner_role() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("sequence",),
+        display_entities=("workOrder", "location"),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="graph") == [
+        "sequence",
+        "workOrderId",
+        "locationId",
+        "locationName",
+    ]
+
+
+def test_semantic_compiler_adds_identity_without_replacing_direct_selection() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("listPrice", "standardCost"),
+        display_entities=("product",),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="sql") == [
+        "listPrice",
+        "standardCost",
+        "productId",
+        "productName",
+    ]
+
+
+def test_sql_compiler_does_not_infer_identity_from_a_physical_scalar() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("listPrice",),
+        display_entities=(),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="sql") == ["listPrice"]
+
+
+def test_semantic_compiler_does_not_expand_derived_inputs_or_path_bundles() -> None:
+    shortage_plan = SemanticOutputPlan(
+        required_outputs=("shortageQty",),
+        display_entities=("product",),
+    )
+    path_plan = SemanticOutputPlan(
+        required_outputs=("minDepth",),
+        display_entities=("component",),
+    )
+
+    assert compile_semantic_output_plan(shortage_plan, _catalog(), tool="sql") == [
+        "shortageQty",
+        "productId",
+        "productName",
+    ]
+    assert compile_semantic_output_plan(path_plan, _catalog(), tool="graph") == [
+        "minDepth",
+        "componentId",
+        "componentName",
+    ]
+
+
+def test_scalar_output_without_display_entity_is_unchanged() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("productCount",),
+        display_entities=(),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="sql") == [
+        "productCount"
+    ]
+
+
+def test_finalizer_preserves_selection_order_and_adds_only_structure() -> None:
+    assert finalize_required_outputs(
+        ["sharedComponentCount", "supplierIdA"],
+        ["componentId"],
+        ["quantityPerAssembly"],
+        _catalog(),
+        tool="graph",
+    ) == [
+        "sharedComponentCount",
+        "supplierIdA",
+        "componentId",
+        "quantityPerAssembly",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("selected", "join_keys", "outgoing", "message"),
+    [
+        (["productId", "productId"], [], [], "duplicate"),
+        (["pathProductIds"], [], [], "does not own"),
+        (["productId"], ["pathProductIds"], [], "does not own"),
+    ],
+)
+def test_finalizer_rejects_duplicates_and_source_violations(
+    selected: list[str],
+    join_keys: list[str],
+    outgoing: list[str],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        finalize_required_outputs(
+            selected,
+            join_keys,
+            outgoing,
+            _catalog(),
+            tool="sql",
+        )
+
+
+@pytest.mark.parametrize(
+    ("query", "entity", "selected"),
+    [
+        (
+            "두 공급처가 함께 취급하는 항목의 수와 쌍을 보여줘",
+            None,
+            ["supplierIdA", "supplierIdB", "sharedComponentCount"],
+        ),
+        (
+            "조립 링크의 한 단위당 투입량도 표시해줘",
+            None,
+            ["componentId", "quantityPerAssembly"],
+        ),
+        (
+            "종료일이 비어 있는 행에서 종료일도 표시해줘",
+            None,
+            ["productId", "sellEndDate"],
+        ),
+        (
+            "두 조립품의 공통 항목을 scalar로만 요약해줘",
+            [
+                {"productId": 9101, "productName": "One"},
+                {"productId": 9102, "productName": "One Extended"},
+            ],
+            ["componentId", "sharedComponentCount"],
+        ),
+        (
+            "두 조립품의 공통 항목과 경로를 표시해줘",
+            None,
+            ["componentId", "pathProductIds"],
+        ),
+    ],
+)
+async def test_model_output_is_authoritative_and_question_is_unchanged(
+    query: str,
+    entity: Any,
+    selected: list[str],
+) -> None:
+    tool = (
+        "sql"
+        if all(alias in _catalog().by_tool["sql"] for alias in selected)
+        else "graph"
+    )
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=selected,
         )
     )
-    node = make_plan_outputs_node(client, _catalog())
+    subquery: RouteSubquery = {
+        "id": f"{tool}_synthetic",
+        "tool": tool,
+        "question": query,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
 
-    result = await node(
-        {
-            "query": "Touring-1000 Yellow, 54 번호랑 색상, 크기 좀 봐줘.",
-            "entity": {
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
-            },
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_product_attributes",
-                        "tool": "sql",
-                        "question": (
-                            "제품 Touring-1000 Yellow, 54의 번호, 색상, 크기를 "
-                            "조회한다."
-                        ),
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=query, entity=entity)
     )
 
-    assert "productNumber" in result["subqueries"][0]["requiredOutputs"]
+    assert result["subqueries"][0]["requiredOutputs"] == selected
+    assert result["subqueries"][0]["question"] == query
 
 
-async def test_output_planner_merges_join_and_downstream_binding_outputs() -> None:
+async def test_entity_names_with_domain_words_do_not_rewrite_the_subquery() -> None:
+    question = "warehouse 공급 폐기 location이라는 제품의 color를 표시해줘"
+    entity = {
+        "productId": 9201,
+        "productName": "warehouse 공급 폐기 location",
+    }
     client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["componentName"]}'),
-        make_content_response('{"requiredOutputs":["actualStock"]}'),
+        make_output_plan_response(required_outputs=["productId", "color"])
     )
-    node = make_plan_outputs_node(client, _catalog())
-    route_subqueries: list[RouteSubquery] = [
+    subquery: RouteSubquery = {
+        "id": "sql_color",
+        "tool": "sql",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=question, entity=entity)
+    )
+
+    assert result["subqueries"][0]["question"] == question
+    assert result["subqueries"][0]["requiredOutputs"] == ["productId", "color"]
+
+
+async def test_downstream_non_identity_binding_is_added_to_producer_outputs() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=["componentName"],
+        ),
+        make_output_plan_response(required_outputs=["actualStock"]),
+    )
+    subqueries: list[RouteSubquery] = [
         {
             "id": "graph_components",
             "tool": "graph",
-            "question": "부품 관계를 조회한다.",
+            "question": "component rows",
+            "dependsOn": [],
+            "joinKeys": [],
+        },
+        {
+            "id": "sql_measures",
+            "tool": "sql",
+            "question": "measure rows",
+            "dependsOn": ["graph_components"],
+            "joinKeys": [],
+            "inputBindings": {"quantities": "graph_components.quantityPerAssembly"},
+        },
+    ]
+
+    result = await make_plan_outputs_node(client, _catalog())(_state(subqueries))
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "componentName",
+        "quantityPerAssembly",
+    ]
+    assert result["subqueries"][0]["joinKeys"] == []
+    assert result["subqueries"][1]["joinKeys"] == []
+
+
+async def test_hybrid_output_planning_uses_scope_only_as_source_responsibility() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[],
+            display_entities=["component", "finishedProduct"],
+        ),
+        make_output_plan_response(
+            required_outputs=["componentId", "actualStock"],
+        ),
+    )
+    original = (
+        "공급업체의 공급 중단 시 영향을 받는 부품과 완제품, 각 부품의 재고를 알려줘."
+    )
+    graph_scope = "공급 부품과 영향을 받는 완제품 관계를 조회한다."
+    sql_scope = "영향 부품별 현재 재고를 조회한다."
+    subqueries: list[RouteSubquery] = [
+        {
+            "id": "graph_impact",
+            "tool": "graph",
+            "question": graph_scope,
             "dependsOn": [],
             "joinKeys": ["componentId"],
         },
         {
             "id": "sql_stock",
             "tool": "sql",
-            "question": "앞 단계 부품의 재고를 조회한다.",
-            "dependsOn": ["graph_components"],
+            "question": sql_scope,
+            "dependsOn": ["graph_impact"],
             "joinKeys": ["componentId"],
-            "inputBindings": {"componentIds": "graph_components.componentId"},
+            "inputBindings": {"componentIds": "graph_impact.componentId"},
         },
     ]
 
-    result = await node(
-        {
-            "query": "부품 관계와 재고",
-            "entity": None,
-            "tool_plan": ["graph", "sql"],
-            "routeDraft": {
-                "tool_plan": ["graph", "sql"],
-                "subqueries": route_subqueries,
-            },
-            "resultTransform": None,
-        }
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state(subqueries, query=original)
     )
 
+    graph_prompt = client.calls[0]["messages"][1]["content"]
+    sql_prompt = client.calls[1]["messages"][1]["content"]
+    assert f"original question: {original}" in graph_prompt
+    assert f"source responsibility: {graph_scope}" in graph_prompt
+    assert f"original question: {original}" in sql_prompt
+    assert f"source responsibility: {sql_scope}" in sql_prompt
     assert result["subqueries"][0]["requiredOutputs"] == [
-        "componentName",
         "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
     ]
     assert result["subqueries"][1]["requiredOutputs"] == [
-        "actualStock",
         "componentId",
+        "actualStock",
     ]
 
 
-async def test_output_planner_runs_independent_subqueries_concurrently() -> None:
+async def test_independent_output_selection_calls_run_concurrently() -> None:
     both_started = asyncio.Event()
     started: list[str] = []
 
     class _ConcurrentCompletions:
         async def create(self, **kwargs):
-            user_message = kwargs["messages"][-1]["content"]
-            tool = "sql" if "source: sql" in user_message else "graph"
+            content = kwargs["messages"][-1]["content"]
+            tool = "sql" if "source: sql" in content else "graph"
             started.append(tool)
             if len(started) == 2:
                 both_started.set()
             await asyncio.wait_for(both_started.wait(), timeout=0.2)
-            content = (
-                '{"requiredOutputs":["activeSupplierCount"]}'
-                if tool == "sql"
-                else '{"requiredOutputs":["componentId","componentName","minDepth"]}'
+            output = "productCount" if tool == "sql" else "minDepth"
+            return make_output_plan_response(
+                required_outputs=[output],
             )
-            return make_content_response(content)
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=_ConcurrentCompletions()))
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
+    subqueries: list[RouteSubquery] = [
         {
-            "query": "활성 공급업체 수와 최하위 부품을 함께 알려줘.",
-            "entity": None,
-            "tool_plan": ["sql", "graph"],
-            "routeDraft": {
-                "tool_plan": ["sql", "graph"],
-                "subqueries": [
-                    {
-                        "id": "sql_count",
-                        "tool": "sql",
-                        "question": "활성 공급업체 수를 집계한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    },
-                    {
-                        "id": "graph_leaf",
-                        "tool": "graph",
-                        "question": "최하위 부품을 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    },
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
+            "id": "sql_count",
+            "tool": "sql",
+            "question": "count",
+            "dependsOn": [],
+            "joinKeys": [],
+        },
+        {
+            "id": "graph_depth",
+            "tool": "graph",
+            "question": "depth",
+            "dependsOn": [],
+            "joinKeys": [],
+        },
+    ]
+
+    result = await make_plan_outputs_node(client, _catalog())(_state(subqueries))
 
     assert started == ["sql", "graph"]
-    assert [item["id"] for item in result["subqueries"]] == [
-        "sql_count",
-        "graph_leaf",
+    assert [item["requiredOutputs"] for item in result["subqueries"]] == [
+        ["productCount"],
+        ["minDepth"],
     ]
 
 
-async def test_output_planner_keeps_a_null_status_field_in_list_results() -> None:
+async def test_structural_retry_does_not_add_an_extra_planning_stage() -> None:
     client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["productId","productName","endDate",'
-            '"finishedProductIdA","finishedProductIdB"]}'
-        )
+        make_output_plan_response(required_outputs=["pathProductIds"]),
+        make_output_plan_response(required_outputs=["productCount"]),
     )
-    node = make_plan_outputs_node(client, _catalog())
+    subquery: RouteSubquery = {
+        "id": "sql_count",
+        "tool": "sql",
+        "question": "count",
+        "dependsOn": [],
+        "joinKeys": [],
+    }
 
-    result = await node(
-        {
-            "query": "종료일이 비어 있는 제품을 제품 ID 순으로 7개 보여줘.",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_unset_dates",
-                        "tool": "sql",
-                        "question": "종료일이 미등록된 제품을 제품 ID 순으로 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert result["subqueries"][0]["requiredOutputs"] == [
-        "productId",
-        "productName",
-        "sellEndDate",
-    ]
-
-
-async def test_output_planner_uses_bom_owner_for_ambiguous_end_date() -> None:
-    client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["bomId","sellEndDate"]}')
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "BOM 종료일이 미등록된 구성 행을 보여줘.",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_unset_bom_dates",
-                        "tool": "sql",
-                        "question": "BOM 종료일이 NULL인 구성 행을 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert result["subqueries"][0]["requiredOutputs"] == ["bomId", "endDate"]
-
-
-async def test_output_planner_preserves_model_date_when_owner_is_ambiguous() -> None:
-    client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["productId","endDate"]}')
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "종료일이 미등록된 행을 보여줘.",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_unset_dates",
-                        "tool": "sql",
-                        "question": "종료일이 NULL인 행을 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert "endDate" in result["subqueries"][0]["requiredOutputs"]
-    assert "sellEndDate" not in result["subqueries"][0]["requiredOutputs"]
-
-
-async def test_output_planner_revalidates_source_after_deterministic_merge() -> None:
-    client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["productName"]}')
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    with pytest.raises(ValueError, match="graph source ownership.*categoryId"):
-        await node(
-            {
-                "query": "제품 관계와 분류를 결합한다.",
-                "entity": None,
-                "tool_plan": ["graph", "sql"],
-                "routeDraft": {
-                    "tool_plan": ["graph", "sql"],
-                    "subqueries": [
-                        {
-                            "id": "graph_products",
-                            "tool": "graph",
-                            "question": "제품 관계를 조회한다.",
-                            "dependsOn": [],
-                            "joinKeys": ["categoryId"],
-                        },
-                        {
-                            "id": "sql_categories",
-                            "tool": "sql",
-                            "question": "분류 정보를 조회한다.",
-                            "dependsOn": [],
-                            "joinKeys": ["categoryId"],
-                        },
-                    ],
-                },
-                "resultTransform": None,
-            }
-        )
-
-
-async def test_output_planner_retries_unknown_or_wrong_source_alias() -> None:
-    client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["pathProductIds"]}'),
-        make_content_response('{"requiredOutputs":["productCount"]}'),
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "제품 수",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_count",
-                        "tool": "sql",
-                        "question": "제품 수를 집계한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
+    result = await make_plan_outputs_node(client, _catalog())(_state([subquery]))
 
     assert result["subqueries"][0]["requiredOutputs"] == ["productCount"]
     assert len(client.calls) == 2
-    assert "source ownership" in client.calls[1]["messages"][-1]["content"]
 
 
-async def test_output_planner_completes_resolved_sql_entity_identity() -> None:
-    client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["productCount"]}')
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "Fasteners 분류의 제품 수",
-            "entity": {
-                "productCategoryId": 81,
-                "productCategoryName": "Fasteners",
-            },
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_category_count",
-                        "tool": "sql",
-                        "question": "Fasteners 분류의 제품 수를 집계한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert result["subqueries"][0]["requiredOutputs"] == [
-        "productCount",
-        "categoryId",
-        "categoryName",
-    ]
-
-
-async def test_output_planner_normalizes_work_order_row_outputs() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["workOrderId","productName",'
-            '"scrapReasonName","totalScrappedQty"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "폐기량이 큰 작업지시와 제품 및 사유",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_work_order_scrap",
-                        "tool": "sql",
-                        "question": "작업지시별 폐기량과 제품 및 사유를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert set(result["subqueries"][0]["requiredOutputs"]) == {
-        "workOrderId",
-        "productId",
-        "productName",
-        "scrapReasonId",
-        "scrapReasonName",
-        "scrappedQty",
-    }
-    assert set(result["subqueries"][0]["requiredOutputs"]).isdisjoint(
-        {"locationId", "locationName"}
-    )
-
-
-async def test_output_planner_completes_graph_location_and_sql_aggregate() -> None:
-    client = MockOpenAIClient(
-        make_content_response('{"requiredOutputs":["productId","productName"]}'),
-        make_content_response(
-            '{"requiredOutputs":["productId","productName",' '"totalScrappedQty"]}'
-        ),
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "Forge Bay를 거친 제품의 폐기 합계",
-            "entity": {"locationId": 91, "locationName": "Forge Bay"},
-            "tool_plan": ["graph", "sql"],
-            "routeDraft": {
-                "tool_plan": ["graph", "sql"],
-                "subqueries": [
-                    {
-                        "id": "graph_location_products",
-                        "tool": "graph",
-                        "question": "Forge Bay를 거친 제품을 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": ["productId"],
-                    },
-                    {
-                        "id": "sql_scrap_totals",
-                        "tool": "sql",
-                        "question": "앞 단계 제품별 폐기 합계를 집계한다.",
-                        "dependsOn": ["graph_location_products"],
-                        "joinKeys": ["productId"],
-                        "inputBindings": {
-                            "productIds": "graph_location_products.productId"
-                        },
-                    },
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert set(result["subqueries"][0]["requiredOutputs"]) == {
-        "locationId",
-        "locationName",
-        "productId",
-        "productName",
-    }
-    assert set(result["subqueries"][1]["requiredOutputs"]) == {
-        "productId",
-        "productName",
-        "totalScrappedQty",
-        "workOrderCount",
-    }
-
-
-async def test_output_planner_completes_supplier_impact_path() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["componentId","componentName",'
-            '"finishedProductId","finishedProductName"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "North Mill 공급 중단 영향",
-            "entity": {"supplierId": 92, "supplierName": "North Mill"},
-            "tool_plan": ["graph"],
-            "routeDraft": {
-                "tool_plan": ["graph"],
-                "subqueries": [
-                    {
-                        "id": "graph_supplier_impact",
-                        "tool": "graph",
-                        "question": "North Mill 공급 부품의 완제품 영향을 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    outputs = result["subqueries"][0]["requiredOutputs"]
-    assert {"depth", "pathProductIds", "pathProductNames"}.issubset(outputs)
-    assert "component에서 finishedProduct 방향" in result["subqueries"][0]["question"]
-
-
-async def test_output_planner_preserves_finished_to_component_path_direction() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["finishedProductId","finishedProductName",'
-            '"componentId","componentName","depth","pathProductIds",'
-            '"pathProductNames"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "Aurora Gearbox에서 Titan Washer까지의 조립 경로",
-            "entity": [
-                {"productId": 8201, "productName": "Aurora Gearbox"},
-                {"productId": 8202, "productName": "Titan Washer"},
-            ],
-            "tool_plan": ["graph"],
-            "routeDraft": {
-                "tool_plan": ["graph"],
-                "subqueries": [
-                    {
-                        "id": "graph_product_path",
-                        "tool": "graph",
-                        "question": "두 제품 사이의 조립 경로를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert (
-        "nodes(path) 순서로 finishedProduct에서 component 방향"
-        in result["subqueries"][0]["question"]
-    )
-
-
-async def test_output_planner_preserves_work_order_role_from_original_question() -> (
-    None
-):
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["routingOperationKey",'
-            '"sequence","locationId","locationName"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "8307의 라우팅 공정을 작업장 순서대로 보여줘.",
-            "entity": None,
-            "tool_plan": ["graph"],
-            "routeDraft": {
-                "tool_plan": ["graph"],
-                "subqueries": [
-                    {
-                        "id": "graph_routing",
-                        "tool": "graph",
-                        "question": "식별자 8307 제품의 라우팅 공정을 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    question = result["subqueries"][0]["question"]
-    assert "workOrderId" in result["subqueries"][0]["requiredOutputs"]
-    assert question.startswith("8307의 라우팅 공정을")
-    assert "숫자는 workOrderId" in question
-    assert "productId가 아니다" in question
-
-
-async def test_bom_shortage_output_contract_is_model_free_and_exact() -> None:
+async def test_formal_transform_is_model_free_and_keeps_question_text() -> None:
     client = MockOpenAIClient()
-    node = make_plan_outputs_node(client, _catalog())
-    graph_id = "graph_bom_supply"
-
-    result = await node(
+    question = "formal shortage calculation"
+    graph_id = "graph_bom"
+    subqueries: list[RouteSubquery] = [
         {
-            "query": "Atlas Cart 생산 부족 부품",
-            "entity": {"productId": 8002, "productName": "Atlas Cart"},
-            "tool_plan": ["graph", "sql"],
-            "routeDraft": {
-                "tool_plan": ["graph", "sql"],
-                "subqueries": [
-                    {
-                        "id": graph_id,
-                        "tool": "graph",
-                        "question": "BOM과 공급업체를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": ["componentId"],
-                    },
-                    {
-                        "id": "sql_stock",
-                        "tool": "sql",
-                        "question": (
-                            "부품별 재고와 생산량 9개에 필요한 수량을 BOM에서 "
-                            "비교한다."
-                        ),
-                        "dependsOn": [graph_id],
-                        "joinKeys": ["componentId"],
-                        "inputBindings": {"componentIds": f"{graph_id}.componentId"},
-                    },
-                ],
-                "resultTransform": {
-                    "type": "bom_shortage_v1",
-                    "productionQty": 9,
-                },
-            },
-            "resultTransform": {
-                "type": "bom_shortage_v1",
-                "productionQty": 9,
-            },
-        }
-    )
-
-    assert client.calls == []
-    assert set(result["subqueries"][0]["requiredOutputs"]) == {
-        "finishedProductId",
-        "finishedProductName",
-        "componentId",
-        "componentName",
-        "depth",
-        "pathProductIds",
-        "quantityPerAssembly",
-        "supplierId",
-        "supplierName",
-    }
-    assert result["subqueries"][1]["requiredOutputs"] == [
-        "componentId",
-        "makeFlag",
-        "actualStock",
+            "id": graph_id,
+            "tool": "graph",
+            "question": question,
+            "dependsOn": [],
+            "joinKeys": ["componentId"],
+        },
+        {
+            "id": "sql_stock",
+            "tool": "sql",
+            "question": question,
+            "dependsOn": [graph_id],
+            "joinKeys": ["componentId"],
+            "inputBindings": {"componentIds": f"{graph_id}.componentId"},
+        },
     ]
-    assert result["subqueries"][1]["question"] == (
-        "앞 단계 componentId별 makeFlag와 현재 재고 합계를 조회한다. "
-        "필요한 수량과 부족량은 resultTransform에서 계산한다."
-    )
-    graph_question = result["subqueries"][0]["question"]
-    assert "active 공급업체를 선택적으로 연결" in graph_question
-    assert "sellableFinishedGood로 사전 필터하지 않는다" in graph_question
-    assert "외부 구매 판정은 SQL makeFlag" in graph_question
-    assert "pathProductIds는 nodes(path) 순서로 finishedProduct에서" in graph_question
-    assert "component 방향으로 반환하고 reverse하지 않는다" in graph_question
-    assert "quantityPerAssembly도 relationships(path) 순서를 유지" in graph_question
 
-
-async def test_output_planner_uses_root_role_for_full_hierarchy() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["finishedProductId","finishedProductName",'
-            '"componentId","componentName","depth","pathProductIds"]}'
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state(
+            subqueries,
+            query=question,
+            transform={"type": "bom_shortage_v1", "productionQty": 3},
         )
     )
-    node = make_plan_outputs_node(client, _catalog())
 
-    result = await node(
-        {
-            "query": "Atlas Assembly 하위 부품 계층",
-            "entity": {"productId": 93, "productName": "Atlas Assembly"},
-            "tool_plan": ["graph"],
-            "routeDraft": {
-                "tool_plan": ["graph"],
-                "subqueries": [
-                    {
-                        "id": "graph_hierarchy",
-                        "tool": "graph",
-                        "question": "Atlas Assembly의 전체 BOM 계층을 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    outputs = result["subqueries"][0]["requiredOutputs"]
-    assert {"rootProductId", "rootProductName"}.issubset(outputs)
-    assert "finishedProductId" not in outputs
-
-
-async def test_output_planner_completes_terse_bom_tree_from_original_query() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["componentId","componentName","minDepth"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "Nebula Frame 부품 트리?",
-            "entity": {"productId": 8103, "productName": "Nebula Frame"},
-            "tool_plan": ["graph"],
-            "routeDraft": {
-                "tool_plan": ["graph"],
-                "subqueries": [
-                    {
-                        "id": "graph_tree",
-                        "tool": "graph",
-                        "question": "Nebula Frame의 최하위 부품과 최소 깊이를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert set(result["subqueries"][0]["requiredOutputs"]) == {
-        "rootProductId",
-        "rootProductName",
-        "componentId",
-        "componentName",
-        "depth",
-        "pathProductIds",
-        "pathProductNames",
-    }
-    assert result["subqueries"][0]["question"] == "Nebula Frame 부품 트리?"
-
-
-async def test_output_planner_normalizes_aggregate_stock_and_purchase_count() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["componentId","componentName","locationId",'
-            '"locationName","shelf","bin","quantity"]}'
-        ),
-        make_content_response('{"requiredOutputs":["productCount"]}'),
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    stock_result = await node(
-        {
-            "query": "앞에서 찾은 부품 재고를 알려줘.",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_stock",
-                        "tool": "sql",
-                        "question": "부품별 현재 재고를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-    count_result = await node(
-        {
-            "query": "자체 생산 대상이 아닌 품목 수를 알려줘.",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_count",
-                        "tool": "sql",
-                        "question": "자체 생산하지 않는 품목 수를 집계한다.",
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    stock_outputs = stock_result["subqueries"][0]["requiredOutputs"]
-    assert {"componentId", "componentName", "actualStock"}.issubset(stock_outputs)
-    assert set(stock_outputs).isdisjoint(
-        {"locationId", "locationName", "shelf", "bin", "quantity"}
-    )
-    assert count_result["subqueries"][0]["requiredOutputs"] == ["purchasedProductCount"]
-
-
-async def test_output_planner_completes_work_order_scrap_fact_bundle() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["productName","locationId","locationName",'
-            '"scrapReasonName"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "작업지시 8307의 생산 품목과 폐기 이유",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_scrap_fact",
-                        "tool": "sql",
-                        "question": "작업지시의 생산 품목과 폐기 이유를 조회한다.",
-                        "dependsOn": [],
-                        "joinKeys": ["workOrderId"],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    assert set(result["subqueries"][0]["requiredOutputs"]) == {
-        "workOrderId",
-        "productId",
-        "productName",
-        "scrapReasonId",
-        "scrapReasonName",
-        "scrappedQty",
-    }
-
-
-async def test_output_planner_preserves_rejected_quantity_ranking_semantics() -> None:
-    client = MockOpenAIClient(
-        make_content_response(
-            '{"requiredOutputs":["supplierId","supplierName",' '"totalRejectedQty"]}'
-        )
-    )
-    node = make_plan_outputs_node(client, _catalog())
-
-    result = await node(
-        {
-            "query": "구매 주문이 많이 반려된 업체 다섯 곳을 알려줘.",
-            "entity": None,
-            "tool_plan": ["sql"],
-            "routeDraft": {
-                "tool_plan": ["sql"],
-                "subqueries": [
-                    {
-                        "id": "sql_supplier_rejections",
-                        "tool": "sql",
-                        "question": (
-                            "반려된 구매 주문 건수가 많은 업체 상위 5곳을 조회한다."
-                        ),
-                        "dependsOn": [],
-                        "joinKeys": [],
-                    }
-                ],
-            },
-            "resultTransform": None,
-        }
-    )
-
-    question = result["subqueries"][0]["question"]
-    assert "purchaseorderid 건수가 아니라 rejectedqty 합계" in question
-    assert "totalRejectedQty를 내림차순" in question
+    transform_spec = _catalog().transform("bom_shortage_v1")
+    assert client.calls == []
+    assert [item["requiredOutputs"] for item in result["subqueries"]] == [
+        list(transform_spec.required_outputs["graph"]),
+        list(transform_spec.required_outputs["sql"]),
+    ]
+    assert all(item["question"] == question for item in result["subqueries"])
+    assert all(item.get("generatorRules") for item in result["subqueries"])

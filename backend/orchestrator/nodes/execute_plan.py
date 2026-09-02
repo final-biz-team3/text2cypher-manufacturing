@@ -100,6 +100,16 @@ def _input_binding_failure() -> dict[str, Any]:
         "attempts": [],
         "empty_reason": None,
         "truncated": False,
+        "failure": make_query_failure(
+            code="INPUT_BINDING_INVALID",
+            stage="dependency",
+            category="QUERY_INVALID",
+            kind="internal",
+            retryable=False,
+            user_safe_reason="선행 조회 결과를 후속 조회 입력으로 전달하지 못했습니다.",
+            suggested_action="잠시 후 다시 시도해 주세요.",
+            dependent_failure=True,
+        ),
     }
 
 
@@ -119,16 +129,18 @@ def _extract_input_bindings(
 def _initial_state(
     *,
     subquery: Subquery,
+    original_question: str,
     entity: dict | list[dict] | None,
     schema_text: str,
     input_bindings: dict[str, list[Any]],
 ) -> dict[str, Any]:
-    return {
-        "query": subquery["question"],
+    result: dict[str, Any] = {
+        "query": original_question,
         "entity": entity,
         "schema": schema_text,
         "required_outputs": subquery["requiredOutputs"],
         "input_bindings": input_bindings,
+        "business_rules": subquery.get("generatorRules", []),
         "messages": [],
         "result": None,
         "error": None,
@@ -139,6 +151,9 @@ def _initial_state(
         "truncated": False,
         "failure": None,
     }
+    if subquery["question"] != original_question:
+        result["source_scope"] = subquery["question"]
+    return result
 
 
 def make_execute_plan_node(
@@ -203,6 +218,7 @@ def make_execute_plan_node(
             result = await agents[subquery["tool"]].ainvoke(
                 _initial_state(
                     subquery=subquery,
+                    original_question=state["query"],
                     entity=None if input_bindings else state.get("entity"),
                     schema_text=schemas[subquery["tool"]],
                     input_bindings=input_bindings,

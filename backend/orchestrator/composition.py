@@ -9,6 +9,7 @@ from orchestrator.planning import (
     Subquery,
     validate_result_transform,
 )
+from orchestrator.semantic_catalog import QuerySemanticCatalog, TransformSpec
 from orchestrator.state import (
     ComposedResult,
     ComposedSection,
@@ -277,6 +278,7 @@ def _compose_joined(
 def _compose_bom_shortage(
     sources: list[tuple[list[dict[str, Any]], EmptyReason | None, bool]],
     transform: BomShortageTransform,
+    transform_spec: TransformSpec,
     *,
     row_limit: int,
 ) -> ComposedResult:
@@ -312,6 +314,9 @@ def _compose_bom_shortage(
             graph_rows,
             sql_rows,
             production_qty=transform["productionQty"],
+            output_scale=transform_spec.output_scale,
+            required_graph_outputs=frozenset(transform_spec.required_outputs["graph"]),
+            required_sql_outputs=frozenset(transform_spec.required_outputs["sql"]),
         )
     except ValueError as exc:
         return _failure(mode, str(exc), transform=transform_name)
@@ -334,6 +339,7 @@ def compose_results(
     *,
     row_limit: int,
     result_transform: BomShortageTransform | None = None,
+    semantic_catalog: QuerySemanticCatalog | None = None,
 ) -> ComposedResult:
     """실행 계획 순서와 join 계약에 따라 source 결과를 조합한다.
 
@@ -367,7 +373,11 @@ def compose_results(
         )
 
     try:
-        validated_transform = validate_result_transform(result_transform, subqueries)
+        validated_transform = validate_result_transform(
+            result_transform,
+            subqueries,
+            catalog=semantic_catalog,
+        )
     except ValueError as exc:
         return _failure(mode, str(exc), transform="bom_shortage_v1")
 
@@ -384,9 +394,16 @@ def compose_results(
         sources.append((rows, empty_reason, truncated))
 
     if validated_transform is not None:
+        if semantic_catalog is None:
+            return _failure(
+                mode,
+                "formal transform semantic catalog가 없습니다.",
+                transform=validated_transform["type"],
+            )
         return _compose_bom_shortage(
             sources,
             validated_transform,
+            semantic_catalog.transform(validated_transform["type"]),
             row_limit=row_limit,
         )
 

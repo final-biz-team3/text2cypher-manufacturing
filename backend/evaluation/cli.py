@@ -72,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="RQ/HQ text-to-query 평가")
     parser.add_argument(
         "--suite",
-        choices=("canonical", "robustness", "holdout", "all"),
+        choices=("canonical", "robustness", "complexity", "all"),
         default="canonical",
     )
     parser.add_argument("--ids", default="all")

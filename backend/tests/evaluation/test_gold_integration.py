@@ -91,12 +91,12 @@ def _reference_rq19_shortages(
     return result
 
 
-def _holdout_gold_rows(
+def _complexity_gold_rows(
     runner: EvaluationRunner, manifest: EvaluationManifest
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """의존 binding까지 적용해 Holdout Gold의 정규화 결과를 반환한다."""
+    """의존 binding까지 적용해 complexity Gold의 정규화 결과를 반환한다."""
     outputs: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for case in (case for case in manifest.cases if case.suite == "holdout"):
+    for case in (case for case in manifest.cases if case.suite == "complexity"):
         upstream: dict[str, list[dict[str, Any]]] = {}
         contract = manifest.contracts[case.contract_id]
         for expected in contract.subqueries:
@@ -297,10 +297,10 @@ def test_rq19_final_gold_matches_an_independent_reference_calculation() -> None:
     assert normalized_sha256(normalized_reference) == final.sha256
 
 
-def test_all_holdout_gold_queries_match_the_approved_snapshot() -> None:
+def test_all_complexity_gold_queries_match_the_approved_snapshot() -> None:
     load_dotenv(PROJECT_ROOT / ".env")
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
-    cases = [case for case in manifest.cases if case.suite == "holdout"]
+    cases = [case for case in manifest.cases if case.suite == "complexity"]
     database = ReadOnlyDatabaseExecutor.from_environment()
     try:
         runner = EvaluationRunner(
@@ -394,11 +394,13 @@ def test_all_holdout_gold_queries_match_the_approved_snapshot() -> None:
     }
 
 
-def test_holdout_gold_satisfies_independent_business_invariants() -> None:
+def test_complexity_gold_satisfies_independent_business_invariants() -> None:
     """Gold hash와 다른 축에서 집계 grain·BOM leaf·source 동기화를 검증한다."""
     load_dotenv(PROJECT_ROOT / ".env")
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
-    cases = {case.case_id: case for case in manifest.cases if case.suite == "holdout"}
+    cases = {
+        case.case_id: case for case in manifest.cases if case.suite == "complexity"
+    }
     database = ReadOnlyDatabaseExecutor.from_environment()
     try:
         runner = EvaluationRunner(
@@ -407,7 +409,7 @@ def test_holdout_gold_satisfies_independent_business_invariants() -> None:
             None,
             project_root=PROJECT_ROOT,
         )
-        outputs = _holdout_gold_rows(runner, manifest)
+        outputs = _complexity_gold_rows(runner, manifest)
 
         shortages = outputs[("HQ02", "sql_top_inventory_shortages")]
         shortage_facts = database.execute_sql(

@@ -157,7 +157,7 @@ def build_quality_scorecard(
             ],
         ),
         _area(
-            "Holdout 독립성",
+            "Blind 평가 독립성",
             [
                 _control(
                     label,
@@ -291,7 +291,7 @@ def build_quality_scorecard(
             [
                 _control(
                     "제한된 route와 transform",
-                    'SUPPORTED_TOOLS = {"sql", "graph"}' in production_text
+                    'SUPPORTED_TOOLS = frozenset({"sql", "graph"})' in production_text
                     and "bom_shortage_v1" in production_text,
                     "backend/orchestrator/planning.py",
                     "허용 범위가 명시적으로 제한되지 않았습니다.",
@@ -311,10 +311,11 @@ def build_quality_scorecard(
                 ),
                 _control(
                     "schema catalog 중심 최소 변경",
-                    "DOMAIN_ALIAS_REGISTRY" in catalog_text
-                    and "class OutputCatalog" in catalog_text,
-                    "backend/orchestrator/output_catalog.py",
-                    "output planning이 schema catalog로 제한되지 않았습니다.",
+                    "build_query_semantic_catalog" in catalog_text
+                    and "load_manufacturing_ontology" in catalog_text
+                    and (project_root / "ontology/manufacturing_terms.yaml").exists(),
+                    "backend/orchestrator/output_catalog.py, ontology/manufacturing_terms.yaml",
+                    "physical schema와 semantic catalog의 공통 loader를 확인하지 못했습니다.",
                 ),
             ],
         ),

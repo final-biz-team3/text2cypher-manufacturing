@@ -15,8 +15,10 @@ async def generate_sql(
     openai_client: Any,
     *,
     query: str,
+    source_scope: str | None = None,
     entity: object | None,
     schema_text: str,
+    semantic_context: str = "",
     business_rules: Sequence[str] = (),
     required_outputs: Sequence[str] = (),
     input_bindings: dict[str, list[Any]] | None = None,
@@ -29,8 +31,10 @@ async def generate_sql(
     재시도용 피드백으로 전달한다."""
     messages = build_sql_prompt(
         query=query,
+        source_scope=source_scope,
         entity=entity,
         schema_text=schema_text,
+        semantic_context=semantic_context,
         business_rules=business_rules,
         required_outputs=required_outputs,
         input_bindings=input_bindings,
