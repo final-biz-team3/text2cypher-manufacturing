@@ -55,6 +55,7 @@ def make_sql_agent_subgraph(
         return await generate_sql(
             openai_client,
             query=state["query"],
+            source_scope=state.get("source_scope"),
             entity=state["entity"],
             schema_text=state["schema"],
             semantic_context=semantic_context,

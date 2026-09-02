@@ -370,7 +370,7 @@ businessConcepts:
     terms: [제품 ID 경로]
     kind: path
     sources: [graph]
-    grain: [rootProductId, componentId]
+    grain: []
     operation: orderedPathProjection
     inputs: [productId]
   - conceptId: graph.path-product-names
@@ -379,7 +379,7 @@ businessConcepts:
     terms: [제품명 경로]
     kind: path
     sources: [graph]
-    grain: [rootProductId, componentId]
+    grain: []
     operation: orderedPathProjection
     inputs: [productName]
   - conceptId: supplier-pair.shared-component-count

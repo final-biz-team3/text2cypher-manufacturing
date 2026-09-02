@@ -494,6 +494,26 @@ def build_query_semantic_catalog(
                     f"entity role {entity_role.role_id!r} has non-display "
                     f"{source} labels: " + ", ".join(sorted(invalid_labels))
                 )
+            projection_specs = [available[alias] for alias in definition.keys]
+            shared_key_owners = set.intersection(
+                *(_physical_owners(spec) for spec in projection_specs)
+            )
+            if not shared_key_owners:
+                raise ValueError(
+                    f"entity role {entity_role.role_id!r} has unrelated "
+                    f"{source} identity key owners"
+                )
+            unrelated_labels = [
+                alias
+                for alias in definition.labels
+                if not (_physical_owners(available[alias]) & shared_key_owners)
+            ]
+            if unrelated_labels:
+                raise ValueError(
+                    f"entity role {entity_role.role_id!r} has labels unrelated to "
+                    f"its {source} identity owner: "
+                    + ", ".join(sorted(unrelated_labels))
+                )
             for alias in definition.labels:
                 if available[alias].value_type == "scalar":
                     available[alias] = replace(available[alias], value_type="name")
@@ -763,6 +783,11 @@ def _reject_alias_collision(
         raise ValueError(
             f"{semantic_kind} alias {alias!r} collides with a physical or semantic alias"
         )
+
+
+def _physical_owners(spec: AliasSpec) -> set[str]:
+    """Return canonical physical owners behind a physical or role alias."""
+    return {path.rsplit(".", 1)[0] for path in spec.schema_paths}
 
 
 def _path_nullable(

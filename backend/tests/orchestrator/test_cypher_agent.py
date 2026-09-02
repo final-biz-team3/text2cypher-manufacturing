@@ -4,7 +4,7 @@ from neo4j.exceptions import ClientError, CypherSyntaxError, ServiceUnavailable
 
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
 from orchestrator.subgraphs.cypher_agent import (
-    _required_output_error,
+    _query_contract_error,
     make_cypher_agent_subgraph,
 )
 from tests.mocks.openai import MockOpenAIClient, make_content_response
@@ -19,6 +19,11 @@ _TEST_GRAPH_SCHEMA = GraphSchema.model_validate(
         },
         "relationships": {
             "SUPPLIES": {"from": "Supplier", "to": "Product", "properties": {}},
+            "REQUIRES_COMPONENT": {
+                "from": "Product",
+                "to": "Product",
+                "properties": {},
+            },
         },
     }
 )
@@ -26,7 +31,7 @@ _TEST_GRAPH_SCHEMA = GraphSchema.model_validate(
 
 def test_required_output_preflight_treats_alias_keys_as_case_sensitive() -> None:
     assert (
-        _required_output_error(
+        _query_contract_error(
             "MATCH (p:Product) RETURN p.productId AS productid", ["productId"]
         )
         == "RETURN에 필수 alias가 없습니다: productId"
@@ -331,3 +336,82 @@ async def test_cypher_agent_repairs_missing_required_return_alias_before_executi
     assert result["attempts"][0]["error"] == (
         "RETURN에 필수 alias가 없습니다: componentId"
     )
+
+
+async def test_cypher_agent_repairs_coupled_independent_bom_paths_before_execution() -> (
+    None
+):
+    coupled = (
+        "MATCH pA = (a:Product)-[:REQUIRES_COMPONENT*1..4]->(c:Product), "
+        "pB = (b:Product)-[:REQUIRES_COMPONENT*1..4]->(c) "
+        "RETURN c.productId AS componentId"
+    )
+    separated = (
+        "MATCH pA = (a:Product)-[:REQUIRES_COMPONENT*1..4]->(c:Product) "
+        "WITH a, c, min(length(pA)) AS minDepthA "
+        "MATCH pB = (b:Product)-[:REQUIRES_COMPONENT*1..4]->(c) "
+        "RETURN c.productId AS componentId"
+    )
+    openai_client = MockOpenAIClient(
+        make_content_response(coupled),
+        make_content_response(separated),
+    )
+    execute_calls: list[str] = []
+
+    async def execute_cypher(cypher: str) -> list[dict]:
+        execute_calls.append(cypher)
+        return [{"componentId": 8102}]
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
+    )
+
+    result = await subgraph.ainvoke(
+        _initial_state("두 제품의 공통 하위 부품을 알려줘.")
+    )
+
+    assert result["error"] is None
+    assert execute_calls == [separated]
+    assert len(openai_client.calls) == 2
+    assert "각 anchor 경로를 별도의 MATCH 절" in result["attempts"][0]["error"]
+
+
+async def test_cypher_agent_repairs_relationship_list_used_as_path_before_execution() -> (
+    None
+):
+    invalid = (
+        "MATCH (a:Product)-[path:REQUIRES_COMPONENT*1..4]->(c:Product) "
+        "WHERE all(r IN relationships(path) WHERE r.startDate IS NOT NULL) "
+        "RETURN c.productId AS componentId"
+    )
+    repaired = (
+        "MATCH path = (a:Product)-[:REQUIRES_COMPONENT*1..4]->(c:Product) "
+        "WHERE all(r IN relationships(path) WHERE r.startDate IS NOT NULL) "
+        "RETURN c.productId AS componentId"
+    )
+    openai_client = MockOpenAIClient(
+        make_content_response(invalid),
+        make_content_response(repaired),
+    )
+    execute_calls: list[str] = []
+
+    async def execute_cypher(cypher: str) -> list[dict]:
+        execute_calls.append(cypher)
+        return [{"componentId": 8102}]
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert result["error"] is None
+    assert execute_calls == [repaired]
+    assert len(openai_client.calls) == 2
+    assert "대괄호 안 변수는 Path가 아니라 관계 List" in result["attempts"][0]["error"]

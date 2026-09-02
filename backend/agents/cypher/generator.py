@@ -16,6 +16,7 @@ async def generate_cypher(
     openai_client: Any,
     *,
     query: str,
+    source_scope: str | None = None,
     entity: object | None,
     schema_text: str,
     query_policy: GraphQueryPolicy,
@@ -32,6 +33,7 @@ async def generate_cypher(
     재시도용 피드백으로 전달한다."""
     messages = build_cypher_prompt(
         query=query,
+        source_scope=source_scope,
         entity=entity,
         schema_text=schema_text,
         query_policy=query_policy,

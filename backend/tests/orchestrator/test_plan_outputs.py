@@ -12,6 +12,7 @@ from agents.cypher.schema.loader import load_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from orchestrator.nodes.plan_outputs import (
     SemanticOutputPlan,
+    compile_graph_generator_rules,
     compile_semantic_output_plan,
     finalize_required_outputs,
     make_plan_outputs_node,
@@ -68,9 +69,259 @@ def test_catalog_separates_physical_role_and_concept_aliases() -> None:
 
 def test_output_schema_uses_provider_supported_shape() -> None:
     schema = output_plan_json_schema(_catalog(), "sql")
+    graph_schema = output_plan_json_schema(_catalog(), "graph")
 
     assert "uniqueItems" not in schema["properties"]["requiredOutputs"]
+    assert schema["properties"]["requiredOutputs"]["minItems"] == 1
+    assert "minItems" not in graph_schema["properties"]["requiredOutputs"]
     assert schema["required"] == ["requiredOutputs", "displayEntities"]
+    assert "graphResultMode" not in graph_schema["properties"]
+    assert graph_schema["required"] == ["requiredOutputs", "displayEntities"]
+
+
+async def test_prompt_uses_composable_roles_without_query_family_recipes() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=["depth", "pathProductIds"],
+            display_entities=["component", "finishedProduct"],
+        )
+    )
+    question = "부품을 사용하는 완제품을 최대 4단계까지 알려줘"
+    subquery: RouteSubquery = {
+        "id": "graph_component_usage",
+        "tool": "graph",
+        "question": "ROUTE_SCOPE_SENTINEL 경로 정보를 포함한다",
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    await make_plan_outputs_node(client, _catalog())(_state([subquery], query=question))
+
+    system_prompt = client.calls[0]["messages"][0]["content"]
+    user_prompt = client.calls[0]["messages"][1]["content"]
+    assert "anchor에서" in system_prompt
+    assert "destination 순서" in system_prompt
+    assert "고정 출력 묶음" in system_prompt
+    assert "공급업체의 BOM 영향" not in system_prompt
+    assert "작업지시의 공정과 작업장" not in system_prompt
+    assert "resultGrain" not in system_prompt
+    assert "provenance" in system_prompt
+    assert "cardinality" in system_prompt
+    assert question in user_prompt
+    assert "ROUTE_SCOPE_SENTINEL" not in user_prompt
+
+
+async def test_single_source_raw_route_is_non_authoritative_clarification() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[
+                "productId",
+                "productName",
+                "locationId",
+                "locationName",
+                "shelf",
+                "bin",
+                "quantity",
+            ]
+        )
+    )
+    original = "제품 재고 어디에 몇 개 있어?"
+    clarified = "제품의 위치 ID·이름, 선반, 보관함, 수량을 조회한다."
+    subquery: RouteSubquery = {
+        "id": "sql_inventory",
+        "tool": "sql",
+        "question": original,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+    state = _state([subquery], query=original)
+    state["rawRouteDraft"] = {
+        "subqueries": [
+            {
+                "id": "sql_inventory",
+                "tool": "sql",
+                "question": clarified,
+                "dependsOn": [],
+                "joinKeys": [],
+                "inputBindings": [],
+            }
+        ],
+        "resultTransform": None,
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(state)
+
+    prompt = client.calls[0]["messages"][1]["content"]
+    assert f"original question: {original}" in prompt
+    assert f"clarified interpretation: {clarified}" in prompt
+    assert result["subqueries"][0]["question"] == original
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "locationId",
+        "locationName",
+        "shelf",
+        "bin",
+        "quantity",
+    ]
+
+
+async def test_sql_prompt_preserves_complete_direct_output_selection() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[
+                "productId",
+                "productName",
+                "actualStock",
+                "safetyStockLevel",
+                "shortageQty",
+            ],
+            display_entities=["product"],
+        )
+    )
+    question = "제품의 실제 재고가 안전재고보다 얼마나 부족한지 보여줘"
+    subquery: RouteSubquery = {
+        "id": "sql_shortage",
+        "tool": "sql",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=question)
+    )
+
+    system_prompt = client.calls[0]["messages"][0]["content"]
+    assert "완전하게 직접 선택" in system_prompt
+    assert "requiredOutputs를 대체하지 않습니다" in system_prompt
+    assert "정렬이나 top-N만으로" in system_prompt
+    assert "graphResultMode" not in system_prompt
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+        "actualStock",
+        "safetyStockLevel",
+        "shortageQty",
+    ]
+
+
+async def test_graph_display_only_plan_compiles_entity_identity() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[],
+            display_entities=["product"],
+        )
+    )
+    subquery: RouteSubquery = {
+        "id": "graph_products",
+        "tool": "graph",
+        "question": "제품을 알려줘",
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(_state([subquery]))
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+    ]
+
+
+async def test_sql_display_only_plan_is_retried_as_incomplete() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[],
+            display_entities=["product"],
+        ),
+        make_output_plan_response(
+            required_outputs=["productId", "productName"],
+            display_entities=["product"],
+        ),
+    )
+    subquery: RouteSubquery = {
+        "id": "sql_products",
+        "tool": "sql",
+        "question": "제품을 알려줘",
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(_state([subquery]))
+
+    assert len(client.calls) == 2
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "productId",
+        "productName",
+    ]
+
+
+def test_graph_path_rules_preserve_semantic_role_order_only() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("depth", "pathProductIds"),
+        display_entities=("component", "finishedProduct"),
+    )
+    selected = compile_semantic_output_plan(plan, _catalog(), tool="graph")
+
+    rules = compile_graph_generator_rules(plan, _catalog(), selected)
+
+    assert len(rules) == 1
+    assert "component" in rules[0]
+    assert "finishedProduct" in rules[0]
+    assert rules[0].index("component") < rules[0].index("finishedProduct")
+    assert "physical MATCH path direction" in rules[0]
+
+
+def test_non_path_graph_plan_adds_no_generator_rule() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("sequence",),
+        display_entities=("workOrder", "routingOperation", "location"),
+    )
+    selected = compile_semantic_output_plan(plan, _catalog(), tool="graph")
+
+    assert compile_graph_generator_rules(plan, _catalog(), selected) == []
+
+
+def test_path_outputs_are_compiled_only_when_selected_directly() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("depth", "pathProductIds"),
+        display_entities=("component", "finishedProduct"),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="graph") == [
+        "depth",
+        "pathProductIds",
+        "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
+    ]
+
+
+def test_path_names_are_not_added_to_id_only_path_selection() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("depth", "pathProductIds"),
+        display_entities=("component", "finishedProduct"),
+    )
+
+    assert "pathProductNames" not in compile_semantic_output_plan(
+        plan, _catalog(), tool="graph"
+    )
+
+
+def test_physical_scalar_does_not_add_an_implicit_owner_role() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("sequence",),
+        display_entities=("workOrder", "location"),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="graph") == [
+        "sequence",
+        "workOrderId",
+        "locationId",
+        "locationName",
+    ]
 
 
 def test_semantic_compiler_adds_identity_without_replacing_direct_selection() -> None:
@@ -85,6 +336,15 @@ def test_semantic_compiler_adds_identity_without_replacing_direct_selection() ->
         "productId",
         "productName",
     ]
+
+
+def test_sql_compiler_does_not_infer_identity_from_a_physical_scalar() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("listPrice",),
+        display_entities=(),
+    )
+
+    assert compile_semantic_output_plan(plan, _catalog(), tool="sql") == ["listPrice"]
 
 
 def test_semantic_compiler_does_not_expand_derived_inputs_or_path_bundles() -> None:
@@ -202,7 +462,11 @@ async def test_model_output_is_authoritative_and_question_is_unchanged(
         if all(alias in _catalog().by_tool["sql"] for alias in selected)
         else "graph"
     )
-    client = MockOpenAIClient(make_output_plan_response(required_outputs=selected))
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=selected,
+        )
+    )
     subquery: RouteSubquery = {
         "id": f"{tool}_synthetic",
         "tool": tool,
@@ -246,7 +510,9 @@ async def test_entity_names_with_domain_words_do_not_rewrite_the_subquery() -> N
 
 async def test_downstream_non_identity_binding_is_added_to_producer_outputs() -> None:
     client = MockOpenAIClient(
-        make_output_plan_response(required_outputs=["componentName"]),
+        make_output_plan_response(
+            required_outputs=["componentName"],
+        ),
         make_output_plan_response(required_outputs=["actualStock"]),
     )
     subqueries: list[RouteSubquery] = [
@@ -277,6 +543,63 @@ async def test_downstream_non_identity_binding_is_added_to_producer_outputs() ->
     assert result["subqueries"][1]["joinKeys"] == []
 
 
+async def test_hybrid_output_planning_uses_scope_only_as_source_responsibility() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[],
+            display_entities=["component", "finishedProduct"],
+        ),
+        make_output_plan_response(
+            required_outputs=["componentId", "actualStock"],
+        ),
+    )
+    original = (
+        "공급업체의 공급 중단 시 영향을 받는 부품과 완제품, 각 부품의 재고를 알려줘."
+    )
+    graph_scope = "공급 부품과 영향을 받는 완제품 관계를 조회한다."
+    sql_scope = "영향 부품별 현재 재고를 조회한다."
+    subqueries: list[RouteSubquery] = [
+        {
+            "id": "graph_impact",
+            "tool": "graph",
+            "question": graph_scope,
+            "dependsOn": [],
+            "joinKeys": ["componentId"],
+        },
+        {
+            "id": "sql_stock",
+            "tool": "sql",
+            "question": sql_scope,
+            "dependsOn": ["graph_impact"],
+            "joinKeys": ["componentId"],
+            "inputBindings": {"componentIds": "graph_impact.componentId"},
+        },
+    ]
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state(subqueries, query=original)
+    )
+
+    graph_prompt = client.calls[0]["messages"][1]["content"]
+    sql_prompt = client.calls[1]["messages"][1]["content"]
+    assert f"original question: {original}" in graph_prompt
+    assert f"source responsibility: {graph_scope}" in graph_prompt
+    assert f"original question: {original}" in sql_prompt
+    assert f"source responsibility: {sql_scope}" in sql_prompt
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
+    ]
+    assert result["subqueries"][1]["requiredOutputs"] == [
+        "componentId",
+        "actualStock",
+    ]
+
+
 async def test_independent_output_selection_calls_run_concurrently() -> None:
     both_started = asyncio.Event()
     started: list[str] = []
@@ -290,7 +613,9 @@ async def test_independent_output_selection_calls_run_concurrently() -> None:
                 both_started.set()
             await asyncio.wait_for(both_started.wait(), timeout=0.2)
             output = "productCount" if tool == "sql" else "minDepth"
-            return make_output_plan_response(required_outputs=[output])
+            return make_output_plan_response(
+                required_outputs=[output],
+            )
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=_ConcurrentCompletions()))
     subqueries: list[RouteSubquery] = [

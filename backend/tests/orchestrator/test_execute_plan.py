@@ -163,7 +163,7 @@ async def test_execute_plan_passes_subquery_context_and_aligned_bindings() -> No
     entity = {"supplierId": 2, "supplierName": "테스트 공급업체"}
     result = await _node(sql_agent, graph_agent)(
         {
-            "query": "원질문은 생성기에 전달하지 않는다.",
+            "query": "부품별 재고 부족량을 알려줘.",
             "entity": entity,
             "subqueries": [
                 _step(
@@ -187,13 +187,15 @@ async def test_execute_plan_passes_subquery_context_and_aligned_bindings() -> No
         }
     )
 
-    assert graph_agent.calls[0]["query"] == "영향 부품을 찾는다."
+    assert graph_agent.calls[0]["query"] == "부품별 재고 부족량을 알려줘."
+    assert graph_agent.calls[0]["source_scope"] == "영향 부품을 찾는다."
     assert graph_agent.calls[0]["entity"] == entity
     assert graph_agent.calls[0]["required_outputs"] == [
         "componentId",
         "supplierId",
     ]
-    assert sql_agent.calls[0]["query"] == "찾은 부품의 재고를 조회한다."
+    assert sql_agent.calls[0]["query"] == "부품별 재고 부족량을 알려줘."
+    assert sql_agent.calls[0]["source_scope"] == "찾은 부품의 재고를 조회한다."
     assert sql_agent.calls[0]["entity"] is None
     assert sql_agent.calls[0]["required_outputs"] == ["componentId"]
     assert sql_agent.calls[0]["input_bindings"] == {

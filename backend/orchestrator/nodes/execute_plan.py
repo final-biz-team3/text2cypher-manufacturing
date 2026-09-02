@@ -129,12 +129,13 @@ def _extract_input_bindings(
 def _initial_state(
     *,
     subquery: Subquery,
+    original_question: str,
     entity: dict | list[dict] | None,
     schema_text: str,
     input_bindings: dict[str, list[Any]],
 ) -> dict[str, Any]:
-    return {
-        "query": subquery["question"],
+    result: dict[str, Any] = {
+        "query": original_question,
         "entity": entity,
         "schema": schema_text,
         "required_outputs": subquery["requiredOutputs"],
@@ -150,6 +151,9 @@ def _initial_state(
         "truncated": False,
         "failure": None,
     }
+    if subquery["question"] != original_question:
+        result["source_scope"] = subquery["question"]
+    return result
 
 
 def make_execute_plan_node(
@@ -214,6 +218,7 @@ def make_execute_plan_node(
             result = await agents[subquery["tool"]].ainvoke(
                 _initial_state(
                     subquery=subquery,
+                    original_question=state["query"],
                     entity=None if input_bindings else state.get("entity"),
                     schema_text=schemas[subquery["tool"]],
                     input_bindings=input_bindings,

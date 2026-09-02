@@ -19,6 +19,10 @@ from neo4j.exceptions import (
 from agents.cypher.generator import generate_cypher
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
+from orchestrator.cypher_contracts import (
+    has_coupled_independent_bom_paths,
+    has_relationship_list_used_as_path,
+)
 from orchestrator.guards.cypher_guard import make_cypher_guard
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
@@ -91,7 +95,22 @@ _EMPTY_RESULT_FEEDBACK = (
 )
 
 
-def _required_output_error(cypher: str, required_outputs: list[str]) -> str | None:
+def _query_contract_error(cypher: str, required_outputs: list[str]) -> str | None:
+    if has_relationship_list_used_as_path(cypher):
+        return (
+            "가변길이 관계 패턴의 대괄호 안 변수는 Path가 아니라 관계 List입니다. "
+            "relationships(), nodes(), length()에 전달하려면 "
+            "path = (start)-[:REL*]->(end) 형태로 전체 경로를 바인딩하고 path를 "
+            "사용하세요. 관계 List가 필요하면 해당 변수를 함수 없이 직접 사용하세요."
+        )
+    if has_coupled_independent_bom_paths(cypher):
+        return (
+            "서로 다른 anchor의 독립적인 REQUIRES_COMPONENT 가변 경로가 같은 "
+            "MATCH 절에서 공통 endpoint에 결합되었습니다. Neo4j 5의 relationship "
+            "uniqueness가 경로 사이를 제약하지 않도록 각 anchor 경로를 별도의 "
+            "MATCH 절에서 탐색하고 공통 destination 변수로 결합하세요. anchor별 "
+            "minimumPathLength는 destination grain으로 먼저 집계하세요."
+        )
     if not required_outputs:
         return None
     returns = list(re.finditer(r"(?i)\bRETURN\b", cypher))
@@ -136,6 +155,7 @@ def make_cypher_agent_subgraph(
         return await generate_cypher(
             openai_client,
             query=state["query"],
+            source_scope=state.get("source_scope"),
             entity=state["entity"],
             schema_text=state["schema"],
             query_policy=query_policy,
@@ -157,5 +177,5 @@ def make_cypher_agent_subgraph(
         retryable_exceptions=_RETRYABLE_EXCEPTIONS,
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
         guard=make_cypher_guard(graph_schema),
-        query_contract_error=_required_output_error,
+        query_contract_error=_query_contract_error,
     )

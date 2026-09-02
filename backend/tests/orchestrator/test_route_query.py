@@ -64,6 +64,12 @@ async def test_route_query_derives_single_source_plan() -> None:
     assert result["routeDraft"]["tool_plan"] == ["sql"]
     assert result["rawRouteDraft"] == json.loads(raw)
     assert "tool_plan" not in result["rawRouteDraft"]
+    assert result["rawRouteDraft"]["subqueries"][0]["question"] == (
+        "요청한 사실을 조회한다."
+    )
+    assert result["routeDraft"]["subqueries"][0]["question"] == (
+        "가상 제품의 색상을 알려줘."
+    )
 
 
 async def test_route_query_derives_dependency_order_and_aligned_bindings() -> None:

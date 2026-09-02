@@ -50,8 +50,10 @@ composition 구조를 한 번 결정합니다.
   joinKeys를 만들지 않습니다.
 - 실제로 두 결과를 같은 identity 행으로 합칠 때만 양쪽 joinKeys에 같은 ordered
   shared identity alias를 둡니다. 그 외에는 양쪽 모두 비웁니다.
-- subquery question은 원문의 filter, limit, date, quantity와 업무 의미를 보존하되
-  query syntax나 required output recipe를 쓰지 않습니다.
+- subquery question은 원문의 filter, limit, date, quantity와 업무 의미를 보존하며
+  source 책임만 좁혀 표현합니다. 원문에 없는 출력 필드, 결과 grain, 집계 차원,
+  계산 방식, filter 또는 relationship 속성을 추가하지 않으며 query syntax나
+  required output recipe를 쓰지 않습니다.
 - resultTransform은 선언된 formal transform이 정확히 필요한 경우에만 사용합니다.
 - bom_shortage_v1은 생산 수량을 입력으로 받아 Graph BOM path quantity와 SQL stock을
   검증·계산하는 formal transform입니다. 이 transform은 Graph -> SQL dependency,
@@ -145,6 +147,11 @@ def make_route_query_node(
                 raw_route_draft = (
                     raw_document if isinstance(raw_document, dict) else None
                 )
+                if len(plan["subqueries"]) == 1:
+                    # 단일 source에는 분해할 source 책임이 없다. 모델 paraphrase가
+                    # 원문에 없는 출력·grain을 보태지 못하도록 실행 질문을 원문으로
+                    # 결정적으로 복원하고 raw 응답은 진단용으로 별도 보존한다.
+                    plan["subqueries"][0]["question"] = state["query"]
                 break
             except (json.JSONDecodeError, ValueError) as exc:
                 if attempt == 1:

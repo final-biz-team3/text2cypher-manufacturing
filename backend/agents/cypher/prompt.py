@@ -46,8 +46,17 @@ def _build_graph_policy_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...]
         "명시적으로 유지한다.",
         "path node uniqueness는 productId 값으로 검사하고 Neo4j 5의 ALL + single "
         "list predicate를 사용한다. APOC나 list index range로 대체하지 않는다.",
-        "orderedPathProjection 결과는 질문의 anchor에서 destination 순서다. "
-        "relationship 수량 배열도 같은 경로 방향과 index 정렬을 유지한다.",
+        "서로 다른 anchor에서 같은 destination으로 향하는 독립적인 BOM 가변 "
+        "경로는 각각 별도의 MATCH 절에서 탐색하고 destination 변수로 결합한다. "
+        "한 MATCH의 comma-separated graph pattern으로 합치면 Neo4j 5의 "
+        "relationship uniqueness가 경로 사이에도 적용되므로 사용하지 않는다. "
+        "anchor별 minimumPathLength는 destination grain으로 먼저 집계한 뒤 다음 "
+        "anchor 경로를 탐색한다.",
+        "nodes(path)는 MATCH에 작성한 시작점에서 끝점 순서이며 그 물리 순서가 "
+        "질문의 의미 anchor에서 destination 순서와 같다고 가정하지 않는다. "
+        "orderedPathProjection은 semantic entity role order를 기준으로 하고, 물리 "
+        "MATCH path가 반대면 nodes(path)의 projection에 reverse를 적용한다. "
+        "relationship 수량 배열도 같은 의미 방향과 index 정렬을 유지한다.",
         "minimumPathLength는 destination grain별 min(length(path))로 계산한다.",
         "ORDER BY가 계산 alias를 사용하면 최종 RETURN에도 같은 alias를 정확히 "
         "포함한다.",
@@ -57,6 +66,7 @@ def _build_graph_policy_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...]
 def build_cypher_prompt(
     *,
     query: str,
+    source_scope: str | None = None,
     entity: object | None,
     schema_text: str,
     query_policy: GraphQueryPolicy,
@@ -71,6 +81,7 @@ def build_cypher_prompt(
     return build_prompt_messages(
         instructions=_CYPHER_INSTRUCTIONS,
         query=query,
+        source_scope=source_scope,
         entity=entity,
         schema_text=schema_text,
         semantic_context=semantic_context,

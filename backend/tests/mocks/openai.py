@@ -107,15 +107,11 @@ def make_output_plan_response(
     display_entities: list[str] | tuple[str, ...] = (),
 ) -> MockChatCompletion:
     """Build the additive semantic output-plan response used by the planner."""
-    return make_content_response(
-        json.dumps(
-            {
-                "requiredOutputs": list(required_outputs),
-                "displayEntities": list(display_entities),
-            },
-            ensure_ascii=False,
-        )
-    )
+    payload: dict[str, Any] = {
+        "requiredOutputs": list(required_outputs),
+        "displayEntities": list(display_entities),
+    }
+    return make_content_response(json.dumps(payload, ensure_ascii=False))
 
 
 class _MockCompletions:

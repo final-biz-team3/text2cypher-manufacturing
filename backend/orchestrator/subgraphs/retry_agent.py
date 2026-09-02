@@ -47,6 +47,7 @@ INCONCLUSIVE = "INCONCLUSIVE"
 
 class RetryAgentState(TypedDict):
     query: str
+    source_scope: NotRequired[str]
     entity: dict | list[dict] | None
     schema: str
     messages: list

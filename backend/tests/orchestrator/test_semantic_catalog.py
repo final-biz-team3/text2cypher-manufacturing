@@ -169,6 +169,15 @@ def test_entity_identity_projection_requires_owned_identity_and_name_aliases() -
         _compile(data)
 
 
+def test_entity_identity_projection_rejects_unrelated_label_owner() -> None:
+    data = _ontology_data()
+    product = next(item for item in data["entityRoles"] if item["roleId"] == "product")
+    product["identityProjection"]["sql"]["labels"] = ["supplierName"]
+
+    with pytest.raises(ValueError, match="labels unrelated"):
+        _compile(data)
+
+
 def test_entity_role_projection_is_source_scoped_and_described() -> None:
     catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
 

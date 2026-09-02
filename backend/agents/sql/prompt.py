@@ -34,6 +34,7 @@ _SQL_INSTRUCTIONS = """당신은 제조 데이터용 PostgreSQL 쿼리 생성기
 def build_sql_prompt(
     *,
     query: str,
+    source_scope: str | None = None,
     entity: object | None,
     schema_text: str,
     semantic_context: str = "",
@@ -47,6 +48,7 @@ def build_sql_prompt(
     return build_prompt_messages(
         instructions=_SQL_INSTRUCTIONS,
         query=query,
+        source_scope=source_scope,
         entity=entity,
         schema_text=schema_text,
         semantic_context=semantic_context,
