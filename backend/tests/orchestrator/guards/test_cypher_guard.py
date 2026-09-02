@@ -182,3 +182,84 @@ def test_cypher_guard_blocks_load_csv_split_across_whitespace() -> None:
 
     assert result.allowed is False
     assert result.reason_code == "WRITE_KEYWORD_DETECTED"
+
+
+def test_cypher_guard_blocks_unknown_label_hidden_inside_exists_subquery() -> None:
+    """EXISTS { ... }(Neo4j 5 서브쿼리)는 '{...}' 맵 리터럴과 같은 중괄호를 쓰지만
+    내용물이 맵이 아니라 중첩 쿼리다. 이걸 맵으로 취급해 안의 콜론을 통째로
+    건너뛰면 그 안의 미허가 Label/RelationshipType이 검사를 완전히 우회한다 -
+    y-dev에 병합된 실제 gold 쿼리(HQ06/HQ09)의 EXISTS{} 패턴을 검증하다가
+    발견됨."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard(
+        "MATCH (p:Product) WHERE EXISTS { " "MATCH (p)-[:OWNS]->(s:Secret) } RETURN p"
+    )
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_LABEL_OR_RELATIONSHIP"
+    assert "Secret" in (result.reason_detail or "")
+
+
+def test_cypher_guard_blocks_unknown_label_hidden_inside_count_subquery() -> None:
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard(
+        "MATCH (p:Product) WHERE COUNT { MATCH (p)-[:OWNS]->(s:Secret) } > 0 "
+        "RETURN p"
+    )
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_LABEL_OR_RELATIONSHIP"
+
+
+def test_cypher_guard_blocks_unknown_label_hidden_inside_collect_subquery() -> None:
+    """COLLECT { ... }도 EXISTS/COUNT와 같은 Neo4j 5 서브쿼리 표현식 계열이라
+    같은 우회가 가능했다."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard(
+        "MATCH (p:Product) RETURN COLLECT { "
+        "MATCH (p)-[:OWNS]->(s:Secret) RETURN s } AS r"
+    )
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_LABEL_OR_RELATIONSHIP"
+
+
+def test_cypher_guard_allows_exists_subquery_with_only_whitelisted_names() -> None:
+    """실제 gold 쿼리(HQ06/HQ09)와 같은 형태 - EXISTS{} 안에서 화이트리스트
+    Label/RelationshipType만 쓰면 정상 허용된다."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard(
+        "MATCH (p:Product) WHERE NOT EXISTS { "
+        "MATCH (p)<-[:SUPPLIES]-(s:Supplier) } RETURN p"
+    )
+
+    assert result.allowed is True
+
+
+def test_cypher_guard_still_suppresses_real_map_literal_inside_exists_block() -> None:
+    """EXISTS{} 블록 안에 진짜 맵 리터럴이 다시 나와도(중첩) 그 맵의 콜론은
+    여전히 레이블로 오인하지 않는다."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard(
+        "MATCH (p:Product) WHERE EXISTS { "
+        "MATCH (n:Product {productId: 1}) } RETURN p"
+    )
+
+    assert result.allowed is True
+
+
+def test_cypher_guard_blocks_unknown_label_in_exists_nested_inside_map_value() -> None:
+    """맵 리터럴의 값 위치에 EXISTS{}가 중첩돼도(예: RETURN {result: EXISTS
+    {...}}) 그 안의 레이블은 계속 스캔해야 한다 - 스택 top만 보고 판단하는지
+    확인."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard("RETURN {result: EXISTS { MATCH (n:Secret) RETURN n }} AS r")
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_LABEL_OR_RELATIONSHIP"
