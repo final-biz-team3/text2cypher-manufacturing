@@ -1057,6 +1057,47 @@ async def test_resolve_entity_candidate_entity_round_trips_as_confirmed_entity()
     assert len(reentry_openai_client.calls) == 1
 
 
+async def test_resolve_entity_confirmed_candidate_beyond_display_limit_still_resolves() -> (
+    None
+):
+    """이미 확정한 후보가 이번 유사도 재검색에서는 노출 상한(5개) 밖으로
+    밀려나도 확정한 값을 계속 인식해야 한다. 동점/근소한 후보가 5개보다
+    많으면 재확인 요청마다 상위 5개 집합이 달라질 수 있는데, 그때마다
+    직전에 고른 후보가 이번 top-5에 없다는 이유로 다시 EntityAmbiguousError를
+    던지면 사용자가 후보를 선택해도 같은 화면이 계속 뜨는 것처럼 보인다."""
+    confirmed_entity = {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
+    openai_client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "터치링 자전거"},
+        )
+    )
+    # 확정된 후보(956)가 이번 유사도 검색에서는 6번째(표시 상한 5 밖)로
+    # 밀려난 상황을 흉내낸다.
+    similar_rows = [
+        (901, "Touring-3000 Green, 50", 0.60),
+        (902, "Touring-4000 Purple, 46", 0.58),
+        (903, "Touring-5000 Orange, 44", 0.55),
+        (904, "Touring-6000 White, 42", 0.52),
+        (905, "Touring-7000 Gray, 40", 0.50),
+        (956, "Touring-1000 Yellow, 54", 0.48),
+    ]
+    pool = MockAsyncPostgresPool(
+        rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")},
+        similar_rows_by_name={"터치링 자전거": similar_rows},
+    )
+    node = make_resolve_entity_node(openai_client, pool, _graph_schema())
+
+    result = await node(
+        {
+            "query": "터치링 자전거 정가 알려줘.",
+            "confirmed_entity": confirmed_entity,
+        }
+    )
+
+    assert result == {"entity": confirmed_entity}
+
+
 async def test_resolve_entity_merges_confirmed_candidate_with_other_named_entity() -> (
     None
 ):

@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 _SIMILARITY_THRESHOLD = 0.3
 _MAX_CANDIDATES = 5
+# confirmed_entity 재확인 시 사용하는 내부 조회 상한. 화면에 보여주는 개수
+# (_MAX_CANDIDATES)보다 훨씬 크게 잡아, 동점/근소한 후보가 5개보다 많아
+# 재조회 때마다 상위 5개 구성이 달라져도 이미 확정한 후보를 계속 찾아낼
+# 수 있게 한다 - 안 그러면 후보를 선택해도 매번 같은 모호함 화면이
+# 다시 뜬다.
+_CONFIRMED_LOOKUP_LIMIT = 50
 
 _SYSTEM_PROMPT = (
     "사용자에게 답변하거나 추가 자료를 요청하지 않는다. 도구에 정의된 엔티티 "
@@ -424,9 +430,12 @@ async def _find_similar_entities(
     config: NamedEntityType,
     name: str,
     pool: AsyncConnectionPool,
+    limit: int = _MAX_CANDIDATES,
 ) -> list[dict]:
     """엔티티 타입별 테이블·컬럼으로 유사한 이름을 유사도 순으로 조회한다.
-    pg_trgm을 쓸 수 없으면 롤백 후 후보 없음으로 처리한다."""
+    pg_trgm을 쓸 수 없으면 롤백 후 후보 없음으로 처리한다. score가 동점이면
+    id로 2차 정렬해 호출마다 순서가 흔들리지 않게 한다(안 그러면 동점
+    후보가 많을 때 어느 게 상위 LIMIT 안에 들지가 호출마다 달라질 수 있다)."""
     async with pool.connection() as conn:
         try:
             cursor = await conn.execute(
@@ -434,8 +443,8 @@ async def _find_similar_entities(
                 f"similarity({config.name_column}, %s) AS score "
                 f"FROM {config.table} "
                 f"WHERE similarity({config.name_column}, %s) >= %s "
-                f"ORDER BY score DESC LIMIT %s",
-                (name, name, _SIMILARITY_THRESHOLD, _MAX_CANDIDATES),
+                f"ORDER BY score DESC, {config.id_column} ASC LIMIT %s",
+                (name, name, _SIMILARITY_THRESHOLD, limit),
             )
         except psycopg.errors.UndefinedFunction:
             await conn.rollback()
@@ -665,7 +674,12 @@ def make_resolve_entity_node(
         if missing_indices:
             candidates_task = asyncio.gather(
                 *(
-                    _find_similar_entities(lookups[index][2], lookups[index][1], pool)
+                    _find_similar_entities(
+                        lookups[index][2],
+                        lookups[index][1],
+                        pool,
+                        limit=_CONFIRMED_LOOKUP_LIMIT,
+                    )
                     for index in missing_indices
                 )
             )
@@ -725,14 +739,15 @@ def make_resolve_entity_node(
                 if type_alias_fragment and not has_other_concrete_entity:
                     continue
                 if candidates:
+                    display_candidates = candidates[:_MAX_CANDIDATES]
                     logger.info(
                         "resolve_entity: query=%r -> entityName=%r 후보 %d개 "
                         "(EntityAmbiguousError)",
                         state["query"],
                         entity_name,
-                        len(candidates),
+                        len(display_candidates),
                     )
-                    raise EntityAmbiguousError(candidates)
+                    raise EntityAmbiguousError(display_candidates)
 
                 logger.info(
                     "resolve_entity: query=%r -> entityType=%r entityName=%r 조회 실패 "
