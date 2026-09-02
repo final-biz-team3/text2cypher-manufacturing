@@ -16,9 +16,47 @@ _VARIABLE_BOM_RELATIONSHIP = re.compile(
 _VARIABLE_LENGTH_RELATIONSHIP_BINDING = re.compile(
     r"(?is)\[\s*([A-Za-z_]\w*)\s*(?::[^\]]*)?\*[^\]]*\]"
 )
+_PATH_VARIABLE_BINDING = re.compile(r"(?is)^\s*([A-Za-z_]\w*)\s*=\s*\(")
 _PATH_ONLY_FUNCTION = re.compile(
     r"(?i)\b(?:relationships|nodes|length)\s*\(\s*([A-Za-z_]\w*)\s*\)"
 )
+_WITH_VARIABLE_PROJECTION = re.compile(
+    r"(?is)^\s*([A-Za-z_]\w*)(?:\s+AS\s+([A-Za-z_]\w*))?\s*$"
+)
+
+
+def _find_clause_boundary(masked: str, start: int) -> int:
+    """Find the next clause keyword at the current syntactic nesting depth."""
+    round_depth = 0
+    square_depth = 0
+    curly_depth = 0
+    index = start
+    while index < len(masked):
+        if round_depth == 0 and square_depth == 0 and curly_depth == 0:
+            if _CLAUSE_BOUNDARY.match(masked, index) is not None:
+                return index
+
+        char = masked[index]
+        if char == "(":
+            round_depth += 1
+        elif char == ")":
+            if round_depth == 0:
+                return index
+            round_depth -= 1
+        elif char == "[":
+            square_depth += 1
+        elif char == "]":
+            if square_depth == 0:
+                return index
+            square_depth -= 1
+        elif char == "{":
+            curly_depth += 1
+        elif char == "}":
+            if curly_depth == 0:
+                return index
+            curly_depth -= 1
+        index += 1
+    return len(masked)
 
 
 def _match_pattern_regions(cypher: str) -> tuple[str, ...]:
@@ -26,8 +64,7 @@ def _match_pattern_regions(cypher: str) -> tuple[str, ...]:
     masked = mask_query_text(cypher)
     regions: list[str] = []
     for match in _MATCH_START.finditer(masked):
-        boundary = _CLAUSE_BOUNDARY.search(masked, match.end())
-        end = len(masked) if boundary is None else boundary.start()
+        end = _find_clause_boundary(masked, match.end())
         regions.append(masked[match.end() : end])
     return tuple(regions)
 
@@ -59,6 +96,74 @@ def _split_top_level_patterns(region: str) -> tuple[str, ...]:
             start = index + 1
     patterns.append(region[start:])
     return tuple(pattern for pattern in patterns if pattern.strip())
+
+
+def _top_level_clause_regions(masked: str) -> tuple[tuple[str, str], ...]:
+    """Return top-level clause names and their bodies in source order."""
+    clauses: list[tuple[str, int, int]] = []
+    round_depth = 0
+    square_depth = 0
+    curly_depth = 0
+    index = 0
+    while index < len(masked):
+        if round_depth == 0 and square_depth == 0 and curly_depth == 0:
+            clause = _CLAUSE_BOUNDARY.match(masked, index)
+            if clause is not None:
+                name = " ".join(clause.group(0).upper().split())
+                clauses.append((name, clause.start(), clause.end()))
+                index = clause.end()
+                continue
+
+        char = masked[index]
+        if char == "(":
+            round_depth += 1
+        elif char == ")":
+            round_depth = max(0, round_depth - 1)
+        elif char == "[":
+            square_depth += 1
+        elif char == "]":
+            square_depth = max(0, square_depth - 1)
+        elif char == "{":
+            curly_depth += 1
+        elif char == "}":
+            curly_depth = max(0, curly_depth - 1)
+        index += 1
+
+    regions: list[tuple[str, str]] = []
+    for clause_index, (name, _, body_start) in enumerate(clauses):
+        body_end = (
+            len(masked)
+            if clause_index + 1 == len(clauses)
+            else clauses[clause_index + 1][1]
+        )
+        regions.append((name, masked[body_start:body_end]))
+    return tuple(regions)
+
+
+def _project_relationship_lists(
+    projection: str, relationship_lists: set[str]
+) -> set[str]:
+    """Apply a WITH projection to the known relationship-list variables."""
+    projection = re.sub(r"(?is)^\s*DISTINCT\b", "", projection, count=1)
+    projected: set[str] = set()
+    for item in _split_top_level_patterns(projection):
+        if item.strip() == "*":
+            projected.update(relationship_lists)
+            continue
+        variable = _WITH_VARIABLE_PROJECTION.fullmatch(item)
+        if variable is None:
+            continue
+        source, alias = variable.groups()
+        if source in relationship_lists:
+            projected.add(alias or source)
+    return projected
+
+
+def _uses_relationship_list_as_path(region: str, relationship_lists: set[str]) -> bool:
+    return any(
+        function.group(1) in relationship_lists
+        for function in _PATH_ONLY_FUNCTION.finditer(region)
+    )
 
 
 def _variable_bom_endpoints(pattern: str) -> tuple[str, str] | None:
@@ -102,8 +207,26 @@ def has_relationship_list_used_as_path(cypher: str) -> bool:
     full path variable created by ``path = ()-[:TYPE*]->()``.
     """
     masked = mask_query_text(cypher)
-    relationship_lists = set(_VARIABLE_LENGTH_RELATIONSHIP_BINDING.findall(masked))
-    return any(
-        argument in relationship_lists
-        for argument in _PATH_ONLY_FUNCTION.findall(masked)
-    )
+    relationship_lists: set[str] = set()
+    for clause, region in _top_level_clause_regions(masked):
+        if clause in {"MATCH", "OPTIONAL MATCH"}:
+            path_variables = {
+                path.group(1)
+                for pattern in _split_top_level_patterns(region)
+                if (path := _PATH_VARIABLE_BINDING.match(pattern)) is not None
+            }
+            relationship_lists.difference_update(path_variables)
+            relationship_lists.update(
+                _VARIABLE_LENGTH_RELATIONSHIP_BINDING.findall(region)
+            )
+        elif clause == "WITH":
+            if _uses_relationship_list_as_path(region, relationship_lists):
+                return True
+            relationship_lists = _project_relationship_lists(region, relationship_lists)
+            continue
+        elif clause == "UNION":
+            relationship_lists.clear()
+
+        if _uses_relationship_list_as_path(region, relationship_lists):
+            return True
+    return False
