@@ -127,12 +127,13 @@ async def chat(
                 "confirmed_entity": chat_request.confirmed_entity,
             }
         )
-    except EntityNotFoundError:
-        final_answer = generate_failure_answer(entity_not_found_failure())
+    except EntityNotFoundError as exc:
+        failure = entity_not_found_failure(exc.entity_name)
+        final_answer = generate_failure_answer(failure)
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
-            "query_failure": entity_not_found_failure(),
+            "query_failure": failure,
         }
     except EntityExtractionError:
         failure = query_understanding_failure("entity_resolution")

@@ -404,6 +404,10 @@ def test_chat_endpoint_returns_502_and_does_not_save_on_answer_failure(
     [
         (EntityNotFoundError(), entity_not_found_failure()),
         (
+            EntityNotFoundError("Widget-9000"),
+            entity_not_found_failure("Widget-9000"),
+        ),
+        (
             EntityExtractionError("invalid extraction"),
             query_understanding_failure("entity_resolution"),
         ),

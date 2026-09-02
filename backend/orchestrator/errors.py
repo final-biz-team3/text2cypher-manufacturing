@@ -12,12 +12,14 @@ class AppError(Exception):
 
 # 질의 대상 이름으로 엔티티를 찾지 못했을 때 발생
 class EntityNotFoundError(AppError):
-    def __init__(self) -> None:
-        super().__init__(
-            404,
-            "ENTITY_NOT_FOUND",
-            "질의 대상을 찾을 수 없습니다. 이름을 다시 확인해 주세요.",
+    def __init__(self, entity_name: str | None = None) -> None:
+        self.entity_name = entity_name
+        message = (
+            f"'{entity_name}'을(를) 찾을 수 없습니다. 이름을 다시 확인해 주세요."
+            if entity_name
+            else "질의 대상을 찾을 수 없습니다. 이름을 다시 확인해 주세요."
         )
+        super().__init__(404, "ENTITY_NOT_FOUND", message)
 
 
 # 유사 후보가 여러 개라 사용자 확인이 필요할 때 발생
