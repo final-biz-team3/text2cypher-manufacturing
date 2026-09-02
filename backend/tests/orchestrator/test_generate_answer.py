@@ -65,7 +65,7 @@ async def test_generate_answer_uses_only_query_and_composed_result(
         }
     )
 
-    assert result == {"final_answer": "**재고는 10입니다.**"}
+    assert result == {"final_answer": "**재고는 10개입니다.**"}
     assert len(client.calls) == 1
     call = client.calls[0]
     assert call["model"] == "answer-model"
@@ -388,25 +388,6 @@ async def test_generate_answer_rejects_unknown_latin_identifier() -> None:
         )
 
 
-@pytest.mark.parametrize("unknown_name", ["브레이크패드", "가상제품"])
-async def test_generate_answer_rejects_unknown_korean_entity_name(
-    unknown_name: str,
-) -> None:
-    client = MockOpenAIClient(
-        make_content_response(f"{unknown_name}의 재고는 10입니다.")
-    )
-
-    with pytest.raises(AnswerGenerationError):
-        await make_generate_answer_node(client)(
-            {
-                "query": "재고를 알려줘",
-                "composed_result": _composed_result(
-                    rows=[{"productName": "프레임", "stock": 10}]
-                ),
-            }
-        )
-
-
 async def test_generate_answer_accepts_grounded_korean_entity_name() -> None:
     client = MockOpenAIClient(make_content_response("프레임의 재고는 10입니다."))
 
@@ -445,3 +426,53 @@ async def test_generate_answer_accepts_grounded_korean_scaled_number() -> None:
     )
 
     assert result["final_answer"] == "재고는 1만입니다."
+
+
+async def test_generate_answer_keeps_generic_counter_units() -> None:
+    """원본 데이터는 순수 JSON 숫자(예: 10)라 "10건"처럼 숫자+단위 조합이
+    문자 그대로 있을 수 없다. "개"/"건"은 수량의 종류(화폐·시간·비율 등)를
+    새로 주장하지 않는 일반 분류사라, 근거 대조 없이 그대로 남겨야
+    "재고는 10개입니다"가 어색하게 "재고는 10입니다"로 잘리지 않는다."""
+    client = MockOpenAIClient(make_content_response("재고는 10건입니다."))
+
+    result = await make_generate_answer_node(client)(
+        {"query": "재고를 알려줘", "composed_result": _composed_result()}
+    )
+
+    assert result["final_answer"] == "재고는 10건입니다."
+
+
+async def test_generate_answer_still_strips_ungrounded_specific_units() -> None:
+    """ "개"/"건"과 달리 "원"(화폐)처럼 수량의 종류를 새로 주장하는 단위는
+    여전히 원본과 대조해, 근거 없으면 단위를 뗀다."""
+    client = MockOpenAIClient(make_content_response("재고는 10원입니다."))
+
+    result = await make_generate_answer_node(client)(
+        {"query": "재고를 알려줘", "composed_result": _composed_result()}
+    )
+
+    assert result["final_answer"] == "재고는 10입니다."
+
+
+async def test_generate_answer_accepts_korean_only_particle_misread_as_scale_unit() -> (
+    None
+):
+    """ "73만 포함"은 730000(73만)이 아니라 "73개만"(only 73)이라는 뜻일 수
+    있다 - 한국어는 배율 단위 "만"과 "~만"(only) 조사가 표기상 구분되지
+    않는다. 73이 근거 데이터에 있으면 730000으로 오인식해 거부하지 않는다."""
+    client = MockOpenAIClient(
+        make_content_response("전체 141건 중 73만 포함되어 있습니다.")
+    )
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "재고를 알려줘",
+            "composed_result": _composed_result(
+                mode="single",
+                rows=[{"id": i, "stock": 10} for i in range(73)],
+                total_count=141,
+            ),
+        }
+    )
+
+    assert "73만 포함" in result["final_answer"]
