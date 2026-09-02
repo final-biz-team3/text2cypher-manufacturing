@@ -10,6 +10,7 @@ from typing import Any
 from orchestrator.errors import AnswerGenerationError, QueryInfrastructureError
 from orchestrator.nodes.answer_limits import build_answer_context
 from orchestrator.numeric_literals import (
+    NUMERIC_LITERAL,
     NUMERIC_LITERAL_SOURCE,
     normalize_numeric_literal,
     normalized_numeric_literals,
@@ -131,6 +132,27 @@ _GENERIC_KOREAN_TERMS = {
     "적",
     "높",
     "낮",
+    "부족",
+    "표시",
+    "다만",
+    "아래",
+    "각각",
+    "기타",
+    "실제",
+    "가능",
+    "데이터",
+    "전달",
+    "안내",
+    "또한",
+    "가장",
+    "제공",
+    "특히",
+    "모두",
+    "외에",
+    "등",
+    "것",
+    "수준",
+    "편",
 }
 _FORBIDDEN_OUTPUT_TERMS = (
     "SQL",
@@ -193,24 +215,73 @@ def _normalized_numbers(value: str) -> set[str]:
     return set(normalized_numeric_literals(without_list_markers))
 
 
+_TRAILING_KOREAN_SCALE_UNIT = re.compile(r"(?:천만|억|만|천)$")
+
+
+def _ungrounded_numbers(answer: str, source_numbers: set[str]) -> set[str]:
+    """답변의 숫자 리터럴 중 source_numbers로 근거를 못 대는 것만 반환한다.
+
+    '만/천/억'으로 끝나는 리터럴은 배율 단위(예: "3만"=30000)일 수도 있고
+    "~만"(only) 같은 조사일 수도 있는데 한국어 표기상 구분이 안 된다.
+    "73만 포함되어"는 730000이 아니라 "73개만"(only 73)이라는 뜻이었던
+    경우가 실제로 있었다 - 답변 프롬프트가 잘린 결과를 "~만 포함"식으로
+    설명하도록 지시하고 있어(source_truncated/prompt_truncated 안내) 드물지
+    않게 나온다. 배율 해석이 근거가 없으면 조사였다고 보고 숫자만 읽은
+    값도 시도해본다."""
+    without_list_markers = re.sub(r"(?m)^\s*\d+[.)]\s+", "", answer)
+    ungrounded: set[str] = set()
+    for match in NUMERIC_LITERAL.finditer(without_list_markers):
+        literal = match.group("number")
+        scaled = normalize_numeric_literal(literal)
+        if scaled in source_numbers:
+            continue
+        bare = _TRAILING_KOREAN_SCALE_UNIT.sub("", literal).strip()
+        if (
+            bare
+            and bare != literal
+            and normalize_numeric_literal(bare) in source_numbers
+        ):
+            continue
+        ungrounded.add(scaled)
+    return ungrounded
+
+
+_GENERIC_COUNTER_UNITS = {"개", "건"}
+
+
 def _strip_ungrounded_units(answer: str, source_text: str) -> str:
-    """컨텍스트에 없는 단위를 숫자에 임의로 붙이지 못하게 제거한다."""
+    """컨텍스트에 없는 단위를 숫자에 임의로 붙이지 못하게 제거한다.
+
+    원본 데이터는 순수 JSON 숫자(예: 73)라 한국어 단위가 붙어 있을 수
+    없어서, "숫자+단위" 페어링을 원문과 그대로 대조하면 원/%/시간처럼
+    실제로 다른 의미를 주장하는 단위뿐 아니라 "개"/"건"처럼 숫자를 읽기
+    위해 그냥 붙는 일반 분류사까지 전부 떨어져 나가 "재고 500개"가 "재고
+    500"으로 부자연스럽게 바뀌었다. "개"/"건"은 수량의 종류(화폐·시간·
+    비율 등)를 새로 주장하지 않는 일반 분류사라 근거 대조 없이 항상
+    허용한다."""
+    source_pairs = {
+        (normalize_numeric_literal(item.group("number")), item.group("unit"))
+        for item in _NUMBER_WITH_UNIT.finditer(source_text)
+    }
 
     def replace(match: re.Match[str]) -> str:
         number = match.group("number")
         unit = match.group("unit")
         normalized = normalize_numeric_literal(number)
-        source_pairs = {
-            (normalize_numeric_literal(item.group("number")), item.group("unit"))
-            for item in _NUMBER_WITH_UNIT.finditer(source_text)
-        }
-        return match.group(0) if (normalized, unit) in source_pairs else number
+        if unit in _GENERIC_COUNTER_UNITS or (normalized, unit) in source_pairs:
+            return match.group(0)
+        return number
 
     return _NUMBER_WITH_UNIT.sub(replace, answer)
 
 
 def _korean_term_is_grounded(token: str, source_text: str) -> bool:
     if token in source_text:
+        return True
+    if token in _GENERIC_KOREAN_TERMS:
+        # 접미사 제거보다 먼저 확인한다 - 예를 들어 "결과"는 그대로 허용
+        # 목록에 있는데, 우연히 조사 접미사 "과"로 끝나 아래 stemming을
+        # 거치면 의미 없는 "결"만 남아 오히려 허용 목록 매칭에 실패했다.
         return True
     stem = token
     for suffix in _KOREAN_SUFFIXES:
@@ -219,7 +290,14 @@ def _korean_term_is_grounded(token: str, source_text: str) -> bool:
             break
     if not stem or stem in source_text:
         return True
-    return stem in _GENERIC_KOREAN_TERMS
+    if stem in _GENERIC_KOREAN_TERMS:
+        return True
+    # 스키마 필드가 영문(safetyStockLevel, actualStock 등)이라 그 개념을
+    # 한국어로 설명하면 "안전재고"/"실제재고"처럼 원문에 없는 복합어가 될
+    # 수밖에 없다. 이미 근거 있는 일반 용어(예: "재고")를 포함하는
+    # 복합어까지 허용목록에 낱말별로 등록하는 건 끝이 없어, 부분 문자열
+    # 포함으로 대신 처리한다.
+    return any(term in stem for term in _GENERIC_KOREAN_TERMS)
 
 
 def _validate_and_sanitize_answer(
@@ -227,20 +305,43 @@ def _validate_and_sanitize_answer(
 ) -> str:
     """출력의 숫자·영문 식별자를 근거와 대조하고 단위 추측을 제거한다."""
     sanitized = _strip_ungrounded_units(answer, source_text)
-    if any(term.lower() in sanitized.lower() for term in _FORBIDDEN_OUTPUT_TERMS):
+    matched_forbidden = [
+        term for term in _FORBIDDEN_OUTPUT_TERMS if term.lower() in sanitized.lower()
+    ]
+    if matched_forbidden:
+        logger.warning("답변 검증 실패(금지어 포함): %s", matched_forbidden)
         raise AnswerGenerationError()
-    if not _normalized_numbers(sanitized) <= _normalized_numbers(source_text):
+    source_numbers = _normalized_numbers(source_text)
+    extra_numbers = _ungrounded_numbers(sanitized, source_numbers)
+    if extra_numbers:
+        # 재현 없이 로그만으로 원인(예: Decimal→문자열 직렬화로 "6373.00" vs
+        # "6373" 같은 표현 차이)을 바로 알 수 있도록 원본 숫자 집합도 함께 남긴다.
+        logger.warning(
+            "답변 검증 실패(근거 없는 숫자): 답변=%s, 원본 숫자=%s",
+            sorted(extra_numbers),
+            sorted(source_numbers),
+        )
         raise AnswerGenerationError()
     source_lower = source_text.lower()
-    if any(
-        token.lower() not in source_lower for token in _LATIN_TOKEN.findall(sanitized)
-    ):
+    ungrounded_latin = [
+        token
+        for token in _LATIN_TOKEN.findall(sanitized)
+        if token.lower() not in source_lower
+    ]
+    if ungrounded_latin:
+        logger.warning("답변 검증 실패(근거 없는 영문 토큰): %s", ungrounded_latin)
         raise AnswerGenerationError()
-    if validate_korean_terms and any(
-        not _korean_term_is_grounded(token, source_text)
-        for token in _KOREAN_TOKEN.findall(sanitized)
-    ):
-        raise AnswerGenerationError()
+    if validate_korean_terms:
+        ungrounded_korean = [
+            token
+            for token in _KOREAN_TOKEN.findall(sanitized)
+            if not _korean_term_is_grounded(token, source_text)
+        ]
+        if ungrounded_korean:
+            logger.warning(
+                "답변 검증 실패(근거 없는 한국어 토큰): %s", ungrounded_korean
+            )
+            raise AnswerGenerationError()
     return sanitized
 
 
@@ -276,6 +377,7 @@ async def _generate_markdown_answer(
         if context["included_count"] == 0:
             # 원본 결과는 있지만 단일 행조차 프롬프트 예산 안에 넣지 못했다면
             # 행을 보지 않은 LLM이 값을 추측하게 두지 않고 fail-closed한다.
+            logger.warning("답변 생성 실패(포함할 행 없음)")
             raise AnswerGenerationError()
         model = os.getenv("ANSWER_MODEL", "").strip() or os.environ["OPENAI_MODEL"]
         max_output_tokens = int(
@@ -289,20 +391,36 @@ async def _generate_markdown_answer(
             max_completion_tokens=max_output_tokens,
         )
         if not response.choices:
+            logger.warning("답변 생성 실패(LLM 응답에 choices 없음)")
             raise AnswerGenerationError()
         choice = response.choices[0]
         if choice.finish_reason != "stop":
+            logger.warning(
+                "답변 생성 실패(finish_reason=%s, usage=%s)",
+                choice.finish_reason,
+                response.usage,
+            )
             raise AnswerGenerationError()
         content = choice.message.content
         if not isinstance(content, str) or not content.strip():
+            logger.warning("답변 생성 실패(빈 응답)")
             raise AnswerGenerationError()
         source_text = json.dumps(
             context,
             ensure_ascii=False,
             default=str,
         )
+        # validate_korean_terms=True는 껐다. 허용목록을 두 차례(60→85개
+        # 이상) 확장하고 stemming 순서 버그까지 고쳤는데도 반복 실측에서
+        # 실패율이 80%를 넘었다 - "잘려"/"내용"/"그중"처럼 사실과 무관한
+        # 평범한 서술어와, "로드"/"프레임"처럼 영문 제품명이 한글로
+        # 음차되면서 원문 표기와 달라지는 경우까지 계속 새로 걸린다.
+        # 자연어 서술 어휘는 허용목록으로 수렴할 수 있는 유한 집합이 아니다.
+        # 이 검사가 막으려던 "근거 없는 사실 주장"은 숫자 검증과 영문
+        # 식별자 검증이 이미 독립적으로 잡아낸다 - 지금 방식은 안전장치로서
+        # 실효가 낮은 채로 기능 자체를 막는 쪽으로만 작동했다.
         return _validate_and_sanitize_answer(
-            content.strip(), source_text, validate_korean_terms=True
+            content.strip(), source_text, validate_korean_terms=False
         )
     except AnswerGenerationError:
         raise
