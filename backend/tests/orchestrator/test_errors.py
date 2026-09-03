@@ -17,16 +17,28 @@ def test_entity_not_found_error_has_404_status() -> None:
     assert isinstance(error, AppError)
     assert error.status_code == 404
     assert error.code == "ENTITY_NOT_FOUND"
+    assert error.entity_name is None
     assert "찾을 수 없습니다" in error.message
 
 
+def test_entity_not_found_error_names_the_missing_entity() -> None:
+    """찾다가 실패한 이름을 알고 있으면 메시지에 그대로 반영한다."""
+    error = EntityNotFoundError("Widget-9000")
+
+    assert error.entity_name == "Widget-9000"
+    assert "Widget-9000" in error.message
+
+
 def test_entity_ambiguous_error_carries_candidates() -> None:
-    """후보가 여러 개면 candidates를 그대로 보존한다."""
-    error = EntityAmbiguousError(candidates=["Product A", "Product B"])
+    """후보와 상관관계 키(lookup_name)를 그대로 보존한다."""
+    error = EntityAmbiguousError(
+        candidates=["Product A", "Product B"], lookup_name="Prod"
+    )
 
     assert error.status_code == 200
     assert error.code == "ENTITY_AMBIGUOUS"
     assert error.candidates == ["Product A", "Product B"]
+    assert error.lookup_name == "Prod"
 
 
 def test_retry_exceeded_error_has_422_status() -> None:

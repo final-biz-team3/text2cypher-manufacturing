@@ -58,7 +58,20 @@ export const ClarificationNeededSchema = z.object({
   code: z.literal('ENTITY_AMBIGUOUS'),
   message: z.string(),
   candidates: z.array(AmbiguousCandidateSchema),
+  // 사용자가 고른 후보를 confirmed_entity로 되돌려보낼 때 함께 실어 보내는
+  // 상관관계 키(이번에 모호했던 원문 그대로의 추출 이름). 이게 없으면 재확인
+  // 요청의 confirmed_entity가 "이번 모호함 질문"에 대한 응답인지, 이름이
+  // 우연히 비슷한 별개의 새 대상인지 서버가 구분할 수 없다.
+  lookupName: z.string(),
 })
+
+// 사용자가 유사도 후보를 선택해 확정한 엔티티. forName은 이 확정값이 어떤
+// 모호함 질문(candidates가 나왔던 원본 추출 이름)에 대한 응답인지 표시한다.
+export const ConfirmedEntitySchema = z.object({
+  entity: z.record(z.string(), z.unknown()),
+  forName: z.string(),
+})
+export type ConfirmedEntity = z.infer<typeof ConfirmedEntitySchema>
 
 export const HealthSchema = z.object({
   status: z.string(),

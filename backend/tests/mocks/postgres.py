@@ -79,7 +79,14 @@ class MockAsyncPostgresPool:
             if self._similarity_error is not None:
                 raise self._similarity_error
             name = params[0]
-            return _MockAsyncCursor(None, self._similar_rows_by_name.get(name, []))
+            rows = self._similar_rows_by_name.get(name, [])
+            # 실제 SQL의 LIMIT %s(마지막 파라미터)를 그대로 흉내낸다 - 안
+            # 그러면 LIMIT을 넘겨받고도 mock이 목록을 안 자르는 통에 "top-N
+            # 밖으로 밀려난 후보" 관련 회귀를 테스트로 못 잡는다.
+            limit = params[-1]
+            if isinstance(limit, int) and not isinstance(limit, bool):
+                rows = rows[:limit]
+            return _MockAsyncCursor(None, rows)
         if "strpos(lower(" in query:
             source_query = params[0]
             for (
