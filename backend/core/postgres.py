@@ -4,10 +4,9 @@ import os
 import psycopg
 from psycopg_pool import AsyncConnectionPool
 
-logger = logging.getLogger(__name__)
+from core.lazy_singleton import LazySingleton
 
-_pool: AsyncConnectionPool | None = None
-_write_pool: AsyncConnectionPool | None = None
+logger = logging.getLogger(__name__)
 
 
 def postgres_conninfo() -> str:
@@ -36,58 +35,66 @@ async def bootstrap_postgres() -> None:
             )
 
 
+async def _set_statement_timeout(conn: psycopg.AsyncConnection) -> None:
+    """조회/쓰기 풀 둘 다 거는 공통 제약. SET은 psycopg 파라미터 바인딩(%s)을
+    지원하지 않아 문자열로 조립해야 한다 - 대신 정수로 먼저 파싱해 SQL
+    구문에 그대로 새는 걸 막는다."""
+    timeout_ms = int(os.getenv("SQL_STATEMENT_TIMEOUT_MS", "5000"))
+    await conn.execute(f"SET statement_timeout = '{timeout_ms}ms'")
+
+
 async def configure_connection(conn: psycopg.AsyncConnection) -> None:
     """풀이 새 커넥션을 만들 때마다 read-only + statement_timeout을 건다.
     set_read_only()/execute() 둘 다 (autocommit=False 기본값에서) 암묵적으로
     트랜잭션을 여는데, psycopg_pool은 configure 콜백이 커넥션을 트랜잭션이
     열린 채로 반환하면 그 커넥션을 폐기한다 — 반드시 commit으로 닫아야 한다."""
     await conn.set_read_only(True)
-    # SET은 psycopg 파라미터 바인딩(%s)을 지원하지 않아 문자열로 조립해야
-    # 한다 - 대신 정수로 먼저 파싱해 SQL 구문에 그대로 새는 걸 막는다.
-    timeout_ms = int(os.getenv("SQL_STATEMENT_TIMEOUT_MS", "5000"))
-    await conn.execute(f"SET statement_timeout = '{timeout_ms}ms'")
+    await _set_statement_timeout(conn)
     await conn.commit()
-
-
-def get_pool() -> AsyncConnectionPool:
-    """조회 전용 풀. 모든 커넥션이 read_only라 LLM이 생성한 쿼리를 포함해
-    쓰기가 필요 없는 모든 경로(resolve_entity, 앞으로의 execute_sql 등)가
-    공유한다."""
-    global _pool
-    if _pool is None:
-        _pool = AsyncConnectionPool(
-            postgres_conninfo(),
-            configure=configure_connection,
-            open=False,
-            min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1")),
-            max_size=int(os.getenv("POSTGRES_POOL_MAX_SIZE", "5")),
-        )
-    return _pool
 
 
 async def configure_write_connection(conn: psycopg.AsyncConnection) -> None:
     """read_only는 걸지 않는다 — 이 풀은 앱 코드가 직접 짠 신뢰된 쓰기
     쿼리(대화기록 저장 등) 전용이다. statement_timeout만 동일하게 건다."""
-    timeout_ms = int(os.getenv("SQL_STATEMENT_TIMEOUT_MS", "5000"))
-    await conn.execute(f"SET statement_timeout = '{timeout_ms}ms'")
+    await _set_statement_timeout(conn)
     await conn.commit()
 
 
+# 조회 전용 풀. 모든 커넥션이 read_only라 LLM이 생성한 쿼리를 포함해
+# 쓰기가 필요 없는 모든 경로(resolve_entity, execute_sql 등)가 공유한다.
+_pool_singleton: LazySingleton[AsyncConnectionPool] = LazySingleton(
+    lambda: AsyncConnectionPool(
+        postgres_conninfo(),
+        configure=configure_connection,
+        open=False,
+        min_size=int(os.getenv("POSTGRES_POOL_MIN_SIZE", "1")),
+        max_size=int(os.getenv("POSTGRES_POOL_MAX_SIZE", "5")),
+    ),
+    lambda pool: pool.close(),
+)
+
+# 쓰기 전용 풀. read_only 조회 풀(get_pool())과 물리적으로 분리해, LLM 실행
+# 경로의 read-only 보장을 절대 건드리지 않으면서 앱이 직접 작성한 신뢰된
+# 쓰기 쿼리(예: 대화기록 저장)만 여기로 흘려보낸다. 쓰기 트래픽이 낮아 풀
+# 크기를 조회 풀보다 작게 둔다.
+_write_pool_singleton: LazySingleton[AsyncConnectionPool] = LazySingleton(
+    lambda: AsyncConnectionPool(
+        postgres_conninfo(),
+        configure=configure_write_connection,
+        open=False,
+        min_size=int(os.getenv("POSTGRES_WRITE_POOL_MIN_SIZE", "1")),
+        max_size=int(os.getenv("POSTGRES_WRITE_POOL_MAX_SIZE", "2")),
+    ),
+    lambda pool: pool.close(),
+)
+
+
+def get_pool() -> AsyncConnectionPool:
+    return _pool_singleton.get()
+
+
 def get_write_pool() -> AsyncConnectionPool:
-    """쓰기 전용 풀. read_only 조회 풀(get_pool())과 물리적으로 분리해,
-    LLM 실행 경로의 read-only 보장을 절대 건드리지 않으면서 앱이 직접
-    작성한 신뢰된 쓰기 쿼리(예: 대화기록 저장)만 여기로 흘려보낸다.
-    쓰기 트래픽이 낮아 풀 크기를 조회 풀보다 작게 둔다."""
-    global _write_pool
-    if _write_pool is None:
-        _write_pool = AsyncConnectionPool(
-            postgres_conninfo(),
-            configure=configure_write_connection,
-            open=False,
-            min_size=int(os.getenv("POSTGRES_WRITE_POOL_MIN_SIZE", "1")),
-            max_size=int(os.getenv("POSTGRES_WRITE_POOL_MAX_SIZE", "2")),
-        )
-    return _write_pool
+    return _write_pool_singleton.get()
 
 
 async def open_pool() -> None:
@@ -101,10 +108,5 @@ async def open_pool() -> None:
 
 
 async def close_pool() -> None:
-    global _pool, _write_pool
-    if _pool is not None:
-        await _pool.close()
-        _pool = None
-    if _write_pool is not None:
-        await _write_pool.close()
-        _write_pool = None
+    await _pool_singleton.close()
+    await _write_pool_singleton.close()

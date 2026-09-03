@@ -89,6 +89,12 @@ def _iter_table_candidates(token: Any) -> list[Any]:
     return [token]
 
 
+def _safe_call(obj: Any, method_name: str) -> Any:
+    """sqlparse Identifier에만 있는 get_real_name()/get_parent_name()을
+    그 메서드가 없는 토큰 타입에도 안전하게 호출한다(없으면 None)."""
+    return getattr(obj, method_name, lambda: None)()
+
+
 def _iter_nested_select_parens(token: Any) -> list[Parenthesis]:
     """FROM/JOIN 뒤가 아닌 위치(SELECT절 스칼라 서브쿼리, WHERE IN/EXISTS/ANY 등)에
     있는 서브쿼리까지 전부 찾는다. FROM/JOIN 기준 순회만으로는 이런 위치의
@@ -133,7 +139,7 @@ def _walk_for_tables(tokens: list[Any], cte_names: set[str], tables: set[str]) -
                 index += 1
             if index < len(non_ws):
                 for cte_ident in _iter_table_candidates(non_ws[index]):
-                    name = getattr(cte_ident, "get_real_name", lambda: None)()
+                    name = _safe_call(cte_ident, "get_real_name")
                     if isinstance(name, str) and name:
                         cte_names.add(name.lower())
                     paren = _find_parenthesis(cte_ident)
@@ -159,8 +165,8 @@ def _walk_for_tables(tokens: list[Any], cte_names: set[str], tables: set[str]) -
                     if _walk_for_tables(paren.tokens, cte_names, tables):
                         unresolved = True
                     continue
-                real_name = getattr(candidate, "get_real_name", lambda: None)()
-                parent_name = getattr(candidate, "get_parent_name", lambda: None)()
+                real_name = _safe_call(candidate, "get_real_name")
+                parent_name = _safe_call(candidate, "get_parent_name")
                 if not isinstance(real_name, str) or not real_name:
                     unresolved = True
                     continue

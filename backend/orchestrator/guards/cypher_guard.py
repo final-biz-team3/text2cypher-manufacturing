@@ -17,19 +17,40 @@ _FORBIDDEN_PATTERN = re.compile(
 
 _UNQUOTED_NAME = re.compile(r"\w+")
 
+# Neo4j 5의 EXISTS { ... }/COUNT { ... }/COLLECT { ... }는 '{...}' 맵 리터럴과
+# 같은 중괄호를 쓰지만 내용물은 맵이 아니라 완전한 중첩 서브쿼리다(자기 자신의
+# 레이블/관계타입 콜론을 가짐) - 이 여는 중괄호 앞 단어로 둘을 구분한다.
+_SUBQUERY_BLOCK_OPENER = re.compile(r"(?i)\b(?:EXISTS|COUNT|COLLECT)\s*$")
+
+# EXISTS/COUNT/COLLECT는 Cypher 예약어가 아니라 변수명으로도 쓸 수 있어서,
+# "count {productName: count.name}"처럼 맵 프로젝션 대상 변수명이 우연히
+# 겹치면 위 판별만으로는 서브쿼리로 오인한다(리뷰로 발견된 오탐). 여는
+# 중괄호 바로 다음이 맵 프로젝션 필드 목록처럼 생겼으면(".field" 축약형
+# 또는 "field:"/"field,"/"field}" 형태) 그 판단을 다시 맵으로 뒤집는다.
+# "EXISTS { (p)-[:X]->(...) }"처럼 MATCH 없는 패턴 축약형 서브쿼리는 '('로
+# 시작해 이 패턴에 안 걸리므로 여전히 서브쿼리로 남는다(원래 버그 회귀 방지).
+_MAP_PROJECTION_FIELD_START = re.compile(r"\s*(?:\.\w+|\w+\s*[:,}])")
+
 
 def _extract_label_and_type_references(cypher: str) -> tuple[set[str], bool]:
     """':' 뒤에 오는 Label/RelationshipType 이름을 전부 모은다 - 노드 패턴
     (`(n:A:B)`), Neo4j 5 label-expression의 '|'/'&' 결합(`[:A|B]`, `(n:A&B)`),
     백틱 식별자, WHERE절/RETURN절의 predicate 형태(`n:Label`)까지 전부 같은
     방식으로 잡는다. '{...}' 맵 리터럴 안의 콜론(키: 값)은 레이블이 아니므로
-    건너뛰고, 문자열 리터럴 안의 콜론도 건너뛴다. 인식하지 못한 콜론 구문
-    (닫히지 않은 백틱, '::' 등)이나 아직 지원하지 않는 label-expression
-    연산자('!' 부정, '%' 와일드카드, 중첩 괄호 그룹)를 만나면 unresolved=True를
-    반환해 호출부가 fail-closed 하도록 한다."""
+    건너뛰고, 문자열 리터럴 안의 콜론도 건너뛴다. 단 EXISTS {...}/COUNT {...}/
+    COLLECT {...}(Neo4j 5 서브쿼리 표현식)는 같은 중괄호를 쓰지만 내용물이
+    맵이 아니라 중첩 Cypher 쿼리라 그 안의 콜론은 계속 스캔해야 한다 -
+    depth를 단순 카운터가 아니라 "이 중괄호가 맵이라 콜론을 건너뛰어야
+    하는지" 불리언 스택으로 관리해, 서브쿼리 블록 안에 실제 맵 리터럴이
+    다시 나오거나 맵 값 안에 서브쿼리가 중첩돼도 정확히 구분한다. 인식하지
+    못한 콜론 구문(닫히지 않은 백틱, '::' 등)이나 아직 지원하지 않는
+    label-expression 연산자('!' 부정, '%' 와일드카드, 중첩 괄호 그룹)를
+    만나면 unresolved=True를 반환해 호출부가 fail-closed 하도록 한다."""
     names: set[str] = set()
     unresolved = False
-    depth = 0
+    # 각 원소는 그 중괄호 영역이 "맵이라 콜론을 건너뛰어야 함"이면 True,
+    # "서브쿼리라 콜론을 계속 스캔해야 함"이면 False.
+    suppress_stack: list[bool] = []
     index = 0
     length = len(cypher)
     while index < length:
@@ -59,14 +80,21 @@ def _extract_label_and_type_references(cypher: str) -> tuple[set[str], bool]:
             index = end + 1
             continue
         if char == "{":
-            depth += 1
+            prefix = cypher[:index].rstrip()
+            is_subquery_block = bool(_SUBQUERY_BLOCK_OPENER.search(prefix))
+            if is_subquery_block and _MAP_PROJECTION_FIELD_START.match(
+                cypher[index + 1 :]
+            ):
+                is_subquery_block = False
+            suppress_stack.append(not is_subquery_block)
             index += 1
             continue
         if char == "}":
-            depth = max(0, depth - 1)
+            if suppress_stack:
+                suppress_stack.pop()
             index += 1
             continue
-        if char == ":" and depth == 0:
+        if char == ":" and (not suppress_stack or not suppress_stack[-1]):
             index += 1
             while True:
                 while index < length and cypher[index] in " \t\r\n":
