@@ -33,9 +33,14 @@ from tests.mocks.openai import (
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
 
-_ANSWER = "정가는 **2,384.07**입니다."
+_ANSWER = "요청하신 집계 결과를 확인했습니다.\n\n정가는 약 $2,384입니다."
 _ANSWER_RESPONSE_JSON = json.dumps(
-    {"summary": _ANSWER, "highlighted": [], "sections": [], "caveat": None},
+    {
+        "highlighted": [
+            {"title": None, "metrics": [{"label": "정가", "value": 2384.07}]}
+        ],
+        "sections": [],
+    },
     ensure_ascii=False,
 )
 _SQL_ROUTE = json.dumps(

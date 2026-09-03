@@ -1,13 +1,18 @@
 """composed_result 컬럼 키(camelCase) -> 한글 라벨 매핑.
 
-DB 필드명은 영어인데 답변은 한국어로 그 개념을 설명해야 해서, 자유 문장의
-근거 검증이 "표준원가"처럼 원문에 없는(하지만 정당한) 한글 개념어를 계속
-근거 없음으로 오탐하는 문제가 있었다. 이 표는 실제로 답변 데이터에 존재하는
-필드에 한해 그 필드의 한글 라벨을 근거 검증의 허용 대상으로 추가하는 데
-쓰인다 - 필드 자체가 없으면 라벨도 허용되지 않으므로, 만들어낸 개념어까지
-통과시키진 않는다.
+DB 필드명은 영어인데 답변은 한국어로 그 개념을 설명해야 한다. 이 표는
+generate_answer.py에서 세 곳에 쓰인다: (1) LLM 답변 생성이 끝내 실패했을 때
+rows 값을 그대로 옮기는 폴백 답변의 라벨, (2) 통화/개수 단위 서식(정가→"약
+$", 활성 공급업체 수→"...곳")을 어떤 필드에 적용할지 판단하는 기준,
+(3) 프롬프트에 "이 필드는 이 라벨을 쓰라"고 알려주는 힌트. highlighted의
+title/metrics.value 근거 검증(_check_items_grounding)은 rows 값과 정확히
+대조하지, 이 표를 쓰지 않는다.
 
-매핑에 없는 키는 그대로 두면 된다(호출부가 폴백을 알아서 처리한다).
+매핑에 없는 키는 그대로 두면 된다(호출부가 폴백을 알아서 처리한다 - 보통
+영문 키가 그대로 노출된다).
+
+값은 대부분 schema/sql_schema.yaml의 columns.*.aliases(팀이 이미 정의해둔
+공식 한글 별칭)에서 그대로 가져왔다 - 임의로 새로 짓지 않았다.
 """
 
 FIELD_LABELS: dict[str, str] = {
@@ -37,4 +42,30 @@ FIELD_LABELS: dict[str, str] = {
     "componentName": "부품명",
     "finishedProductName": "완제품명",
     "rootProductName": "완제품명",
+    # 아래는 schema/sql_schema.yaml의 columns.*.aliases를 그대로 옮겨왔다 -
+    # 위 항목들과 달리 대부분 식별자(ID)나 개별 행 단위 필드라, 목록/상세
+    # 조회 답변에서 자주 등장한다.
+    "productId": "제품 ID",
+    "productNumber": "제품번호",
+    "makeFlag": "자체 생산 여부",
+    "color": "색상",
+    "size": "크기",
+    "sellEndDate": "판매 종료일",
+    "quantity": "재고 수량",
+    "shelf": "선반",
+    "bin": "보관함",
+    "locationId": "작업장 ID",
+    "supplierId": "공급업체 ID",
+    "active": "활성 여부",
+    "categoryId": "제품 분류 ID",
+    "subcategoryId": "제품 하위 분류 ID",
+    "subcategoryName": "제품 하위 분류명",
+    "bomId": "BOM ID",
+    "startDate": "BOM 유효 시작일",
+    "endDate": "BOM 유효 종료일",
+    "orderQty": "판매 주문 수량",
+    "rejectedQty": "반려 수량",
+    "workOrderId": "작업지시 ID",
+    "scrapReasonId": "폐기 사유 ID",
+    "sequence": "공정 순서",
 }
