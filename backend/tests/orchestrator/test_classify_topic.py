@@ -1,5 +1,7 @@
 """classify_topic이 제조 데이터와 무관한 질문을 조기에 차단하는 동작을 테스트한다."""
 
+from typing import Any
+
 from orchestrator.nodes.classify_topic import make_classify_topic_node
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
@@ -35,5 +37,26 @@ async def test_classify_topic_defaults_to_on_topic_for_malformed_response() -> N
     node = make_classify_topic_node(client)
 
     result = await node({"query": "애매한 질문"})
+
+    assert result == {"query_failure": None}
+
+
+class _FailingCompletions:
+    async def create(self, **kwargs: Any) -> Any:
+        raise RuntimeError("provider secret")
+
+
+class _FailingClient:
+    class _Chat:
+        completions = _FailingCompletions()
+
+    chat = _Chat()
+
+
+async def test_classify_topic_fails_open_when_llm_call_raises() -> None:
+    """판별 호출 자체가 실패해도(provider 오류·timeout) 조회를 막지 않는다."""
+    node = make_classify_topic_node(_FailingClient())
+
+    result = await node({"query": "재고가 부족한 제품을 알려줘"})
 
     assert result == {"query_failure": None}
