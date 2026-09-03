@@ -97,12 +97,11 @@ def _safe_call(obj: Any, method_name: str) -> Any:
 
 
 def _safe_from_function(token: Any) -> str | None:
-    """Return an allowlisted set-returning function used as a FROM source.
+    """FROM source로 사용한 허용 목록의 set-returning function을 반환한다.
 
-    A function-shaped column alias such as ``table t(id)`` must not turn the
-    underlying table into a function source, so the Function name must also be
-    the candidate's real relation name. Only the built-in unqualified form and
-    an explicit pg_catalog qualification are accepted.
+    ``table t(id)`` 같은 함수 형태의 컬럼 alias가 원래 테이블을 함수 source로
+    바꾸지 않도록 Function 이름이 후보의 실제 relation 이름과 같은지도 확인한다.
+    schema를 생략한 내장 함수와 명시적으로 pg_catalog를 지정한 형태만 허용한다.
     """
     real_name = _safe_call(token, "get_real_name")
     if not isinstance(real_name, str):

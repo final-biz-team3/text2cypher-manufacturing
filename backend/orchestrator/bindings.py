@@ -1,4 +1,4 @@
-"""Dependency result rows to downstream input binding conversion."""
+"""선행 결과 행을 후속 input binding으로 변환한다."""
 
 from typing import Any
 
@@ -7,7 +7,7 @@ def collect_input_bindings(
     bindings: dict[str, str],
     upstream_rows: dict[str, Any],
 ) -> dict[str, list[Any]]:
-    """Project prerequisite rows without changing their order or multiplicity."""
+    """선행 결과 행의 순서와 중복도를 바꾸지 않고 투영한다."""
     result: dict[str, list[Any]] = {}
     for input_name, source in bindings.items():
         dependency_id, field = source.split(".", 1)

@@ -1,4 +1,4 @@
-"""Cypher graph-pattern contracts that protect Neo4j traversal semantics."""
+"""Neo4j 탐색 의미를 보호하는 Cypher 그래프 패턴 계약을 테스트한다."""
 
 import pytest
 

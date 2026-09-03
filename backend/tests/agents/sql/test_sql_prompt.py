@@ -1,4 +1,4 @@
-"""PostgreSQL prompt provenance and structural contract tests."""
+"""PostgreSQL 프롬프트 출처와 구조 계약을 테스트한다."""
 
 import json
 

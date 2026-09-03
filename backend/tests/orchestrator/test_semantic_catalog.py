@@ -1,4 +1,4 @@
-"""Declarative manufacturing ontology and compiled catalog contracts."""
+"""선언형 제조 ontology와 컴파일된 catalog 계약을 테스트한다."""
 
 from copy import deepcopy
 from pathlib import Path

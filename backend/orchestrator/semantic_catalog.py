@@ -1,4 +1,4 @@
-"""Physical schemas and declarative manufacturing semantics compiled together."""
+"""physical schema와 선언형 제조 의미를 함께 컴파일한다."""
 
 from __future__ import annotations
 
@@ -255,12 +255,12 @@ class AliasSpec:
 
     @property
     def meaning(self) -> str:
-        """Compatibility name for callers while canonical is the source of truth."""
+        """canonical을 기준 정보로 유지하면서 호출부에 호환 이름을 제공한다."""
         return self.canonical
 
     @property
     def calculation_type(self) -> str:
-        """Compatibility name for the previous output catalog contract."""
+        """이전 output catalog 계약을 위한 호환 이름을 제공한다."""
         return self.kind
 
     @property
@@ -309,7 +309,7 @@ class QuerySemanticCatalog:
         return tuple(sorted(self.by_tool[source]))
 
     def describe(self, tool: str) -> str:
-        """Render physical ownership and semantic provenance for a model prompt."""
+        """모델 프롬프트용 physical ownership과 semantic provenance를 렌더링한다."""
         source = _tool_name(tool)
         lines: list[str] = []
         for alias, spec in sorted(self.by_tool[source].items()):
@@ -384,7 +384,7 @@ class QuerySemanticCatalog:
             raise ValueError(f"unsupported transform: {transform_id!r}") from exc
 
 
-# Transitional import name. The implementation and source of truth are semantic.
+# 이전 import 이름과의 호환성을 위한 별칭이다. 구현과 기준 정보는 semantic이다.
 OutputCatalog = QuerySemanticCatalog
 
 
@@ -742,7 +742,7 @@ def _compile_physical_aliases(
 def _transform_generator_rules(
     transform_id: str,
 ) -> dict[ToolName, tuple[str, ...]]:
-    """Render the allowlisted transform's execution semantics, never query syntax."""
+    """query syntax가 아닌 허용된 transform의 실행 의미만 렌더링한다."""
     if transform_id != "bom_shortage_v1":
         raise ValueError(f"unsupported transform: {transform_id!r}")
     return {
@@ -822,7 +822,7 @@ def _reject_alias_collision(
 
 
 def _physical_owners(spec: AliasSpec) -> set[str]:
-    """Return canonical physical owners behind a physical or role alias."""
+    """physical 또는 role alias의 canonical physical owner를 반환한다."""
     return {path.rsplit(".", 1)[0] for path in spec.schema_paths}
 
 

@@ -1,4 +1,4 @@
-"""Explicit entity extraction and database lookup contracts."""
+"""명시적 엔티티 추출과 DB 조회 계약을 테스트한다."""
 
 import psycopg
 import pytest
@@ -379,12 +379,11 @@ async def test_confirmed_entity_is_verified_and_deduplicated_with_extraction() -
 async def test_confirmed_entity_resolves_when_same_ambiguous_wording_is_resent() -> (
     None
 ):
-    """A client may resend the original question after the user picks a
-    candidate instead of rewriting the query with the resolved name, so the
-    same ambiguous wording gets extracted again. Pairing confirmed_entity with
-    the exact lookup text it answers (forName) lets this resolve without
-    re-raising EntityAmbiguousError, without relying on the confirmed row
-    still ranking within the small top-N shown to the user."""
+    """사용자가 후보를 선택한 뒤 client가 확정된 이름으로 질문을 다시 쓰지 않고
+    원래 질문을 재전송하면 같은 모호한 표현이 다시 추출될 수 있다. 이때
+    confirmed_entity와 그 엔티티가 답한 정확한 조회 텍스트(forName)를 연결하면,
+    확정 행이 사용자에게 보인 작은 top-N에 계속 포함되는지와 무관하게
+    EntityAmbiguousError를 다시 발생시키지 않고 해결할 수 있다."""
     confirmed = {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     client = MockOpenAIClient(
         _entity_response({"entityType": "product", "entityName": "터치링 자전거"})
@@ -405,13 +404,12 @@ async def test_confirmed_entity_resolves_when_same_ambiguous_wording_is_resent()
 
 
 async def test_confirmed_entity_does_not_hide_new_same_type_ambiguous_lookup() -> None:
-    """A confirmed entity from an earlier disambiguation must not silently
-    stand in for a different, still-unresolved lookup of the same type just
-    because it is textually similar. E.g. a confirmed "Mountain-100 Black, 38"
-    is a legitimate top similarity match for a brand new "Mountain-100"
-    mention too - resolving that new lookup via the stale confirmed entity
-    would silently answer with the wrong product instead of asking the user
-    to disambiguate "Mountain-100" (PR #55 review - josephuk77)."""
+    """이전 모호성 해결에서 확정한 엔티티가 텍스트상 비슷하다는 이유만으로 같은
+    타입의 다른 미해결 조회를 대신해서는 안 된다. 예를 들어 확정된
+    "Mountain-100 Black, 38"은 새로운 "Mountain-100" 언급에도 정상적인 상위
+    유사도 후보다. 오래된 확정 엔티티로 새 조회를 해결하면 사용자에게
+    "Mountain-100"의 구분을 요청하는 대신 잘못된 제품으로 조용히 답하게 된다.
+    PR #55 리뷰에서 확인한 문제다."""
     confirmed = {"productId": 100, "productName": "Mountain-100 Black, 38"}
     client = MockOpenAIClient(
         _entity_response({"entityType": "product", "entityName": "Mountain-100"})
@@ -426,8 +424,8 @@ async def test_confirmed_entity_does_not_hide_new_same_type_ambiguous_lookup() -
         },
     )
 
-    # confirmed_entity was the answer to an earlier, different ambiguity
-    # prompt ("Mountain 자전거"), not to this new "Mountain-100" mention.
+    # confirmed_entity는 이전의 다른 모호성 질문("Mountain 자전거")에 대한
+    # 답이었으며, 이번의 새로운 "Mountain-100" 언급에 대한 답이 아니다.
     with pytest.raises(EntityAmbiguousError) as exc_info:
         await _node(client, pool)(
             {

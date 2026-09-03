@@ -1,4 +1,4 @@
-"""Build a Neo4j prompt from graph policy and semantic provenance."""
+"""그래프 정책과 의미 출처 정보를 사용해 Neo4j 프롬프트를 구성한다."""
 
 from collections.abc import Sequence
 from typing import Any
@@ -29,7 +29,7 @@ _CYPHER_INSTRUCTIONS = """당신은 제조 데이터용 Neo4j Cypher 쿼리 생�
 
 
 def _build_graph_policy_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...]:
-    """Render only syntax, direction, snapshot, and path-integrity policy."""
+    """문법, 방향, snapshot 및 경로 무결성 정책만 렌더링한다."""
     return (
         "REQUIRES_COMPONENT 방향은 상위 조립품에서 하위 부품이다. 사용처는 "
         "역방향으로, 하위 부품은 정방향으로 탐색한다.",
@@ -84,7 +84,7 @@ def build_cypher_prompt(
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> list[dict[str, str]]:
-    """Return Cypher generation messages for one execution subquery."""
+    """실행 subquery 하나에 대한 Cypher 생성 메시지를 반환한다."""
     return build_prompt_messages(
         instructions=_CYPHER_INSTRUCTIONS,
         query=query,

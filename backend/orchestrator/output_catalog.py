@@ -1,4 +1,4 @@
-"""Compatibility exports for the declarative query semantic catalog."""
+"""선언형 query semantic catalog의 호환성 export를 제공한다."""
 
 from pathlib import Path
 
@@ -24,7 +24,7 @@ def build_output_catalog(
     sql_schema: SqlSchema,
     graph_schema: GraphSchema,
 ) -> QuerySemanticCatalog:
-    """Build the shared catalog from physical schemas and the package ontology."""
+    """physical schema와 패키지 ontology로 공유 catalog를 구성한다."""
     ontology = load_manufacturing_ontology(DEFAULT_ONTOLOGY_PATH)
     return build_query_semantic_catalog(sql_schema, graph_schema, ontology)
 

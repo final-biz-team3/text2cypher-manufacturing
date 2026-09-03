@@ -1,4 +1,4 @@
-"""Resolve explicitly extracted names through exact and similar database lookup."""
+"""명시적으로 추출한 이름을 DB의 정확·유사 조회로 식별한다."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ _SYSTEM_PROMPT = (
 
 
 class EntityExtractionError(ValueError):
-    """The model invoked the extraction boundary with an invalid call or shape."""
+    """모델이 잘못된 호출 또는 형식으로 추출 경계를 호출했음을 나타낸다."""
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class EntityResolutionSettings:
 
 
 def load_entity_resolution_settings() -> EntityResolutionSettings:
-    """Load and range-check operational lookup settings from the environment."""
+    """환경에서 조회 설정을 읽고 허용 범위를 검사한다."""
     raw_threshold = os.getenv(
         "ENTITY_SIMILARITY_THRESHOLD", str(_DEFAULT_SIMILARITY_THRESHOLD)
     )
@@ -198,11 +198,11 @@ def _is_ascii_word_character(value: str) -> bool:
 
 
 def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
-    """Return whole-token spans for a database name contained in the question.
+    """질문에 포함된 DB 이름의 완전한 token 범위를 반환한다.
 
-    Only ASCII word boundaries are enforced. This rejects a short English name
-    embedded in another English word while still allowing a Korean particle to
-    follow an English product or category name without whitespace.
+    ASCII 단어 경계만 강제한다. 다른 영단어 안에 포함된 짧은 영문 이름은
+    거부하면서도 영문 제품명이나 카테고리명 뒤에 한국어 조사가 공백 없이
+    붙는 경우는 허용한다.
     """
     if not name:
         return []
@@ -243,7 +243,7 @@ async def _find_entities_contained_in_query(
     query: str,
     pool: AsyncConnectionPool,
 ) -> list[_LiteralEntityMatch]:
-    """Find configured entity names that occur literally in the question."""
+    """질문에 문자열 그대로 등장하는 설정된 엔티티 이름을 찾는다."""
     async with pool.connection() as conn:
         cursor = await conn.execute(
             f"SELECT {config.id_column}, {config.name_column} "
@@ -270,10 +270,10 @@ async def _find_entities_contained_in_query(
 def _select_literal_entities(
     matches: list[_LiteralEntityMatch],
 ) -> tuple[list[dict[str, Any]], bool]:
-    """Choose longest non-overlapping literal names in question order.
+    """겹치지 않는 가장 긴 literal 이름을 질문 순서대로 선택한다.
 
-    A span shared by different entity types is left to the LLM because the
-    database text alone cannot determine its semantic role.
+    서로 다른 엔티티 타입이 같은 범위를 공유하면 DB 텍스트만으로 의미 역할을
+    결정할 수 없으므로 LLM의 판단에 맡긴다.
     """
     grouped: dict[tuple[int, int], list[_LiteralEntityMatch]] = {}
     for match in matches:
@@ -313,7 +313,7 @@ def _is_exact_type_alias(name: str, type_aliases: frozenset[str]) -> bool:
 
 
 def _strip_edge_type_alias(name: str, config: NamedEntityType) -> str:
-    """Strip only a whitespace-delimited exact type prefix or suffix."""
+    """공백으로 구분된 정확한 타입 접두사 또는 접미사만 제거한다."""
     normalized = name.strip()
     folded = normalized.casefold()
     for alias in sorted((*config.aliases, config.entity_type), key=len, reverse=True):
@@ -467,17 +467,16 @@ def _confirmed_entity_covers_lookup(
     entity_type: str,
     entity_name: str,
 ) -> bool:
-    """A confirmed entity satisfies a still-missing lookup only if it was
-    confirmed as the answer to this exact wording (entity_name) of this exact
-    type - not merely because it is textually similar to it.
+    """확정 엔티티가 같은 타입과 정확히 같은 표현(entity_name)에 대한 답으로
+    확정된 경우에만 아직 해결되지 않은 조회를 충족한다고 판단한다. 텍스트
+    유사도만으로는 충족하지 않는다.
 
-    Similarity alone cannot tell "the user re-picked this candidate for the
-    same ambiguity prompt" apart from "a genuinely different, new mention that
-    happens to look alike" - e.g. an already-confirmed "Mountain-100 Black, 38"
-    is a legitimate top similarity match for a brand new "Mountain-100" mention
-    too, so a confirmed entity could silently stand in for the wrong product
-    (PR #55 review - josephuk77). Requiring an exact match against the literal
-    lookup text the candidate was originally offered for closes that gap."""
+    유사도만으로는 사용자가 같은 모호성 질문에서 후보를 다시 선택한 경우와
+    우연히 비슷하게 생긴 새로운 대상을 언급한 경우를 구분할 수 없다. 예를 들어
+    이미 확정된 "Mountain-100 Black, 38"은 새로운 "Mountain-100" 언급에도
+    정상적인 상위 유사도 후보다. 이때 확정 엔티티가 잘못된 제품을 대신하지 않도록
+    후보를 제시할 때 사용한 원래 조회 문자열과 정확히 일치하도록 요구한다.
+    PR #55 리뷰에서 확인한 문제다."""
     return any(
         confirmed.for_name == entity_name
         and confirmed.config.entity_type == entity_type
@@ -498,7 +497,7 @@ def make_resolve_entity_node(
     *,
     settings: EntityResolutionSettings | None = None,
 ) -> Callable[[OrchestratorState], Any]:
-    """Create a resolver whose only semantic input is explicit extraction output."""
+    """명시적 추출 결과만 의미 입력으로 사용하는 resolver를 생성한다."""
     resolution_settings = settings or load_entity_resolution_settings()
     entity_types = list_resolvable_entity_types(graph_schema)
     allowed_types = frozenset(config.entity_type for config in entity_types)
@@ -587,11 +586,10 @@ def make_resolve_entity_node(
                 zip(missing_indices, candidate_groups, strict=True)
             )
 
-        # Every lookup has completed. Fail in question order so a successful claim
-        # can never hide another explicit unresolved claim - except one already
-        # settled by a previously confirmed entity (a client may resend the
-        # original wording alongside confirmed_entity instead of rewriting the
-        # query with the resolved name).
+        # 모든 조회가 끝났으면 질문 순서대로 실패를 판정한다. 성공한 조회가 다른
+        # 명시적 미해결 조회를 가리지 못하게 하되, 이전에 확정한 엔티티로 이미
+        # 해결된 조회는 제외한다. client는 확정된 이름으로 질문을 다시 쓰지 않고
+        # 원래 표현과 confirmed_entity를 함께 다시 보낼 수 있다.
         for index in missing_indices:
             entity_type, entity_name, config = lookups[index]
             if _confirmed_entity_covers_lookup(

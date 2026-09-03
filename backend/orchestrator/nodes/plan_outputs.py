@@ -1,4 +1,4 @@
-"""Lossless schema-aware output planning between routing and execution."""
+"""라우팅과 실행 사이에서 손실 없는 schema-aware output 계획을 생성한다."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ GRAPH 규칙:
 
 
 class OutputPlanningError(ValueError):
-    """Keep the failed model response for diagnostics."""
+    """진단을 위해 실패한 모델 응답을 보존한다."""
 
     def __init__(self, message: str, raw_response: str) -> None:
         super().__init__(message)
@@ -214,7 +214,7 @@ def compile_semantic_output_plan(
     *,
     tool: str,
 ) -> list[str]:
-    """Compile direct values and explicitly selected entity identity only."""
+    """직접 값과 명시적으로 선택한 엔티티 identity만 컴파일한다."""
     identity_outputs = [
         alias
         for role in plan.display_entities
@@ -228,7 +228,7 @@ def compile_graph_generator_rules(
     catalog: OutputCatalog,
     selected_outputs: Iterable[str],
 ) -> list[str]:
-    """Tell the generator how to resolve ordered paths without encoding role order."""
+    """role 순서를 고정하지 않고 ordered path 결정 방법을 generator에 전달한다."""
     selected_specs = [catalog.by_tool["graph"][alias] for alias in selected_outputs]
     if not any(spec.operation == "orderedPathProjection" for spec in selected_specs):
         return []
@@ -248,10 +248,10 @@ def finalize_required_outputs(
     *,
     tool: str,
 ) -> list[str]:
-    """Apply only execution-structural additions to a model's ordered selection.
+    """모델이 선택한 순서에 실행 구조상 필요한 항목만 추가한다.
 
-    This function deliberately receives no question or entity text. It cannot infer
-    business meaning, replace an alias, or manufacture an answer shape.
+    이 함수는 의도적으로 질문이나 엔티티 텍스트를 전달받지 않는다. 따라서 업무
+    의미를 추론하거나 alias를 교체하거나 답변 형태를 새로 만들 수 없다.
     """
     allowed = set(catalog.allowed_aliases(tool))
     for field_name, aliases in (
@@ -379,7 +379,7 @@ def make_plan_outputs_node(
     *,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
 ) -> Callable[[OrchestratorState], Any]:
-    """Create an output planner with at most one corrective retry per subquery."""
+    """subquery마다 최대 한 번 보정 재시도하는 output planner를 생성한다."""
 
     async def plan_outputs(state: OrchestratorState) -> dict[str, Any]:
         route_draft = state.get("routeDraft")

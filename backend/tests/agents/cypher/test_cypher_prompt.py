@@ -1,4 +1,4 @@
-"""Neo4j prompt provenance and graph-policy contract tests."""
+"""Neo4j 프롬프트 출처와 그래프 정책 계약을 테스트한다."""
 
 import json
 

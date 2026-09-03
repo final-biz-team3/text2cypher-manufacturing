@@ -1,4 +1,4 @@
-"""Build a PostgreSQL generation prompt from schema and semantic provenance."""
+"""스키마와 의미 출처 정보를 사용해 PostgreSQL 생성 프롬프트를 구성한다."""
 
 from collections.abc import Sequence
 from typing import Any
@@ -44,7 +44,7 @@ def build_sql_prompt(
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> list[dict[str, str]]:
-    """Return PostgreSQL generation messages for one execution subquery."""
+    """실행 subquery 하나에 대한 PostgreSQL 생성 메시지를 반환한다."""
     return build_prompt_messages(
         instructions=_SQL_INSTRUCTIONS,
         query=query,

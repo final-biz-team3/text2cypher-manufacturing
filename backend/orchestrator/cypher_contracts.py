@@ -1,4 +1,4 @@
-"""Generated Cypher structure contracts that are safe to check before execution."""
+"""실행 전에 안전하게 검사할 수 있는 생성 Cypher 구조 계약을 정의한다."""
 
 import re
 
@@ -26,7 +26,7 @@ _WITH_VARIABLE_PROJECTION = re.compile(
 
 
 def _find_clause_boundary(masked: str, start: int) -> int:
-    """Find the next clause keyword at the current syntactic nesting depth."""
+    """현재 구문 중첩 깊이에서 다음 절 키워드를 찾는다."""
     round_depth = 0
     square_depth = 0
     curly_depth = 0
@@ -60,7 +60,7 @@ def _find_clause_boundary(masked: str, start: int) -> int:
 
 
 def _match_pattern_regions(cypher: str) -> tuple[str, ...]:
-    """Return only the graph-pattern region of each MATCH clause."""
+    """각 MATCH 절에서 그래프 패턴 영역만 반환한다."""
     masked = mask_query_text(cypher)
     regions: list[str] = []
     for match in _MATCH_START.finditer(masked):
@@ -70,7 +70,7 @@ def _match_pattern_regions(cypher: str) -> tuple[str, ...]:
 
 
 def _split_top_level_patterns(region: str) -> tuple[str, ...]:
-    """Split comma-separated MATCH patterns without splitting nested expressions."""
+    """중첩 표현식은 보존하면서 쉼표로 구분된 MATCH 패턴을 나눈다."""
     patterns: list[str] = []
     start = 0
     round_depth = 0
@@ -99,7 +99,7 @@ def _split_top_level_patterns(region: str) -> tuple[str, ...]:
 
 
 def _top_level_clause_regions(masked: str) -> tuple[tuple[str, str], ...]:
-    """Return top-level clause names and their bodies in source order."""
+    """최상위 절 이름과 본문을 원문 순서대로 반환한다."""
     clauses: list[tuple[str, int, int]] = []
     round_depth = 0
     square_depth = 0
@@ -143,7 +143,7 @@ def _top_level_clause_regions(masked: str) -> tuple[tuple[str, str], ...]:
 def _project_relationship_lists(
     projection: str, relationship_lists: set[str]
 ) -> set[str]:
-    """Apply a WITH projection to the known relationship-list variables."""
+    """알려진 relationship list 변수에 WITH projection을 적용한다."""
     projection = re.sub(r"(?is)^\s*DISTINCT\b", "", projection, count=1)
     projected: set[str] = set()
     for item in _split_top_level_patterns(projection):
@@ -176,13 +176,12 @@ def _variable_bom_endpoints(pattern: str) -> tuple[str, str] | None:
 
 
 def has_coupled_independent_bom_paths(cypher: str) -> bool:
-    """Detect independent BOM traversals coupled in one Neo4j graph pattern.
+    """하나의 Neo4j 그래프 패턴에 결합된 독립 BOM 탐색을 찾는다.
 
-    Neo4j 5 applies relationship uniqueness across comma-separated path patterns in
-    one MATCH result. Two variable-length BOM paths that converge on the same end
-    node (or fan out from the same start node) can therefore suppress valid rows
-    when the traversals share relationships. Chained paths, whose shared endpoint
-    is the end of one path and the start of the next, are intentionally allowed.
+    Neo4j 5는 하나의 MATCH 결과에서 쉼표로 구분된 경로 패턴 전체에 관계
+    유일성을 적용한다. 따라서 같은 끝 노드로 모이거나 같은 시작 노드에서
+    갈라지는 두 가변 길이 BOM 경로가 관계를 공유하면 정상 행이 누락될 수 있다.
+    한 경로의 끝점이 다음 경로의 시작점인 연쇄 경로는 의도적으로 허용한다.
     """
     for region in _match_pattern_regions(cypher):
         endpoints = [
@@ -200,11 +199,11 @@ def has_coupled_independent_bom_paths(cypher: str) -> bool:
 
 
 def has_relationship_list_used_as_path(cypher: str) -> bool:
-    """Detect a variable-length relationship list passed to a path-only function.
+    """가변 길이 relationship list를 Path 전용 함수에 전달한 경우를 찾는다.
 
-    In ``()-[rels:TYPE*]->()`` Neo4j binds ``rels`` to a relationship list, not a
-    Path. Functions such as relationships(), nodes(), and length() require the
-    full path variable created by ``path = ()-[:TYPE*]->()``.
+    ``()-[rels:TYPE*]->()``에서 Neo4j는 ``rels``를 Path가 아닌 relationship
+    list로 바인딩한다. relationships(), nodes(), length() 같은 함수에는
+    ``path = ()-[:TYPE*]->()`` 형태로 만든 전체 Path 변수가 필요하다.
     """
     masked = mask_query_text(cypher)
     relationship_lists: set[str] = set()

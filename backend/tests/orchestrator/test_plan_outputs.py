@@ -1,4 +1,4 @@
-"""Lossless output planning and structural finalization contracts."""
+"""손실 없는 output 계획과 구조적 마무리 계약을 테스트한다."""
 
 import asyncio
 from functools import lru_cache
