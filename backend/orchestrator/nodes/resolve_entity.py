@@ -269,6 +269,33 @@ def _normalize_confirmed_entities(confirmed_entity: Any) -> list[dict[str, Any]]
     return []
 
 
+@dataclass(frozen=True)
+class _ConfirmedEntity:
+    entity: dict[str, Any]
+    # 이 확정값이 어떤 모호함 질문(entity_name, 원문 그대로의 추출 이름)에
+    # 대한 응답인지 보여주는 상관관계 키. EntityAmbiguousError.lookup_name을
+    # 클라이언트가 그대로 되돌려보낸 값이다.
+    for_name: str
+    config: NamedEntityType
+
+
+def _parse_confirmed_entity(
+    raw: Any, entity_types: list[NamedEntityType]
+) -> _ConfirmedEntity | None:
+    """{"entity": {...}, "forName": "..."} 형태의 wire item을 검증한다.
+    entity 자체는 알려진 엔티티 타입의 id/name 필드 조합과 일치해야 하고,
+    forName은 비어있지 않은 문자열이어야 한다."""
+    if not isinstance(raw, dict) or set(raw) != {"entity", "forName"}:
+        return None
+    for_name = raw["forName"]
+    if not isinstance(for_name, str) or not for_name:
+        return None
+    config = _confirmed_entity_config(raw["entity"], entity_types)
+    if config is None:
+        return None
+    return _ConfirmedEntity(entity=raw["entity"], for_name=for_name, config=config)
+
+
 def _collapse_entities(
     entities: list[dict[str, Any]],
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
@@ -292,6 +319,29 @@ async def _confirmed_entity_exists(
         )
         row = await cursor.fetchone()
     return row is not None
+
+
+def _confirmed_entity_covers_lookup(
+    valid_confirmed: list[_ConfirmedEntity],
+    entity_type: str,
+    entity_name: str,
+) -> bool:
+    """A confirmed entity satisfies a still-missing lookup only if it was
+    confirmed as the answer to this exact wording (entity_name) of this exact
+    type - not merely because it is textually similar to it.
+
+    Similarity alone cannot tell "the user re-picked this candidate for the
+    same ambiguity prompt" apart from "a genuinely different, new mention that
+    happens to look alike" - e.g. an already-confirmed "Mountain-100 Black, 38"
+    is a legitimate top similarity match for a brand new "Mountain-100" mention
+    too, so a confirmed entity could silently stand in for the wrong product
+    (PR #55 review - josephuk77). Requiring an exact match against the literal
+    lookup text the candidate was originally offered for closes that gap."""
+    return any(
+        confirmed.for_name == entity_name
+        and confirmed.config.entity_type == entity_type
+        for confirmed in valid_confirmed
+    )
 
 
 def _append_unique(target: list[dict[str, Any]], values: list[dict[str, Any]]) -> None:
@@ -322,16 +372,17 @@ def make_resolve_entity_node(
     extract_tool = _build_extract_entity_tool(entity_types)
 
     async def resolve_entity(state: OrchestratorState) -> dict[str, Any]:
-        valid_confirmed: list[dict[str, Any]] = []
-        for candidate in _normalize_confirmed_entities(state.get("confirmed_entity")):
-            config = _confirmed_entity_config(candidate, entity_types)
-            if config is not None and await _confirmed_entity_exists(
-                candidate, config, pool
+        valid_confirmed: list[_ConfirmedEntity] = []
+        for raw in _normalize_confirmed_entities(state.get("confirmed_entity")):
+            parsed = _parse_confirmed_entity(raw, entity_types)
+            if parsed is not None and await _confirmed_entity_exists(
+                parsed.entity, parsed.config, pool
             ):
-                _append_unique(valid_confirmed, [candidate])
+                if not any(c.entity == parsed.entity for c in valid_confirmed):
+                    valid_confirmed.append(parsed)
             else:
                 logger.warning(
-                    "resolve_entity: invalid confirmed entity ignored: %r", candidate
+                    "resolve_entity: invalid confirmed entity ignored: %r", raw
                 )
 
         extractions = await _extract_entities(
@@ -348,7 +399,7 @@ def make_resolve_entity_node(
             lookups.append((entity_type, lookup_name, config))
 
         if not lookups:
-            result = _collapse_entities(valid_confirmed)
+            result = _collapse_entities([c.entity for c in valid_confirmed])
             logger.info("resolve_entity: query=%r -> entity=%s", state["query"], result)
             return {"entity": result}
 
@@ -376,9 +427,16 @@ def make_resolve_entity_node(
             )
 
         # Every lookup has completed. Fail in question order so a successful claim
-        # can never hide another explicit unresolved claim.
+        # can never hide another explicit unresolved claim - except one already
+        # settled by a previously confirmed entity (a client may resend the
+        # original wording alongside confirmed_entity instead of rewriting the
+        # query with the resolved name).
         for index in missing_indices:
-            entity_type, entity_name, _ = lookups[index]
+            entity_type, entity_name, config = lookups[index]
+            if _confirmed_entity_covers_lookup(
+                valid_confirmed, entity_type, entity_name
+            ):
+                continue
             item_candidates = candidates_by_index[index]
             if item_candidates:
                 logger.info(
@@ -387,7 +445,7 @@ def make_resolve_entity_node(
                     entity_name,
                     len(item_candidates),
                 )
-                raise EntityAmbiguousError(item_candidates)
+                raise EntityAmbiguousError(item_candidates, lookup_name=entity_name)
             logger.info(
                 "resolve_entity: type=%r name=%r -> not found",
                 entity_type,
@@ -395,7 +453,7 @@ def make_resolve_entity_node(
             )
             raise EntityNotFoundError(entity_name)
 
-        resolved = list(valid_confirmed)
+        resolved = [c.entity for c in valid_confirmed]
         _append_unique(
             resolved,
             [result for result in exact_results if result is not None],

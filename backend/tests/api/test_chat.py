@@ -103,8 +103,11 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
         ChatRequest(
             query="그 제품 정가 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
@@ -159,8 +162,11 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
         ChatRequest(
             query="그 제품 정가 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
@@ -229,8 +235,11 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
         ChatRequest(
             query="그 제품 정가 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
@@ -580,8 +589,11 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
         ChatRequest(
             query="정가와 등록일 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
