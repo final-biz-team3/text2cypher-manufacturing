@@ -7,7 +7,7 @@ from typing import Any
 
 import sqlparse
 from sqlparse import tokens as sql_tokens
-from sqlparse.sql import IdentifierList, Parenthesis, Statement
+from sqlparse.sql import Function, IdentifierList, Parenthesis, Statement
 
 from agents.sql.schema.models import SqlSchema
 from orchestrator.guards.result import GuardResult
@@ -39,6 +39,7 @@ _FORBIDDEN_FUNCTIONS = frozenset(
         "dblink_exec",
     }
 )
+_SAFE_FROM_FUNCTIONS = frozenset({"unnest"})
 
 
 def _is_forbidden_function(name: str) -> bool:
@@ -87,6 +88,38 @@ def _iter_table_candidates(token: Any) -> list[Any]:
     if isinstance(token, IdentifierList):
         return list(token.get_identifiers())
     return [token]
+
+
+def _safe_from_function(token: Any) -> str | None:
+    """Return an allowlisted set-returning function used as a FROM source.
+
+    A function-shaped column alias such as ``table t(id)`` must not turn the
+    underlying table into a function source, so the Function name must also be
+    the candidate's real relation name. Only the built-in unqualified form and
+    an explicit pg_catalog qualification are accepted.
+    """
+    real_name = getattr(token, "get_real_name", lambda: None)()
+    if not isinstance(real_name, str):
+        return None
+    functions = (
+        [token]
+        if isinstance(token, Function)
+        else [
+            child
+            for child in getattr(token, "tokens", [])
+            if isinstance(child, Function)
+        ]
+    )
+    for function in functions:
+        name = function.get_name()
+        if not isinstance(name, str) or name.casefold() != real_name.casefold():
+            continue
+        parent_name = getattr(token, "get_parent_name", lambda: None)()
+        if parent_name is not None and str(parent_name).casefold() != "pg_catalog":
+            return None
+        if name.casefold() in _SAFE_FROM_FUNCTIONS:
+            return name
+    return None
 
 
 def _iter_nested_select_parens(token: Any) -> list[Parenthesis]:
@@ -154,6 +187,8 @@ def _walk_for_tables(tokens: list[Any], cte_names: set[str], tables: set[str]) -
         if pending_from:
             pending_from = False
             for candidate in _iter_table_candidates(tok):
+                if _safe_from_function(candidate) is not None:
+                    continue
                 paren = _find_parenthesis(candidate)
                 if paren is not None:
                     if _walk_for_tables(paren.tokens, cte_names, tables):

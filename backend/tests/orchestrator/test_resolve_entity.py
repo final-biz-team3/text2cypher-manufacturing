@@ -4,10 +4,12 @@ import psycopg
 import pytest
 
 from agents.cypher.schema.models import GraphSchema
+from orchestrator.entity_types import list_resolvable_entity_types
 from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
 from orchestrator.nodes.resolve_entity import (
     EntityExtractionError,
     EntityResolutionSettings,
+    _build_extract_entity_tool,
     load_entity_resolution_settings,
     make_resolve_entity_node,
 )
@@ -15,7 +17,6 @@ from tests.mocks.openai import (
     MockOpenAIClient,
     make_no_tool_call_response,
     make_tool_call_response,
-    make_tool_calls_response,
 )
 from tests.mocks.postgres import MockAsyncPostgresPool
 
@@ -75,7 +76,37 @@ def _node(client: MockOpenAIClient, pool: MockAsyncPostgresPool):
     )
 
 
-async def test_no_tool_call_returns_none_without_raw_query_database_scan() -> None:
+def _entity_response(*entities: dict[str, str]):
+    return make_tool_call_response("extract_entities", {"entities": list(entities)})
+
+
+def test_entity_tool_collects_all_mentions_in_one_ordered_array() -> None:
+    tool = _build_extract_entity_tool(list_resolvable_entity_types(_graph_schema()))
+    function = tool["function"]
+    entities = function["parameters"]["properties"]["entities"]
+
+    assert function["name"] == "extract_entities"
+    assert entities["type"] == "array"
+    assert "minItems" not in entities
+    assert entities["items"]["required"] == ["entityType", "entityName"]
+
+
+async def test_empty_entity_array_returns_none_after_literal_lookup() -> None:
+    pool = MockAsyncPostgresPool(rows_by_name={})
+    client = MockOpenAIClient(_entity_response())
+
+    result = await _node(client, pool)({"query": "제품 수"})
+
+    assert result == {"entity": None}
+    assert pool.last_query is not None
+    assert "strpos(lower(" in pool.last_query[0]
+    assert "tool_choice" not in client.calls[0]
+    assert "일반 단어나 복수형처럼 보이더라도" not in (
+        client.calls[0]["messages"][0]["content"]
+    )
+
+
+async def test_no_tool_call_returns_none_after_literal_database_scan() -> None:
     client = MockOpenAIClient(make_no_tool_call_response())
     pool = MockAsyncPostgresPool(
         rows_by_name={"A Name": (1, "A Name"), "Long A Name": (2, "Long A Name")}
@@ -86,35 +117,130 @@ async def test_no_tool_call_returns_none_without_raw_query_database_scan() -> No
     )
 
     assert result == {"entity": None}
-    assert pool.last_query is None
+    assert pool.last_query is not None
+    assert "strpos(lower(" in pool.last_query[0]
+
+
+async def test_literal_database_name_resolves_without_llm_extraction() -> None:
+    client = MockOpenAIClient()
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        contained_rows_by_table_and_query={
+            ("production.productcategory", "Components 제품을 보여줘"): [
+                (3, "Components")
+            ]
+        },
+    )
+
+    result = await _node(client, pool)({"query": "Components 제품을 보여줘"})
+
+    assert result == {
+        "entity": {
+            "productCategoryId": 3,
+            "productCategoryName": "Components",
+        }
+    }
+    assert client.calls == []
+
+
+async def test_literal_lookup_prefers_longest_overlapping_database_name() -> None:
+    client = MockOpenAIClient()
+    query = "Touring-1000 Yellow, 54의 재고를 보여줘"
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        contained_rows_by_table_and_query={
+            ("production.product", query): [
+                (1, "Touring-1000 Yellow"),
+                (2, "Touring-1000 Yellow, 54"),
+            ]
+        },
+    )
+
+    result = await _node(client, pool)({"query": query})
+
+    assert result == {
+        "entity": {
+            "productId": 2,
+            "productName": "Touring-1000 Yellow, 54",
+        }
+    }
+    assert client.calls == []
+
+
+async def test_literal_entities_keep_question_order_across_types() -> None:
+    client = MockOpenAIClient()
+    query = "North Foundry가 Cinder Bolt에 공급하는 항목"
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        contained_rows_by_table_and_query={
+            ("production.product", query): [(11, "Cinder Bolt")],
+            ("purchasing.vendor", query): [(22, "North Foundry")],
+        },
+    )
+
+    result = await _node(client, pool)({"query": query})
+
+    assert result["entity"] == [
+        {"supplierId": 22, "supplierName": "North Foundry"},
+        {"productId": 11, "productName": "Cinder Bolt"},
+    ]
+    assert client.calls == []
+
+
+async def test_literal_lookup_does_not_match_inside_ascii_word() -> None:
+    query = "Components 제품을 보여줘"
+    client = MockOpenAIClient(make_no_tool_call_response())
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        contained_rows_by_table_and_query={
+            ("production.productcategory", query): [(3, "Component")]
+        },
+    )
+
+    assert await _node(client, pool)({"query": query}) == {"entity": None}
+    assert len(client.calls) == 1
+
+
+async def test_same_literal_in_multiple_types_defers_role_to_llm() -> None:
+    query = "Shared Name 공급사를 보여줘"
+    client = MockOpenAIClient(
+        _entity_response({"entityType": "supplier", "entityName": "Shared Name"})
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={
+            ("production.product", "Shared Name"): (81, "Shared Name"),
+            ("purchasing.vendor", "Shared Name"): (82, "Shared Name"),
+        },
+        contained_rows_by_table_and_query={
+            ("production.product", query): [(81, "Shared Name")],
+            ("purchasing.vendor", query): [(82, "Shared Name")],
+        },
+    )
+
+    result = await _node(client, pool)({"query": query})
+
+    assert result == {"entity": {"supplierId": 82, "supplierName": "Shared Name"}}
+    assert len(client.calls) == 1
 
 
 @pytest.mark.parametrize("name", ["제품", "product"])
 async def test_exact_schema_type_alias_is_ignored_as_generic(name: str) -> None:
     client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity", {"entityType": "product", "entityName": name}
-        )
+        _entity_response({"entityType": "product", "entityName": name})
     )
     pool = MockAsyncPostgresPool(rows_by_name={})
 
     assert await _node(client, pool)({"query": "제품 수"}) == {"entity": None}
-    assert pool.last_query is None
+    assert pool.last_query is not None
+    assert "strpos(lower(" in pool.last_query[0]
 
 
 async def test_whitespace_delimited_type_prefix_and_suffix_are_stripped() -> None:
     client = MockOpenAIClient(
-        make_tool_calls_response(
-            [
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "제품 Cinder Bolt"},
-                ),
-                (
-                    "extract_entity",
-                    {"entityType": "supplier", "entityName": "North Foundry 공급사"},
-                ),
-            ]
+        _entity_response(
+            {"entityType": "product", "entityName": "제품 Cinder Bolt"},
+            {"entityType": "supplier", "entityName": "North Foundry 공급사"},
         )
     )
     pool = MockAsyncPostgresPool(
@@ -136,21 +262,10 @@ async def test_two_exact_entities_keep_extraction_order_and_duplicates_are_remov
     None
 ):
     client = MockOpenAIClient(
-        make_tool_calls_response(
-            [
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "Short Name"},
-                ),
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "Short Name Extended"},
-                ),
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "Short Name"},
-                ),
-            ]
+        _entity_response(
+            {"entityType": "product", "entityName": "Short Name"},
+            {"entityType": "product", "entityName": "Short Name Extended"},
+            {"entityType": "product", "entityName": "Short Name"},
         )
     )
     pool = MockAsyncPostgresPool(
@@ -170,17 +285,9 @@ async def test_two_exact_entities_keep_extraction_order_and_duplicates_are_remov
 
 async def test_one_success_and_one_miss_fails_instead_of_partial_success() -> None:
     client = MockOpenAIClient(
-        make_tool_calls_response(
-            [
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "Known"},
-                ),
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "Absent"},
-                ),
-            ]
+        _entity_response(
+            {"entityType": "product", "entityName": "Known"},
+            {"entityType": "product", "entityName": "Absent"},
         )
     )
     pool = MockAsyncPostgresPool(rows_by_name={"Known": (41, "Known")})
@@ -192,17 +299,9 @@ async def test_one_success_and_one_miss_fails_instead_of_partial_success() -> No
 
 async def test_alias_fragments_are_explicit_claims_and_fail_lookup() -> None:
     client = MockOpenAIClient(
-        make_tool_calls_response(
-            [
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "완제"},
-                ),
-                (
-                    "extract_entity",
-                    {"entityType": "supplier", "entityName": "공급"},
-                ),
-            ]
+        _entity_response(
+            {"entityType": "product", "entityName": "완제"},
+            {"entityType": "supplier", "entityName": "공급"},
         )
     )
 
@@ -214,17 +313,9 @@ async def test_alias_fragments_are_explicit_claims_and_fail_lookup() -> None:
 
 async def test_success_and_similar_candidate_raises_ambiguous() -> None:
     client = MockOpenAIClient(
-        make_tool_calls_response(
-            [
-                (
-                    "extract_entity",
-                    {"entityType": "product", "entityName": "Known"},
-                ),
-                (
-                    "extract_entity",
-                    {"entityType": "supplier", "entityName": "Nort Foundry"},
-                ),
-            ]
+        _entity_response(
+            {"entityType": "product", "entityName": "Known"},
+            {"entityType": "supplier", "entityName": "Nort Foundry"},
         )
     )
     pool = MockAsyncPostgresPool(
@@ -249,10 +340,7 @@ async def test_confirmed_entity_does_not_hide_another_explicit_failure(
 ) -> None:
     confirmed = {"productId": 61, "productName": "Confirmed"}
     client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "supplier", "entityName": "Missing Foundry"},
-        )
+        _entity_response({"entityType": "supplier", "entityName": "Missing Foundry"})
     )
     pool = MockAsyncPostgresPool(
         rows_by_name={"Confirmed": (61, "Confirmed")},
@@ -274,10 +362,7 @@ async def test_confirmed_entity_does_not_hide_another_explicit_failure(
 async def test_confirmed_entity_is_verified_and_deduplicated_with_extraction() -> None:
     confirmed = {"productId": 71, "productName": "Confirmed"}
     client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "product", "entityName": "Confirmed"},
-        )
+        _entity_response({"entityType": "product", "entityName": "Confirmed"})
     )
     pool = MockAsyncPostgresPool(rows_by_name={"Confirmed": (71, "Confirmed")})
 
@@ -302,10 +387,7 @@ async def test_confirmed_entity_resolves_when_same_ambiguous_wording_is_resent()
     still ranking within the small top-N shown to the user."""
     confirmed = {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "product", "entityName": "터치링 자전거"},
-        )
+        _entity_response({"entityType": "product", "entityName": "터치링 자전거"})
     )
     pool = MockAsyncPostgresPool(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")},
@@ -332,10 +414,7 @@ async def test_confirmed_entity_does_not_hide_new_same_type_ambiguous_lookup() -
     to disambiguate "Mountain-100" (PR #55 review - josephuk77)."""
     confirmed = {"productId": 100, "productName": "Mountain-100 Black, 38"}
     client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "product", "entityName": "Mountain-100"},
-        )
+        _entity_response({"entityType": "product", "entityName": "Mountain-100"})
     )
     pool = MockAsyncPostgresPool(
         rows_by_name={"Mountain-100 Black, 38": (100, "Mountain-100 Black, 38")},
@@ -362,10 +441,7 @@ async def test_confirmed_entity_does_not_hide_new_same_type_ambiguous_lookup() -
 
 async def test_same_name_in_multiple_types_uses_only_extracted_type_table() -> None:
     client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "supplier", "entityName": "Shared Name"},
-        )
+        _entity_response({"entityType": "supplier", "entityName": "Shared Name"})
     )
     pool = MockAsyncPostgresPool(
         rows_by_name={},
@@ -383,9 +459,7 @@ async def test_same_name_in_multiple_types_uses_only_extracted_type_table() -> N
 
 
 async def test_malformed_and_unknown_tool_calls_are_extraction_failures() -> None:
-    malformed = make_tool_call_response(
-        "extract_entity", {"entityType": "product", "entityName": "Broken"}
-    )
+    malformed = _entity_response({"entityType": "product", "entityName": "Broken"})
     assert malformed.choices[0].message.tool_calls is not None
     malformed.choices[0].message.tool_calls[0].function.arguments = "{broken"
 
@@ -403,10 +477,7 @@ async def test_malformed_and_unknown_tool_calls_are_extraction_failures() -> Non
 
 async def test_pg_trgm_unavailable_becomes_not_found() -> None:
     client = MockOpenAIClient(
-        make_tool_call_response(
-            "extract_entity",
-            {"entityType": "product", "entityName": "Absent"},
-        )
+        _entity_response({"entityType": "product", "entityName": "Absent"})
     )
     pool = MockAsyncPostgresPool(
         rows_by_name={},

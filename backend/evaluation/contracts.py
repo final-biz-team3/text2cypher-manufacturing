@@ -2,6 +2,7 @@
 
 import math
 import re
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
 
@@ -23,7 +24,12 @@ _KOREAN_NUMBER_WORDS = {
 }
 
 
-def _question_matches(expected: str, actual: Any, source_question: str) -> bool:
+def _question_matches(
+    expected: str,
+    actual: Any,
+    source_question: str,
+    parameters: Mapping[str, Any],
+) -> bool:
     """Require a minimal deterministic lexical link to the expected intent."""
     if not isinstance(actual, str) or not actual.strip():
         return False
@@ -38,8 +44,17 @@ def _question_matches(expected: str, actual: Any, source_question: str) -> bool:
     if expected_text == actual_text:
         return True
 
+    # 이름에 포함된 숫자(예: 제품명 끝의 규격 58)는 resolver가 canonical ID로
+    # 치환해도 의미가 보존된다. 반면 productionQty, limit, 명시적 ID처럼 독립된
+    # 구조 파라미터는 subquery 책임에서 사라지면 안 된다.
+    parameter_numbers = {
+        number
+        for key, value in parameters.items()
+        if not key.casefold().endswith("name") and not isinstance(value, bool)
+        for number in re.findall(r"\d+", str(value))
+    }
     actual_numbers = set(re.findall(r"\d+", actual_text))
-    for number in set(re.findall(r"\d+", expected_text)):
+    for number in set(re.findall(r"\d+", expected_text)) & parameter_numbers:
         source_numbers = set(re.findall(r"\d+", normalize(source_question)))
         source_has_number = number in source_numbers or any(
             word in normalize(source_question)
@@ -150,7 +165,10 @@ def compare_execution_contract(
             ),
         }
         structural_checks["question"] = _question_matches(
-            expected.question, actual.get("question"), case.question
+            expected.question,
+            actual.get("question"),
+            case.question,
+            case.parameters,
         )
         step_checks.append(
             {

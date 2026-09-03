@@ -93,7 +93,7 @@ class MockAsyncPostgresPool:
                 table,
                 candidate_query,
             ), rows in self._contained_rows_by_table_and_query.items():
-                if candidate_query == source_query and f"FROM {table}" in query:
+                if candidate_query == source_query and f"FROM {table} " in query:
                     return _MockAsyncCursor(None, rows)
             return _MockAsyncCursor(None, [])
         if len(params) == 2:

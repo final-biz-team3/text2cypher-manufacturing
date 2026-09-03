@@ -25,10 +25,10 @@ _DEFAULT_CANDIDATE_LIMIT = 5
 
 _SYSTEM_PROMPT = (
     "사용자에게 답변하거나 추가 자료를 요청하지 않는다. 도구에 정의된 entity "
-    "종류 중 질문에 고유 이름이 명시된 경우에만 extract_entity를 호출한다. "
+    "종류 중 질문에 고유 이름이 명시된 경우에만 extract_entities를 호출한다. "
     "종류, 상태, 수량, 범위를 나타내는 일반 표현은 고유 이름이 아니므로 호출하지 "
     "않는다. 이름이 entity 종류 표현 없이 나타나도 조회 범위를 한정하면 추출한다. "
-    "질문에 서로 다른 고유 이름이 여러 개 있으면 각 이름마다 한 번 호출하고 질문에 "
+    "질문에 서로 다른 고유 이름이 여러 개 있으면 모두 entities 배열에 넣고 질문에 "
     "등장한 순서를 유지한다. 쉼표를 포함한 색상·크기·모델 표기는 이름의 일부로 "
     "그대로 유지한다. 숫자 ID만 있는 표현은 이름으로 추출하지 않는다."
 )
@@ -74,27 +74,42 @@ def _build_extract_entity_tool(entity_types: list[NamedEntityType]) -> dict[str,
     return {
         "type": "function",
         "function": {
-            "name": "extract_entity",
+            "name": "extract_entities",
             "strict": True,
             "description": (
-                "질문에서 특정 대상을 지칭하는 고유 이름과 종류를 추출한다. "
+                "질문에서 특정 대상을 지칭하는 모든 고유 이름과 종류를 "
+                "등장 순서대로 한 번에 추출한다. "
                 "특정 이름이 없으면 호출하지 않는다."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "entityType": {
-                        "type": "string",
-                        "enum": [entity.entity_type for entity in entity_types],
-                        "description": type_descriptions,
-                    },
-                    "entityName": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "질문에 등장한 고유 이름 문자열 그대로",
+                    "entities": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "entityType": {
+                                    "type": "string",
+                                    "enum": [
+                                        entity.entity_type for entity in entity_types
+                                    ],
+                                    "description": type_descriptions,
+                                },
+                                "entityName": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": (
+                                        "질문에 등장한 고유 이름 문자열 그대로"
+                                    ),
+                                },
+                            },
+                            "required": ["entityType", "entityName"],
+                            "additionalProperties": False,
+                        },
                     },
                 },
-                "required": ["entityType", "entityName"],
+                "required": ["entities"],
                 "additionalProperties": False,
             },
         },
@@ -122,7 +137,7 @@ async def _extract_entities(
 
     extractions: list[tuple[str, str]] = []
     for tool_call in tool_calls:
-        if tool_call.function.name != "extract_entity":
+        if tool_call.function.name != "extract_entities":
             raise EntityExtractionError(
                 f"unsupported entity extraction tool: {tool_call.function.name!r}"
             )
@@ -130,27 +145,38 @@ async def _extract_entities(
             arguments = json.loads(tool_call.function.arguments)
         except (json.JSONDecodeError, TypeError) as exc:
             raise EntityExtractionError(
-                "extract_entity arguments must be valid JSON"
+                "extract_entities arguments must be valid JSON"
             ) from exc
-        if not isinstance(arguments, dict) or set(arguments) != {
-            "entityType",
-            "entityName",
-        }:
-            raise EntityExtractionError(
-                "extract_entity arguments have an invalid shape"
-            )
-        entity_type = arguments["entityType"]
-        entity_name = arguments["entityName"]
         if (
-            not isinstance(entity_type, str)
-            or entity_type not in allowed_types
-            or not isinstance(entity_name, str)
-            or not entity_name.strip()
+            not isinstance(arguments, dict)
+            or set(arguments) != {"entities"}
+            or not isinstance(arguments["entities"], list)
         ):
-            raise EntityExtractionError("extract_entity arguments have invalid values")
-        extraction = (entity_type, entity_name.strip())
-        if extraction not in extractions:
-            extractions.append(extraction)
+            raise EntityExtractionError(
+                "extract_entities arguments have an invalid shape"
+            )
+        for item in arguments["entities"]:
+            if not isinstance(item, dict) or set(item) != {
+                "entityType",
+                "entityName",
+            }:
+                raise EntityExtractionError(
+                    "extract_entities items have an invalid shape"
+                )
+            entity_type = item["entityType"]
+            entity_name = item["entityName"]
+            if (
+                not isinstance(entity_type, str)
+                or entity_type not in allowed_types
+                or not isinstance(entity_name, str)
+                or not entity_name.strip()
+            ):
+                raise EntityExtractionError(
+                    "extract_entities arguments have invalid values"
+                )
+            extraction = (entity_type, entity_name.strip())
+            if extraction not in extractions:
+                extractions.append(extraction)
     return extractions
 
 
@@ -165,6 +191,121 @@ def _entity_type_config(
 
 def _normalized_label(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _is_ascii_word_character(value: str) -> bool:
+    return value.isascii() and (value.isalnum() or value == "_")
+
+
+def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
+    """Return whole-token spans for a database name contained in the question.
+
+    Only ASCII word boundaries are enforced. This rejects a short English name
+    embedded in another English word while still allowing a Korean particle to
+    follow an English product or category name without whitespace.
+    """
+    if not name:
+        return []
+    folded_query = query.casefold()
+    folded_name = name.casefold()
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    while True:
+        start = folded_query.find(folded_name, offset)
+        if start < 0:
+            return spans
+        end = start + len(folded_name)
+        starts_inside_word = (
+            start > 0
+            and _is_ascii_word_character(folded_name[0])
+            and _is_ascii_word_character(folded_query[start - 1])
+        )
+        ends_inside_word = (
+            end < len(folded_query)
+            and _is_ascii_word_character(folded_name[-1])
+            and _is_ascii_word_character(folded_query[end])
+        )
+        if not starts_inside_word and not ends_inside_word:
+            spans.append((start, end))
+        offset = start + 1
+
+
+@dataclass(frozen=True)
+class _LiteralEntityMatch:
+    start: int
+    end: int
+    config: NamedEntityType
+    entity: dict[str, Any]
+
+
+async def _find_entities_contained_in_query(
+    config: NamedEntityType,
+    query: str,
+    pool: AsyncConnectionPool,
+) -> list[_LiteralEntityMatch]:
+    """Find configured entity names that occur literally in the question."""
+    async with pool.connection() as conn:
+        cursor = await conn.execute(
+            f"SELECT {config.id_column}, {config.name_column} "
+            f"FROM {config.table} "
+            f"WHERE {config.name_column} IS NOT NULL "
+            f"AND {config.name_column} <> '' "
+            f"AND strpos(lower(%s), lower({config.name_column})) > 0",
+            (query,),
+        )
+        rows = await cursor.fetchall()
+
+    matches: list[_LiteralEntityMatch] = []
+    for identifier, name in rows:
+        if not isinstance(name, str):
+            continue
+        entity = {config.id_field: identifier, config.name_field: name}
+        matches.extend(
+            _LiteralEntityMatch(start, end, config, entity)
+            for start, end in _literal_name_spans(query, name)
+        )
+    return matches
+
+
+def _select_literal_entities(
+    matches: list[_LiteralEntityMatch],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Choose longest non-overlapping literal names in question order.
+
+    A span shared by different entity types is left to the LLM because the
+    database text alone cannot determine its semantic role.
+    """
+    grouped: dict[tuple[int, int], list[_LiteralEntityMatch]] = {}
+    for match in matches:
+        grouped.setdefault((match.start, match.end), []).append(match)
+
+    occupied: list[tuple[int, int]] = []
+    selected: list[_LiteralEntityMatch] = []
+    has_ambiguous_span = False
+    for (start, end), candidates in sorted(
+        grouped.items(),
+        key=lambda item: (-(item[0][1] - item[0][0]), item[0][0]),
+    ):
+        overlaps = any(
+            start < occupied_end and occupied_start < end
+            for occupied_start, occupied_end in occupied
+        )
+        if overlaps:
+            continue
+        occupied.append((start, end))
+        identities = {
+            (candidate.config.entity_type, tuple(candidate.entity.items()))
+            for candidate in candidates
+        }
+        if len(identities) != 1:
+            has_ambiguous_span = True
+            continue
+        selected.append(candidates[0])
+
+    selected.sort(key=lambda match: match.start)
+    entities: list[dict[str, Any]] = []
+    _append_unique(entities, [match.entity for match in selected])
+    return entities, has_ambiguous_span
 
 
 def _is_exact_type_alias(name: str, type_aliases: frozenset[str]) -> bool:
@@ -384,6 +525,26 @@ def make_resolve_entity_node(
                 logger.warning(
                     "resolve_entity: invalid confirmed entity ignored: %r", raw
                 )
+
+        literal_match_groups = await asyncio.gather(
+            *(
+                _find_entities_contained_in_query(config, state["query"], pool)
+                for config in entity_types
+            )
+        )
+        literal_entities, has_ambiguous_literal = _select_literal_entities(
+            [match for group in literal_match_groups for match in group]
+        )
+        if literal_entities and not has_ambiguous_literal:
+            resolved = [c.entity for c in valid_confirmed]
+            _append_unique(resolved, literal_entities)
+            result = _collapse_entities(resolved)
+            logger.info(
+                "resolve_entity: query=%r -> literal entity=%s",
+                state["query"],
+                result,
+            )
+            return {"entity": result}
 
         extractions = await _extract_entities(
             state["query"], openai_client, extract_tool, allowed_types

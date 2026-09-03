@@ -168,6 +168,42 @@ def test_route_question_does_not_invent_canonical_number_omitted_by_variant() ->
     assert result["splitPass"] is True
 
 
+def test_route_question_accepts_entity_id_instead_of_number_bearing_name() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    contract = manifest.contracts["RQ19"]
+    case = next(case for case in manifest.cases if case.case_id == "RB19-C")
+    actual = [item.planning_shape() for item in contract.subqueries]
+    actual[0][
+        "question"
+    ] = "제품 ID 680을 10개 생산할 때 필요한 BOM 경로와 공급업체를 조회한다."
+
+    result = compare_execution_contract(
+        contract,
+        case,
+        ["graph", "sql"],
+        actual,
+        {"type": "bom_shortage_v1", "productionQty": 10},
+    )
+
+    assert result["steps"][0]["checks"]["question"] is True
+    assert result["splitPass"] is True
+
+
+def test_route_question_still_requires_explicit_numeric_constraint() -> None:
+    manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
+    contract = manifest.contracts["RQ17"]
+    case = next(case for case in manifest.cases if case.case_id == "RQ17")
+    actual = [item.planning_shape() for item in contract.subqueries]
+    actual[0][
+        "question"
+    ] = "Road-650 Black, 58과 Mountain-100 Black, 38의 공통 부품을 조회한다."
+
+    result = compare_execution_contract(contract, case, ["graph"], actual)
+
+    assert result["steps"][0]["checks"]["question"] is False
+    assert result["splitPass"] is False
+
+
 def test_hybrid_output_contract_is_reported_separately_from_split() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
     contract = manifest.contracts["RQ18"]

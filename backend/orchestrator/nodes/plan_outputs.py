@@ -36,9 +36,10 @@ catalog에서 선택하세요.
   source-local path/depth 구조는 source responsibility와 catalog를 근거로 직접
   선택할 수 있습니다. 그 외에는 두 보조 문맥만으로 original question에 없는 표시
   필드, filter, grain, 계산 또는 관계 속성을 추가하지 않습니다.
-- displayEntities에는 결과 행에서 사람이 식별해야 하는 엔티티 역할을 넣습니다.
-  고정된 anchor라도 결과 관계의 한쪽 주체로 표시해야 하면 포함하고, 단지 검색
-  범위만 제한하며 결과 행의 의미에 참여하지 않는 filter entity는 제외합니다.
+- displayEntities에는 결과 행의 값·측정·집계·관계를 식별하는 엔티티 역할을
+  넣습니다. 특정 엔티티의 상세, 측정값 또는 그 엔티티별 행을 묻는다면 질문에서
+  고정된 anchor라도 결과 문맥과 grain을 식별하므로 포함합니다. 결과 행의 문맥이나
+  grain에 참여하지 않고 검색 범위만 제한하는 filter entity만 제외합니다.
 - 필터나 정렬에만 사용하는 필드는 결과로 요청된 경우에만 선택합니다.
 - alias의 source ownership을 바꾸거나 새 alias를 만들지 않습니다.
 - 같은 role이나 alias를 중복하지 않고 결과에 적합한 순서로 반환합니다.
@@ -75,33 +76,34 @@ SQL 규칙:
 _GRAPH_SYSTEM_RULES = """
 GRAPH 규칙:
 - requiredOutputs에는 질문이 직접 요구하는 physical scalar, aggregate, derived
-  value와 구조 증거(path, depth)를 선택합니다. displayEntities가 보완하는 entity
-  key와 label은 중복 선택하지 않습니다.
-- displayEntities의 순서는 질문의 의미 흐름을 보존합니다. 단일 탐색은 anchor에서
-  destination 순서이고, 복수 anchor 비교는 각 anchor 뒤에 공통 destination을 둡니다.
+  value와 구조 증거(path, depth)를 직접 선택합니다. displayEntities가 보완하는
+  entity key와 label은 중복 선택하지 않습니다.
+- displayEntities의 순서는 결과에서 엔티티를 표시할 순서일 뿐이며 ordered path
+  projection의 방향 계약이 아닙니다. 경로 방향은 original question의 탐색 의미와
+  graph schema의 관계 방향을 함께 보고 Cypher 생성 단계에서 결정합니다.
 - 전체 결과가 하나의 scalar 집계이면 displayEntities를 비울 수 있습니다.
 - requiredOutputs는 직접 값이 없으면 비울 수 있지만 requiredOutputs와
   displayEntities를 동시에 비우지는 않습니다.
 - compiler는 displayEntities에 catalog가 선언한 key와 label만 보완합니다.
-- GRAPH의 가변 길이 관계가 결과 의미에 포함되면 catalog의 operation을 근거로
-  필요한 depth와 ordered path projection을 requiredOutputs에 직접 선택합니다.
-  anchor와 destination 사이의 개별 경로가 결과 행을 구분하면 depth와 ordered
-  path IDs를 함께 선택하고, 경로를 보여 달라는 문맥이면 ordered path names도
-  선택합니다.
-  최대 탐색 깊이는 filter 범위이며 그 자체로 path 출력 요청이 아닙니다. 중간 노드
-  이름을 답으로 보여줘야 할 때만 name path를 선택합니다.
-- 여러 anchor의 교집합·비교처럼 결과 grain이 공통 destination인 경우에는 각
-  anchor의 minimum path length 같은 집계 구조를 선택하고, original question이
-  개별 경로 자체를 요구하지 않으면 ordered path projection을 추가하지 않습니다.
-- role alias는 물리 MATCH 방향이 아니라 질문의 의미 역할을 따릅니다. "이 부품을
-  사용하는 완제품"처럼 역방향으로 탐색하더라도 시작 부품은 component이고 도착
-  완제품은 finishedProduct입니다. rootProduct는 조립품의 하위 구성을 펼칠 때의
-  의미상 루트에만 사용합니다.
+- 가변 길이 관계로 연결된 anchor와 destination을 함께 반환하면, 원문이 서로 다른
+  endpoint만으로 축약하라고 명시하지 않는 한 서로 다른 전체 경로가 결과 행을
+  구분하는 path-preserving traversal입니다. 짧은 endpoint 목록 표현이어도 개별
+  경로의 provenance와 cardinality를 보존하도록 depth와 ordered ID path를
+  requiredOutputs에 직접 선택합니다. 개별 경로의 노드 순서나 계층·트리의
+  조상-자손 구조가 사람이 읽는 결과 표현의 일부이면 ordered name path도
+  선택합니다. endpoint 목록만 요구하면 name path는 추가하지 않습니다. 최대 탐색
+  깊이는 filter 범위이므로 그 자체를 path 출력 요청으로 해석하지 않습니다.
+- 둘 이상의 anchor가 같은 destination을 공유하는 교집합·비교 결과이고 결과 행이
+  공통 destination별로 축약되면, 각 anchor에서 destination까지의 minimum path
+  length를 각각 requiredOutputs에 직접 선택합니다. 질문이 개별 경로 자체를
+  요구하지 않으면 ordered path projection은 추가하지 않습니다.
+- 관계 경로를 결과 행으로 반환하면 고정 여부와 무관하게 그 경로 결과를
+  식별해야 하는 endpoint 역할을 displayEntities에 포함합니다.
+- 원문이 순서값 자체를 결과로 요구하면 ORDER BY 의미로만 처리하지 말고 catalog의
+  대응 physical scalar를 requiredOutputs에 포함합니다.
+- role alias는 물리 MATCH 방향이 아니라 catalog에 선언된 질문의 의미 역할을
+  따릅니다. 물리 관계와 방향은 Cypher 생성 단계가 graph schema에서 결정합니다.
 """
-
-_GRAPH_PATH_OPERATIONS = frozenset(
-    {"pathLength", "minimumPathLength", "orderedPathProjection"}
-)
 
 
 class OutputPlanningError(ValueError):
@@ -222,28 +224,19 @@ def compile_semantic_output_plan(
 
 
 def compile_graph_generator_rules(
-    plan: SemanticOutputPlan,
+    _plan: SemanticOutputPlan,
     catalog: OutputCatalog,
     selected_outputs: Iterable[str],
 ) -> list[str]:
-    """Preserve path role orientation without adding query-family recipes."""
+    """Tell the generator how to resolve ordered paths without encoding role order."""
     selected_specs = [catalog.by_tool["graph"][alias] for alias in selected_outputs]
-    if not any(spec.operation in _GRAPH_PATH_OPERATIONS for spec in selected_specs):
+    if not any(spec.operation == "orderedPathProjection" for spec in selected_specs):
         return []
-    if not plan.display_entities:
-        return []
-
-    role_descriptions: list[str] = []
-    for role_id in plan.display_entities:
-        role = catalog.entity_roles[role_id]
-        projection = catalog.identity_projection(role_id, "graph")
-        role_descriptions.append(
-            f"{role_id} ({role.canonical}; keys={', '.join(projection.keys)})"
-        )
     return [
-        "Semantic entity role order from question anchor(s) toward destination is: "
-        + " -> ".join(role_descriptions)
-        + ". This is answer order and can differ from the physical MATCH path direction."
+        "Determine orderedPathProjection direction from the path origin and destination "
+        "expressed by the original question and source responsibility. displayEntities "
+        "order, required output order, and physical MATCH direction do not define this "
+        "semantic direction."
     ]
 
 
@@ -324,7 +317,7 @@ async def _select_output_plan(
     reasoning_effort: ReasoningEffort,
 ) -> SemanticOutputPlan:
     tool = route_subquery["tool"]
-    user_content = f"source: {tool}\n" f"original question: {original_question}\n"
+    user_content = f"source: {tool}\noriginal question: {original_question}\n"
     if planning_context is not None:
         context_label, context_text = planning_context
         user_content += f"{context_label}: {context_text}\n"
@@ -333,10 +326,8 @@ async def _select_output_plan(
         f"join keys: {json.dumps(route_subquery['joinKeys'])}\n"
         "entity role catalog:\n"
         f"{catalog.describe_entity_roles(tool)}\n"
-        "output catalog:\n"
-        f"{catalog.describe(tool)}\n"
-        "JSON:"
     )
+    user_content += f"output catalog:\n{catalog.describe(tool)}\nJSON:"
     source_rules = _GRAPH_SYSTEM_RULES if tool == "graph" else _SQL_SYSTEM_RULES
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT + source_rules},

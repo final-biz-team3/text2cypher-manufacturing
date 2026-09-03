@@ -31,15 +31,19 @@ def test_cypher_prompt_separates_graph_policy_from_semantic_context() -> None:
     assert "Semantic output catalog" in system
     assert "operation=minimumPathLength" in system
     assert "상위 조립품에서 하위 부품" in system
+    assert "finishedProductId 또는 finishedProductName" in system
+    assert "sellableFinishedGood = true predicate" in system
+    assert "rootProduct나 일반 product" in system
     assert "1..4" in system
     assert "date('2014-08-08')" in system
     assert "path node uniqueness" in system
     assert "독립적인 BOM 가변 경로는 각각 별도의 MATCH 절" in system
     assert "relationship uniqueness가 경로 사이에도 적용" in system
-    assert "destination grain으로 먼저 집계" in system
+    assert "destination grain으로 먼저 집계" not in system
     assert "nodes(path)는 MATCH에 작성한 시작점에서 끝점 순서" in system
     assert "projection에 reverse" in system
     assert "minimumPathLength" in system
+    assert "required output일 때만" in system
     assert "- 선택한 anchor를 유지한다." in system
     assert "- componentId" in system
     assert "- minDepth" in system

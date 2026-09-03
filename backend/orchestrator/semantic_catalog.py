@@ -34,6 +34,27 @@ ValueType = Literal["identity", "name", "scalar", "path"]
 PredicateOperator = Literal["equals"]
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
+_OPERATIONS_BY_KIND: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "aggregate": frozenset({"count", "countDistinct", "sum", "average"}),
+        "derived": frozenset({"difference", "clampedDifference"}),
+        "path": frozenset({"pathLength", "minimumPathLength", "orderedPathProjection"}),
+    }
+)
+_OPERATION_INPUT_ARITY: Mapping[str, tuple[int, int]] = MappingProxyType(
+    {
+        "count": (0, 1),
+        "countDistinct": (1, 1),
+        "sum": (1, 1),
+        "average": (1, 1),
+        "difference": (2, 2),
+        "clampedDifference": (2, 2),
+        "pathLength": (0, 0),
+        "minimumPathLength": (1, 1),
+        "orderedPathProjection": (1, 1),
+    }
+)
+
 
 class _SemanticModel(BaseModel):
     model_config = ConfigDict(
@@ -90,6 +111,12 @@ class IdentityProjectionDefinition(_SemanticModel):
         return self
 
 
+class TypedPredicate(_SemanticModel):
+    field: NonEmptyString
+    operator: PredicateOperator
+    value: bool | int | float | NonEmptyString
+
+
 class EntityRoleDefinition(_SemanticModel):
     role_id: NonEmptyString = Field(alias="roleId")
     canonical: NonEmptyString
@@ -104,12 +131,6 @@ class EntityRoleDefinition(_SemanticModel):
         if not self.identity_projection:
             raise ValueError("entity role must define at least one source projection")
         return self
-
-
-class TypedPredicate(_SemanticModel):
-    field: NonEmptyString
-    operator: PredicateOperator
-    value: bool | int | float | NonEmptyString
 
 
 class BusinessConceptDefinition(_SemanticModel):
@@ -133,6 +154,18 @@ class BusinessConceptDefinition(_SemanticModel):
             raise ValueError("concept grain aliases must be unique")
         if len(self.inputs) != len(set(self.inputs)):
             raise ValueError("concept inputs must be unique")
+        allowed_operations = _OPERATIONS_BY_KIND[self.kind]
+        if self.operation not in allowed_operations:
+            raise ValueError(
+                f"{self.kind} concept cannot use operation {self.operation!r}"
+            )
+        minimum, maximum = _OPERATION_INPUT_ARITY[self.operation]
+        if not minimum <= len(self.inputs) <= maximum:
+            expected = str(minimum) if minimum == maximum else f"{minimum}..{maximum}"
+            raise ValueError(
+                f"operation {self.operation!r} requires {expected} input(s), "
+                f"got {len(self.inputs)}"
+            )
         return self
 
 
@@ -720,6 +753,9 @@ def _transform_generator_rules(
             "supplier exists and return null supplier identity fields for that row.",
             "pathProductIds and quantityPerAssembly arrays must be aligned to the same "
             "BOM path direction and row.",
+            "quantityPerAssembly contains the raw per-parent-assembly relationship "
+            "values. Do not multiply them by productionQty or any requested production "
+            "amount; the composer applies productionQty exactly once.",
         ),
         "sql": (
             "The binding componentIds defines the complete lookup domain. Return one "
