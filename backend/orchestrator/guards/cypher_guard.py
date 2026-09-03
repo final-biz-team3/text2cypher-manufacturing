@@ -22,6 +22,15 @@ _UNQUOTED_NAME = re.compile(r"\w+")
 # 레이블/관계타입 콜론을 가짐) - 이 여는 중괄호 앞 단어로 둘을 구분한다.
 _SUBQUERY_BLOCK_OPENER = re.compile(r"(?i)\b(?:EXISTS|COUNT|COLLECT)\s*$")
 
+# EXISTS/COUNT/COLLECT는 Cypher 예약어가 아니라 변수명으로도 쓸 수 있어서,
+# "count {productName: count.name}"처럼 맵 프로젝션 대상 변수명이 우연히
+# 겹치면 위 판별만으로는 서브쿼리로 오인한다(리뷰로 발견된 오탐). 여는
+# 중괄호 바로 다음이 맵 프로젝션 필드 목록처럼 생겼으면(".field" 축약형
+# 또는 "field:"/"field,"/"field}" 형태) 그 판단을 다시 맵으로 뒤집는다.
+# "EXISTS { (p)-[:X]->(...) }"처럼 MATCH 없는 패턴 축약형 서브쿼리는 '('로
+# 시작해 이 패턴에 안 걸리므로 여전히 서브쿼리로 남는다(원래 버그 회귀 방지).
+_MAP_PROJECTION_FIELD_START = re.compile(r"\s*(?:\.\w+|\w+\s*[:,}])")
+
 
 def _extract_label_and_type_references(cypher: str) -> tuple[set[str], bool]:
     """':' 뒤에 오는 Label/RelationshipType 이름을 전부 모은다 - 노드 패턴
@@ -73,6 +82,10 @@ def _extract_label_and_type_references(cypher: str) -> tuple[set[str], bool]:
         if char == "{":
             prefix = cypher[:index].rstrip()
             is_subquery_block = bool(_SUBQUERY_BLOCK_OPENER.search(prefix))
+            if is_subquery_block and _MAP_PROJECTION_FIELD_START.match(
+                cypher[index + 1 :]
+            ):
+                is_subquery_block = False
             suppress_stack.append(not is_subquery_block)
             index += 1
             continue

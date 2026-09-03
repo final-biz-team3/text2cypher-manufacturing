@@ -263,3 +263,42 @@ def test_cypher_guard_blocks_unknown_label_in_exists_nested_inside_map_value() -
 
     assert result.allowed is False
     assert result.reason_code == "UNKNOWN_LABEL_OR_RELATIONSHIP"
+
+
+def test_cypher_guard_allows_map_projection_on_variable_named_count() -> None:
+    """count/exists/collect는 Cypher 예약어가 아니라 변수명으로도 쓸 수 있다.
+    "count {productName: count.name}"처럼 맵 프로젝션 대상 변수명이 우연히
+    겹치면 여는 중괄호 직전 단어만 보는 판별이 이걸 서브쿼리로 오인해
+    정상 쿼리를 차단했다 - 코드 리뷰(Minji6)로 발견된 오탐."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard("MATCH (count:Product) RETURN count {productName: count.name}")
+
+    assert result.allowed is True
+
+
+def test_cypher_guard_allows_map_projection_dot_shorthand_on_reserved_like_name() -> (
+    None
+):
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard("MATCH (count:Product) RETURN count {.name}")
+
+    assert result.allowed is True
+
+
+def test_cypher_guard_still_blocks_pattern_only_exists_shorthand_without_match() -> (
+    None
+):
+    """ "EXISTS { (p)-[:X]->(...) }"처럼 MATCH 없이 패턴만 쓰는 축약형
+    서브쿼리는 여는 중괄호 바로 다음이 '('로 시작해 맵 프로젝션 필드 목록
+    패턴에 안 걸린다 - 맵 프로젝션 오탐 수정이 이 형태의 서브쿼리를 다시
+    맵으로 오인해 원래 우회가 재발하지 않는지 확인하는 핵심 회귀 테스트."""
+    guard = make_cypher_guard(_SCHEMA)
+
+    result = guard(
+        "MATCH (p:Product) WHERE EXISTS { (p)-[:OWNS]->(s:Secret) } RETURN p"
+    )
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_LABEL_OR_RELATIONSHIP"
