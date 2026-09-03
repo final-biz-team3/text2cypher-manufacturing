@@ -144,18 +144,20 @@ async def chat(
             "query_failure": failure,
         }
     except RoutePlanError:
-        final_answer = generate_failure_answer(query_understanding_failure("routing"))
+        failure = query_understanding_failure("routing")
+        final_answer = generate_failure_answer(failure)
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
-            "query_failure": query_understanding_failure("routing"),
+            "query_failure": failure,
         }
     except OutputPlanningError:
-        final_answer = generate_failure_answer(query_understanding_failure("planning"))
+        failure = query_understanding_failure("planning")
+        final_answer = generate_failure_answer(failure)
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
-            "query_failure": query_understanding_failure("planning"),
+            "query_failure": failure,
         }
     # entity도 이론상 조회 결과에서 온 값이라(현재는 항상 int id/str name
     # 조합이라 실제로 걸린 적은 없지만) sql_result/graph_result만 따로

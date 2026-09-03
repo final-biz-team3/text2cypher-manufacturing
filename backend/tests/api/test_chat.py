@@ -53,7 +53,10 @@ _SQL_ROUTE = json.dumps(
 
 
 def _answering_client(*responses: MockChatCompletion) -> MockOpenAIClient:
-    return MockOpenAIClient(*responses, make_content_response(_ANSWER))
+    """classify_topic이 항상 첫 호출을 소비하므로 ON_TOPIC 응답을 자동으로 붙인다."""
+    return MockOpenAIClient(
+        make_content_response("ON_TOPIC"), *responses, make_content_response(_ANSWER)
+    )
 
 
 def _fake_request() -> Request:
@@ -69,7 +72,6 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
 ) -> None:
     """confirmed_entity를 검증·유지하고 SQL 생성·실행을 한 번 시도한다."""
     openai_client = _answering_client(
-        make_content_response("ON_TOPIC"),
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
         make_output_plan_response(required_outputs=["listPrice"]),
@@ -130,7 +132,6 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
 async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> None:
     """/chat 호출 후 로그인한 사용자 이름으로 대화기록이 저장된다."""
     openai_client = _answering_client(
-        make_content_response("ON_TOPIC"),
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
         make_output_plan_response(required_outputs=["listPrice"]),
@@ -202,7 +203,6 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
 ) -> None:
     """대화기록 저장이 실패해도 /chat 응답 자체는 정상 반환된다."""
     openai_client = _answering_client(
-        make_content_response("ON_TOPIC"),
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
         make_output_plan_response(required_outputs=["listPrice"]),
@@ -268,7 +268,6 @@ def test_chat_endpoint_accepts_request_with_valid_cookie(
     """유효한 access_token 쿠키가 있으면 /chat이 정상 응답한다."""
     monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-at-least-32-characters-long")
     openai_client = _answering_client(
-        make_content_response("ON_TOPIC"),
         make_no_tool_call_response(),
         make_content_response(_SQL_ROUTE),
         make_output_plan_response(required_outputs=["listPrice"]),
@@ -512,7 +511,6 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
     (jsonable_encoder는 Decimal은 알아서 처리하지만 neo4j.time.DateTime은
     __dict__를 그대로 덤프해버려 명시적 변환이 필요했다 - 실측으로 확인함.)"""
     openai_client = _answering_client(
-        make_content_response("ON_TOPIC"),
         make_no_tool_call_response(),
         make_content_response(
             json.dumps(

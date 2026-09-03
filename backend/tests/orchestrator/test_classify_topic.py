@@ -3,7 +3,11 @@
 from typing import Any
 
 from orchestrator.nodes.classify_topic import make_classify_topic_node
-from tests.mocks.openai import MockOpenAIClient, make_content_response
+from tests.mocks.openai import (
+    MockChatCompletion,
+    MockOpenAIClient,
+    make_content_response,
+)
 
 
 async def test_classify_topic_allows_domain_question() -> None:
@@ -56,6 +60,16 @@ class _FailingClient:
 async def test_classify_topic_fails_open_when_llm_call_raises() -> None:
     """판별 호출 자체가 실패해도(provider 오류·timeout) 조회를 막지 않는다."""
     node = make_classify_topic_node(_FailingClient())
+
+    result = await node({"query": "재고가 부족한 제품을 알려줘"})
+
+    assert result == {"query_failure": None}
+
+
+async def test_classify_topic_fails_open_when_choices_are_empty() -> None:
+    """content-filter 등으로 choices가 빈 200 응답이 와도 크래시 없이 통과시킨다."""
+    client = MockOpenAIClient(MockChatCompletion(choices=[]))
+    node = make_classify_topic_node(client)
 
     result = await node({"query": "재고가 부족한 제품을 알려줘"})
 

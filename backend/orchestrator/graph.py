@@ -84,10 +84,7 @@ def build_orchestrator_graph(
     graph.add_node("guard_request", cast(Any, make_guard_request_node()))
     graph.add_node(
         "classify_topic",
-        cast(
-            Any,
-            make_classify_topic_node(openai_client, reasoning_effort=reasoning_effort),
-        ),
+        cast(Any, make_classify_topic_node(openai_client)),
     )
     # LangGraph가 factory의 Callable 반환 타입을 추론하지 못해 cast한다
     # (async Callable의 런타임 시그니처는 StateGraph 노드 계약과 일치한다).
