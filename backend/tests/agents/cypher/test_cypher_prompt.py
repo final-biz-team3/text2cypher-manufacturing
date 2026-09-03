@@ -28,7 +28,7 @@ def test_cypher_prompt_separates_graph_policy_from_semantic_context() -> None:
     assert "Neo4j 5" in system
     assert "읽기 전용" in system
     assert "(:Product)-[:REQUIRES_COMPONENT]->(:Product)" in system
-    assert "Semantic output catalog" in system
+    assert "의미 출력 catalog" in system
     assert "operation=minimumPathLength" in system
     assert "상위 조립품에서 하위 부품" in system
     assert "finishedProductId 또는 finishedProductName" in system

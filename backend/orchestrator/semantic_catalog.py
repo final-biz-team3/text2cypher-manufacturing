@@ -747,21 +747,21 @@ def _transform_generator_rules(
         raise ValueError(f"unsupported transform: {transform_id!r}")
     return {
         "graph": (
-            "Preserve every valid BOM component path in anchor-to-destination order; "
-            "do not pre-filter components by purchase classification.",
-            "Supplier fan-out is optional: preserve a component path when no active "
-            "supplier exists and return null supplier identity fields for that row.",
-            "pathProductIds and quantityPerAssembly arrays must be aligned to the same "
-            "BOM path direction and row.",
-            "quantityPerAssembly contains the raw per-parent-assembly relationship "
-            "values. Do not multiply them by productionQty or any requested production "
-            "amount; the composer applies productionQty exactly once.",
+            "anchor에서 destination 순서로 유효한 모든 BOM 부품 경로를 보존하고, "
+            "purchase classification으로 부품을 미리 filter하지 않는다.",
+            "Supplier fan-out은 선택 사항이다. 활성 supplier가 없는 경우에도 부품 "
+            "경로를 보존하고 해당 행의 supplier identity 필드는 null로 반환한다.",
+            "pathProductIds와 quantityPerAssembly 배열은 같은 BOM 경로 방향과 행에 "
+            "맞춰 정렬한다.",
+            "quantityPerAssembly에는 parent assembly별 relationship 원본 값을 담는다. "
+            "productionQty나 요청 생산 수량을 곱하지 않는다. composer가 "
+            "productionQty를 정확히 한 번 적용한다.",
         ),
         "sql": (
-            "The binding componentIds defines the complete lookup domain. Return one "
-            "row per distinct component with makeFlag and actualStock; do not drop "
-            "internally manufactured components.",
-            "Required quantity and shortage are calculated by the composer, not SQL.",
+            "binding componentIds가 전체 조회 범위를 정의한다. 서로 다른 component마다 "
+            "makeFlag와 actualStock을 포함한 행 하나를 반환하고 내부 제조 부품을 "
+            "제외하지 않는다.",
+            "필요 수량과 부족량은 SQL이 아니라 composer가 계산한다.",
         ),
     }
 

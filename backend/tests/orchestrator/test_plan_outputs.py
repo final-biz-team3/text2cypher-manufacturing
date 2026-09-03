@@ -308,9 +308,9 @@ def test_graph_path_generator_rule_does_not_treat_display_order_as_direction() -
     assert len(rules) == 1
     assert "component" not in rules[0]
     assert "finishedProduct" not in rules[0]
-    assert "displayEntities order" in rules[0]
-    assert "required output order" in rules[0]
-    assert "physical MATCH direction" in rules[0]
+    assert "displayEntities 순서" in rules[0]
+    assert "required output 순서" in rules[0]
+    assert "물리 MATCH 방향" in rules[0]
 
 
 def test_graph_path_evidence_remains_a_direct_required_output() -> None:
@@ -723,5 +723,5 @@ async def test_formal_transform_is_model_free_and_keeps_question_text() -> None:
     assert all(item["question"] == question for item in result["subqueries"])
     assert all(item.get("generatorRules") for item in result["subqueries"])
     graph_rules = " ".join(result["subqueries"][0]["generatorRules"])
-    assert "raw per-parent-assembly" in graph_rules
-    assert "composer applies productionQty exactly once" in graph_rules
+    assert "parent assembly별 relationship 원본 값" in graph_rules
+    assert "composer가 productionQty를 정확히 한 번 적용" in graph_rules

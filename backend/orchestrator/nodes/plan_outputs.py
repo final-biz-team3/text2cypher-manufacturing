@@ -233,10 +233,9 @@ def compile_graph_generator_rules(
     if not any(spec.operation == "orderedPathProjection" for spec in selected_specs):
         return []
     return [
-        "Determine orderedPathProjection direction from the path origin and destination "
-        "expressed by the original question and source responsibility. displayEntities "
-        "order, required output order, and physical MATCH direction do not define this "
-        "semantic direction."
+        "orderedPathProjection 방향은 원 질문과 source responsibility에 표현된 경로 "
+        "origin 및 destination을 기준으로 결정한다. displayEntities 순서, required "
+        "output 순서 및 물리 MATCH 방향은 이 의미 방향을 결정하지 않는다."
     ]
 
 
