@@ -21,12 +21,15 @@ def test_entity_not_found_error_has_404_status() -> None:
 
 
 def test_entity_ambiguous_error_carries_candidates() -> None:
-    """후보가 여러 개면 candidates를 그대로 보존한다."""
-    error = EntityAmbiguousError(candidates=["Product A", "Product B"])
+    """후보와 상관관계 키(lookup_name)를 그대로 보존한다."""
+    error = EntityAmbiguousError(
+        candidates=["Product A", "Product B"], lookup_name="Prod"
+    )
 
     assert error.status_code == 200
     assert error.code == "ENTITY_AMBIGUOUS"
     assert error.candidates == ["Product A", "Product B"]
+    assert error.lookup_name == "Prod"
 
 
 def test_retry_exceeded_error_has_422_status() -> None:

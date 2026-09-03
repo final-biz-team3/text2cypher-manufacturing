@@ -262,7 +262,12 @@ async def test_confirmed_entity_does_not_hide_another_explicit_failure(
 
     expected = EntityAmbiguousError if similar else EntityNotFoundError
     with pytest.raises(expected):
-        await _node(client, pool)({"query": "follow-up", "confirmed_entity": confirmed})
+        await _node(client, pool)(
+            {
+                "query": "follow-up",
+                "confirmed_entity": {"entity": confirmed, "forName": "Confirmed"},
+            }
+        )
 
 
 async def test_confirmed_entity_is_verified_and_deduplicated_with_extraction() -> None:
@@ -276,7 +281,10 @@ async def test_confirmed_entity_is_verified_and_deduplicated_with_extraction() -
     pool = MockAsyncPostgresPool(rows_by_name={"Confirmed": (71, "Confirmed")})
 
     result = await _node(client, pool)(
-        {"query": "Confirmed", "confirmed_entity": confirmed}
+        {
+            "query": "Confirmed",
+            "confirmed_entity": {"entity": confirmed, "forName": "Confirmed"},
+        }
     )
 
     assert result == {"entity": confirmed}
@@ -287,10 +295,10 @@ async def test_confirmed_entity_resolves_when_same_ambiguous_wording_is_resent()
 ):
     """A client may resend the original question after the user picks a
     candidate instead of rewriting the query with the resolved name, so the
-    same ambiguous wording gets extracted again. This must not raise the same
-    EntityAmbiguousError again just because the previously confirmed row no
-    longer lands in the small top-N shown to the user (settings.candidate_limit
-    is 7 here) once more than that many rows tie or nearly tie."""
+    same ambiguous wording gets extracted again. Pairing confirmed_entity with
+    the exact lookup text it answers (forName) lets this resolve without
+    re-raising EntityAmbiguousError, without relying on the confirmed row
+    still ranking within the small top-N shown to the user."""
     confirmed = {"productId": 956, "productName": "Touring-1000 Yellow, 54"}
     client = MockOpenAIClient(
         make_tool_call_response(
@@ -298,18 +306,57 @@ async def test_confirmed_entity_resolves_when_same_ambiguous_wording_is_resent()
             {"entityType": "product", "entityName": "터치링 자전거"},
         )
     )
-    similar_rows = [(900 + i, f"Touring-{i}", 0.9 - i * 0.02) for i in range(7)]
-    similar_rows.append((956, "Touring-1000 Yellow, 54", 0.5))
     pool = MockAsyncPostgresPool(
         rows_by_name={"Touring-1000 Yellow, 54": (956, "Touring-1000 Yellow, 54")},
-        similar_rows_by_name={"터치링 자전거": similar_rows},
+        similar_rows_by_name={"터치링 자전거": [(956, "Touring-1000 Yellow, 54", 0.5)]},
     )
 
     result = await _node(client, pool)(
-        {"query": "터치링 자전거 정가 알려줘.", "confirmed_entity": confirmed}
+        {
+            "query": "터치링 자전거 정가 알려줘.",
+            "confirmed_entity": {"entity": confirmed, "forName": "터치링 자전거"},
+        }
     )
 
     assert result == {"entity": confirmed}
+
+
+async def test_confirmed_entity_does_not_hide_new_same_type_ambiguous_lookup() -> None:
+    """A confirmed entity from an earlier disambiguation must not silently
+    stand in for a different, still-unresolved lookup of the same type just
+    because it is textually similar. E.g. a confirmed "Mountain-100 Black, 38"
+    is a legitimate top similarity match for a brand new "Mountain-100"
+    mention too - resolving that new lookup via the stale confirmed entity
+    would silently answer with the wrong product instead of asking the user
+    to disambiguate "Mountain-100" (PR #55 review - josephuk77)."""
+    confirmed = {"productId": 100, "productName": "Mountain-100 Black, 38"}
+    client = MockOpenAIClient(
+        make_tool_call_response(
+            "extract_entity",
+            {"entityType": "product", "entityName": "Mountain-100"},
+        )
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={"Mountain-100 Black, 38": (100, "Mountain-100 Black, 38")},
+        similar_rows_by_name={
+            "Mountain-100": [
+                (100, "Mountain-100 Black, 38", 0.9),
+                (101, "Mountain-100 Silver, 42", 0.9),
+            ]
+        },
+    )
+
+    # confirmed_entity was the answer to an earlier, different ambiguity
+    # prompt ("Mountain 자전거"), not to this new "Mountain-100" mention.
+    with pytest.raises(EntityAmbiguousError) as exc_info:
+        await _node(client, pool)(
+            {
+                "query": "Mountain-100 재고 알려줘.",
+                "confirmed_entity": {"entity": confirmed, "forName": "Mountain 자전거"},
+            }
+        )
+
+    assert [c["id"] for c in exc_info.value.candidates] == [100, 101]
 
 
 async def test_same_name_in_multiple_types_uses_only_extracted_type_table() -> None:

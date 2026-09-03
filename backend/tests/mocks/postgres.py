@@ -75,28 +75,18 @@ class MockAsyncPostgresPool:
         self.last_query = (query, params)
         if not params:
             return _MockAsyncCursor(None, [])
-        if "similarity(" in query and "LIMIT" in query:
+        if "similarity(" in query:
             if self._similarity_error is not None:
                 raise self._similarity_error
             name = params[0]
             rows = self._similar_rows_by_name.get(name, [])
+            # 실제 SQL의 LIMIT %s(마지막 파라미터)를 그대로 흉내낸다 - 안
+            # 그러면 LIMIT을 넘겨받고도 mock이 목록을 안 자르는 통에 "top-N
+            # 밖으로 밀려난 후보" 관련 회귀를 테스트로 못 잡는다.
             limit = params[-1]
             if isinstance(limit, int) and not isinstance(limit, bool):
                 rows = rows[:limit]
             return _MockAsyncCursor(None, rows)
-        if "similarity(" in query:
-            # confirmed_entity가 이번 이름과도 여전히 유사한지 직접 확인하는
-            # 쿼리: params = (name, threshold, id, name_value). 위 top-N 조회와
-            # 달리 표시 상한(LIMIT)을 적용하지 않은 전체 유사도 관계를 봐야
-            # 하므로, 같은 similar_rows_by_name 데이터를 자르지 않고 검사한다.
-            if self._similarity_error is not None:
-                raise self._similarity_error
-            name, threshold, entity_id, entity_name = params
-            matches = any(
-                row[0] == entity_id and row[1] == entity_name and row[2] >= threshold
-                for row in self._similar_rows_by_name.get(name, [])
-            )
-            return _MockAsyncCursor((matches,), [])
         if "strpos(lower(" in query:
             source_query = params[0]
             for (

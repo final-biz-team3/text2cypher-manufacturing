@@ -110,6 +110,8 @@ async def app_error_handler(request: Request, exc: AppError):
     content = {"code": exc.code, "message": exc.message}
     if hasattr(exc, "candidates"):
         content["candidates"] = exc.candidates
+    if hasattr(exc, "lookup_name"):
+        content["lookupName"] = exc.lookup_name
     return JSONResponse(status_code=exc.status_code, content=content)
 
 

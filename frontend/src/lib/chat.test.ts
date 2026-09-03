@@ -30,13 +30,13 @@ describe('sendChatQuery', () => {
   it('sends confirmed_entity when provided', async () => {
     postMock.mockResolvedValueOnce({ data: { query: 'q' } })
 
-    await sendChatQuery('q', { productId: 680 })
+    await sendChatQuery('q', [{ entity: { productId: 680 }, forName: 'LL Road' }])
 
     expect(postMock).toHaveBeenCalledWith(
       '/chat',
       {
         query: 'q',
-        confirmed_entity: { productId: 680 },
+        confirmed_entity: [{ entity: { productId: 680 }, forName: 'LL Road' }],
       },
       { timeout: 60_000 },
     )
@@ -56,6 +56,7 @@ describe('sendChatQuery', () => {
             entity: { productId: 1 },
           },
         ],
+        lookupName: 'LL Road',
       },
     })
 
@@ -66,6 +67,7 @@ describe('sendChatQuery', () => {
     expect(clarification.message).toBe('비슷한 이름이 여러 개 있습니다.')
     expect(clarification.candidates).toHaveLength(1)
     expect(clarification.candidates[0].name).toBe('LL Road Frame')
+    expect(clarification.lookupName).toBe('LL Road')
   })
 
   it('throws ChatError with the server message on a hard error response', async () => {
