@@ -451,7 +451,7 @@ def make_resolve_entity_node(
                 entity_type,
                 entity_name,
             )
-            raise EntityNotFoundError()
+            raise EntityNotFoundError(entity_name)
 
         resolved = [c.entity for c in valid_confirmed]
         _append_unique(
