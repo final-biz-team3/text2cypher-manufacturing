@@ -14,6 +14,7 @@ from orchestrator.errors import EntityNotFoundError
 from orchestrator.graph import build_orchestrator_graph
 from orchestrator.nodes.generate_answer import generate_failure_answer
 from orchestrator.nodes.plan_outputs import OutputPlanningError
+from orchestrator.nodes.resolve_entity import EntityExtractionError
 from orchestrator.nodes.route_query import RoutePlanError
 from orchestrator.query_failures import (
     entity_not_found_failure,
@@ -126,38 +127,37 @@ async def chat(
                 "confirmed_entity": chat_request.confirmed_entity,
             }
         )
-    except EntityNotFoundError:
-        final_answer = await generate_failure_answer(
-            get_openai_client(),
-            query=chat_request.query,
-            failure=entity_not_found_failure(),
-        )
+    except EntityNotFoundError as exc:
+        failure = entity_not_found_failure(exc.entity_name)
+        final_answer = generate_failure_answer(failure)
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
-            "query_failure": entity_not_found_failure(),
+            "query_failure": failure,
+        }
+    except EntityExtractionError:
+        failure = query_understanding_failure("entity_resolution")
+        final_answer = generate_failure_answer(failure)
+        result = {
+            "query": chat_request.query,
+            "final_answer": final_answer,
+            "query_failure": failure,
         }
     except RoutePlanError:
-        final_answer = await generate_failure_answer(
-            get_openai_client(),
-            query=chat_request.query,
-            failure=query_understanding_failure("routing"),
-        )
+        failure = query_understanding_failure("routing")
+        final_answer = generate_failure_answer(failure)
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
-            "query_failure": query_understanding_failure("routing"),
+            "query_failure": failure,
         }
     except OutputPlanningError:
-        final_answer = await generate_failure_answer(
-            get_openai_client(),
-            query=chat_request.query,
-            failure=query_understanding_failure("planning"),
-        )
+        failure = query_understanding_failure("planning")
+        final_answer = generate_failure_answer(failure)
         result = {
             "query": chat_request.query,
             "final_answer": final_answer,
-            "query_failure": query_understanding_failure("planning"),
+            "query_failure": failure,
         }
     # entity도 이론상 조회 결과에서 온 값이라(현재는 항상 int id/str name
     # 조합이라 실제로 걸린 적은 없지만) sql_result/graph_result만 따로

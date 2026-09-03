@@ -93,6 +93,28 @@ def test_build_prompt_messages_includes_aligned_input_bindings() -> None:
     }
 
 
+def test_build_prompt_messages_keeps_original_query_authoritative_over_scope() -> None:
+    """HYBRID source scope는 실행 범위일 뿐 원질문의 의미를 덮어쓰지 않는다."""
+    messages = build_prompt_messages(
+        instructions="쿼리를 생성하세요.",
+        query="부품별 재고 부족량을 알려줘.",
+        source_scope="경로 정보와 depth를 포함해 영향 부품을 찾는다.",
+        entity={"productId": 7},
+        schema_text="Product {}",
+        required_outputs=["componentId"],
+    )
+
+    system = messages[0]["content"]
+    assert "The original query is authoritative" in system
+    assert "Source scope only narrows" in system
+    assert "Required output aliases" in system
+    assert json.loads(messages[1]["content"]) == {
+        "query": "부품별 재고 부족량을 알려줘.",
+        "entity": {"productId": 7},
+        "sourceScope": "경로 정보와 depth를 포함해 영향 부품을 찾는다.",
+    }
+
+
 def test_build_prompt_messages_serializes_database_binding_scalars() -> None:
     """Decimal과 표준/Neo4j 날짜 타입을 손실 없는 문자열로 전달한다."""
     messages = build_prompt_messages(

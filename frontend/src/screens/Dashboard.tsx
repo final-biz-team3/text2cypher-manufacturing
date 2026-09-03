@@ -16,16 +16,20 @@ import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { deleteHistory, fetchHistory } from '@/lib/history'
 import { formatCypherError } from '@/lib/formatCypherError'
 import { toDisplayResult } from '@/lib/displayResult'
-import type { AmbiguousCandidate, HistoryEntry } from '@/lib/schemas'
+import type { AmbiguousCandidate, ConfirmedEntity, HistoryEntry } from '@/lib/schemas'
 import type { RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
 // 모호한 이름이 여러 개면 한 번에 하나씩 확정되므로, 지금까지 확정한 후보들과
 // 원래 질문, 그리고 방금 받은 새 후보 목록을 함께 들고 있어야 한다
 interface PendingClarification {
   query: string
-  confirmedSoFar: AmbiguousCandidate['entity'][]
+  confirmedSoFar: ConfirmedEntity[]
   message: string
   candidates: AmbiguousCandidate[]
+  // 지금 candidates가 나온 원본 추출 이름 - 사용자가 후보를 고르면 이 값을
+  // ConfirmedEntity.forName에 실어 보내, 서버가 "이번 재확인"과 "이름이
+  // 우연히 비슷한 별개의 새 대상"을 구분할 수 있게 한다.
+  lookupName: string
 }
 
 const EXAMPLE_QUESTIONS: string[] = [
@@ -119,16 +123,13 @@ export function Dashboard() {
   // /chat을 호출하고 성공·모호함·에러 세 갈래로 화면 상태를 갱신하는 공통 로직.
   // confirmedSoFar는 직전 라운드까지 사용자가 확정한 후보들(모호한 이름이
   // 여러 개면 한 번에 하나씩 확정되므로 누적해서 다시 보낸다).
-  const runChatQuery = async (question: string, confirmedSoFar: AmbiguousCandidate['entity'][]) => {
+  const runChatQuery = async (question: string, confirmedSoFar: ConfirmedEntity[]) => {
     setActiveScreen('loading')
     try {
-      const confirmedEntity =
-        confirmedSoFar.length === 0
-          ? undefined
-          : confirmedSoFar.length === 1
-            ? confirmedSoFar[0]
-            : confirmedSoFar
-      const response = await sendChatQuery(question, confirmedEntity)
+      const response = await sendChatQuery(
+        question,
+        confirmedSoFar.length === 0 ? undefined : confirmedSoFar,
+      )
       setPendingClarification(null)
       setResult(toDisplayResult(response))
       setActiveScreen('success')
@@ -140,6 +141,7 @@ export function Dashboard() {
           confirmedSoFar,
           message: err.message,
           candidates: err.candidates,
+          lookupName: err.lookupName,
         })
         setActiveScreen('clarify')
         return
@@ -164,7 +166,7 @@ export function Dashboard() {
     setQueryText(candidate.name)
     await runChatQuery(pendingClarification.query, [
       ...pendingClarification.confirmedSoFar,
-      candidate.entity,
+      { entity: candidate.entity, forName: pendingClarification.lookupName },
     ])
   }
 

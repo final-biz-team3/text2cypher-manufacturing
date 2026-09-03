@@ -37,7 +37,7 @@ def test_manifest_covers_rq_and_hq_contracts_and_three_suites() -> None:
     }
     assert sum(case.suite == "canonical" for case in manifest.cases) == 20
     assert sum(case.suite == "robustness" for case in manifest.cases) == 60
-    assert sum(case.suite == "holdout" for case in manifest.cases) == 10
+    assert sum(case.suite == "complexity" for case in manifest.cases) == 10
     assert all(contract.subqueries for contract in manifest.contracts.values())
     assert (
         "active_vendor_count"
@@ -73,11 +73,11 @@ def test_canonical_rq_contracts_cases_and_gold_are_frozen() -> None:
     )
 
 
-def test_holdout_contracts_cases_and_gold_are_frozen() -> None:
+def test_complexity_contracts_cases_and_gold_are_frozen() -> None:
     manifest_path = PROJECT_ROOT / "queries" / "evaluation" / "manifest.json"
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     contracts = [item for item in raw["contracts"] if item["id"].startswith("HQ")]
-    cases = [item for item in raw["cases"] if item["suite"] == "holdout"]
+    cases = [item for item in raw["cases"] if item["suite"] == "complexity"]
     gold = [
         (
             f"queries/evaluation/{subquery['gold']}",
@@ -91,7 +91,7 @@ def test_holdout_contracts_cases_and_gold_are_frozen() -> None:
         "9a380efee9ef5ab1786a7e3abc9070673daf5fd39eadc3f9664c7194726e87d9"
     )
     assert _digest(cases) == (
-        "e2877a0411c91ad58e2f1827955e6ec3ed8ed67623e5cb42aa90a7f980f97747"
+        "493999f006f66d619f2aa1a096fdad019d9f132e866ee2648de4b315e4b59b06"
     )
     assert _digest(gold) == (
         "6b319499112956e7628f07800a545cf83ef5ae10b5ba1f8f4b546ece9e81d046"
@@ -127,7 +127,7 @@ def test_manifest_questions_are_nonempty_and_unique() -> None:
     assert not [question for question, count in Counter(questions).items() if count > 1]
 
 
-def test_holdout_route_and_support_distribution_is_locked() -> None:
+def test_complexity_route_and_support_distribution_is_locked() -> None:
     manifest = load_manifest(PROJECT_ROOT / "queries" / "evaluation" / "manifest.json")
     contracts = [manifest.contracts[f"HQ{number:02d}"] for number in range(1, 11)]
 
@@ -201,7 +201,7 @@ def test_gold_parameters_are_available_from_case_or_upstream_binding() -> None:
     primary_cases = {
         case.contract_id: case
         for case in manifest.cases
-        if case.suite in {"canonical", "holdout"}
+        if case.suite in {"canonical", "complexity"}
     }
 
     for contract_id, contract in manifest.contracts.items():

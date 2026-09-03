@@ -5,11 +5,14 @@ from collections.abc import Callable
 from typing import Any
 
 from orchestrator.composition import compose_results
+from orchestrator.semantic_catalog import QuerySemanticCatalog
 from orchestrator.state import OrchestratorState
 
 
 def make_compose_results_node(
-    *, row_limit: int | None = None
+    *,
+    row_limit: int | None = None,
+    semantic_catalog: QuerySemanticCatalog | None = None,
 ) -> Callable[[OrchestratorState], Any]:
     """SQL_ROW_LIMIT을 공유하면서 순수 조합기를 LangGraph 노드로 감싼다."""
     configured_limit = (
@@ -25,6 +28,7 @@ def make_compose_results_node(
             },
             row_limit=configured_limit,
             result_transform=state.get("resultTransform"),
+            semantic_catalog=semantic_catalog,
         )
         return {"composed_result": composed}
 

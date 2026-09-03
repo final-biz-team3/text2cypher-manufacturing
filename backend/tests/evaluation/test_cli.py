@@ -166,29 +166,29 @@ def test_suite_contract_and_route_filters_compose() -> None:
         ids={"RQ01"},
         route="SQL",
     )
-    holdout = cli._select_cases(
+    complexity = cli._select_cases(
         manifest.cases,
         manifest.contracts,
-        suite="holdout",
+        suite="complexity",
         ids=cli._parse_ids("HQ01-HQ10"),
         route="all",
     )
-    graph_holdout = cli._select_cases(
+    graph_complexity = cli._select_cases(
         manifest.cases,
         manifest.contracts,
-        suite="holdout",
+        suite="complexity",
         ids=None,
         route="GRAPH",
     )
 
     assert [case.case_id for case in robustness] == ["RB01-S", "RB01-C", "RB01-R"]
-    assert [case.case_id for case in holdout] == [
+    assert [case.case_id for case in complexity] == [
         f"HQ{number:02d}" for number in range(1, 11)
     ]
-    assert [case.case_id for case in graph_holdout] == ["HQ06", "HQ07"]
+    assert [case.case_id for case in graph_complexity] == ["HQ06", "HQ07"]
 
 
-def test_parser_exposes_holdout_without_changing_defaults() -> None:
+def test_parser_exposes_complexity_without_changing_defaults() -> None:
     parser = cli.build_parser()
 
     assert parser.parse_args([]).suite == "canonical"
@@ -197,7 +197,7 @@ def test_parser_exposes_holdout_without_changing_defaults() -> None:
     assert parser.parse_args([]).reasoning_effort == "medium"
     assert parser.parse_args(["--reasoning-effort", "high"]).reasoning_effort == "high"
     assert parser.parse_args(["--execution-mode", "source"]).execution_mode == "source"
-    assert parser.parse_args(["--suite", "holdout"]).suite == "holdout"
+    assert parser.parse_args(["--suite", "complexity"]).suite == "complexity"
     assert parser.parse_args([]).performance_baseline is None
 
 

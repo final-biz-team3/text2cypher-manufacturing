@@ -2,19 +2,33 @@
 
 from copy import deepcopy
 from decimal import Decimal
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agents.cypher.schema.loader import load_graph_schema
+from agents.sql.schema.loader import load_sql_schema
 from orchestrator.composition import compose_results
 from orchestrator.nodes.compose_results import make_compose_results_node
+from orchestrator.output_catalog import build_output_catalog
 from orchestrator.planning import (
-    BOM_SHORTAGE_GRAPH_OUTPUTS,
-    BOM_SHORTAGE_SQL_OUTPUTS,
     BomShortageTransform,
     Subquery,
 )
+from orchestrator.semantic_catalog import QuerySemanticCatalog
 from orchestrator.state import OrchestratorState
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+@lru_cache
+def _catalog() -> QuerySemanticCatalog:
+    return build_output_catalog(
+        load_sql_schema(PROJECT_ROOT / "schema" / "sql_schema.yaml"),
+        load_graph_schema(PROJECT_ROOT / "schema" / "graph_schema.yaml"),
+    )
 
 
 def _step(
@@ -547,13 +561,14 @@ async def test_compose_results_node_uses_injected_row_limit() -> None:
 
 
 def _shortage_steps() -> list[Subquery]:
+    outputs = _catalog().transform("bom_shortage_v1").required_outputs
     return [
         {
             "id": "graph_bom",
             "tool": "graph",
             "question": "BOM 경로",
             "dependsOn": [],
-            "requiredOutputs": sorted(BOM_SHORTAGE_GRAPH_OUTPUTS),
+            "requiredOutputs": list(outputs["graph"]),
             "joinKeys": ["componentId"],
         },
         {
@@ -561,7 +576,7 @@ def _shortage_steps() -> list[Subquery]:
             "tool": "sql",
             "question": "재고",
             "dependsOn": ["graph_bom"],
-            "requiredOutputs": sorted(BOM_SHORTAGE_SQL_OUTPUTS),
+            "requiredOutputs": list(outputs["sql"]),
             "joinKeys": ["componentId"],
             "inputBindings": {"componentIds": "graph_bom.componentId"},
         },
@@ -625,6 +640,7 @@ def test_bom_shortage_deduplicates_supplier_paths_and_sums_distinct_paths() -> N
         {"graph": _source(graph_rows), "sql": _source(sql_rows)},
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result == {
@@ -673,6 +689,7 @@ def test_bom_shortage_counts_duplicate_path_and_supplier_once() -> None:
         },
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["error"] is None
@@ -709,6 +726,7 @@ def test_bom_shortage_merges_supplier_fan_out_without_recounting_path() -> None:
         },
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["error"] is None
@@ -734,6 +752,7 @@ def test_bom_shortage_rejects_quantity_conflict_on_same_physical_path() -> None:
         },
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["rows"] == []
@@ -756,6 +775,7 @@ def test_bom_shortage_multiplies_before_normalizing_tiny_quantity() -> None:
         },
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["error"] is None
@@ -777,6 +797,7 @@ def test_bom_shortage_does_not_round_away_path_quantity_conflict() -> None:
         },
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["rows"] == []
@@ -799,6 +820,7 @@ def test_bom_shortage_sums_distinct_physical_paths() -> None:
         },
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["error"] is None
@@ -821,6 +843,7 @@ def test_bom_shortage_validates_all_rows_before_applying_row_limit() -> None:
         {"graph": _source(graph_rows), "sql": _source(sql_rows)},
         row_limit=1,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["rows"] == []
@@ -843,6 +866,7 @@ def test_bom_shortage_detects_path_conflict_after_output_row_limit() -> None:
         {"graph": _source(graph_rows), "sql": _source(sql_rows)},
         row_limit=1,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["rows"] == []
@@ -878,6 +902,7 @@ def test_bom_shortage_rejects_source_contract_conflicts(
         {"graph": _source(graph_rows), "sql": _source(sql_rows)},
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["rows"] == []
@@ -893,6 +918,7 @@ def test_bom_shortage_preserves_inconclusive_empty_source_contract() -> None:
         },
         row_limit=200,
         result_transform=_shortage_transform(),
+        semantic_catalog=_catalog(),
     )
 
     assert result["transform"] == "bom_shortage_v1"

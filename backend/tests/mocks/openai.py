@@ -101,6 +101,19 @@ def make_content_response(
     )
 
 
+def make_output_plan_response(
+    *,
+    required_outputs: list[str] | tuple[str, ...],
+    display_entities: list[str] | tuple[str, ...] = (),
+) -> MockChatCompletion:
+    """Build the additive semantic output-plan response used by the planner."""
+    payload: dict[str, Any] = {
+        "requiredOutputs": list(required_outputs),
+        "displayEntities": list(display_entities),
+    }
+    return make_content_response(json.dumps(payload, ensure_ascii=False))
+
+
 class _MockCompletions:
     def __init__(self, responses: list[MockChatCompletion]) -> None:
         self._responses = responses
