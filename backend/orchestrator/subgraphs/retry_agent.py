@@ -136,6 +136,8 @@ def make_retry_agent_subgraph(
         }
 
     async def tools(state: RetryAgentState) -> dict:
+        """검증 단계(가드 -> 계약)를 차례로 통과해야 실행까지 간다 - 어느
+        하나라도 실패 dict를 반환하면 그 자리에서 즉시 종료한다."""
         query_text = state["messages"][-1]["content"]
         attempts = state.get("attempts", [])
 
@@ -150,33 +152,40 @@ def make_retry_agent_subgraph(
                 "failure": safe_failure,
             }
 
-        if guard is not None:
+        def internal_validation_failure(exc: Exception, stage_label: str) -> dict:
+            """검증 단계에서 예상 못 한 예외가 났을 때 쓰는 공통 실패."""
+            logger.error(
+                "%s: %s 중 예외(재시도 대상 아님, 안전망): %s",
+                label,
+                stage_label,
+                exc,
+                exc_info=True,
+            )
+            return failure(
+                "쿼리 검증 중 오류가 발생했습니다.",
+                retryable=False,
+                safe_failure=make_query_failure(
+                    code="QUERY_VALIDATION_INTERNAL_ERROR",
+                    stage="validation",
+                    category="INTERNAL_QUERY_FAILURE",
+                    kind="internal",
+                    retryable=False,
+                    user_safe_reason="질의를 검증하는 과정에서 내부 오류가 발생했습니다.",
+                    suggested_action="잠시 후 다시 시도해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
+
+        async def check_guard() -> dict | None:
+            if guard is None:
+                return None
             try:
                 guard_result = guard(query_text)
             except Exception as exc:
                 # 가드 자체의 파싱 버그(예: 깊게 중첩된 쿼리에서 RecursionError)가
                 # 그래프 밖으로 raise되는 걸 막는 안전망 - execute() 주변의
                 # 미분류 예외 처리와 동일한 성격으로 다룬다.
-                logger.error(
-                    "%s: 쿼리 가드 실행 중 예외(재시도 대상 아님, 안전망): %s",
-                    label,
-                    exc,
-                    exc_info=True,
-                )
-                return failure(
-                    "쿼리 검증 중 오류가 발생했습니다.",
-                    retryable=False,
-                    safe_failure=make_query_failure(
-                        code="QUERY_VALIDATION_INTERNAL_ERROR",
-                        stage="validation",
-                        category="INTERNAL_QUERY_FAILURE",
-                        kind="internal",
-                        retryable=False,
-                        user_safe_reason="질의를 검증하는 과정에서 내부 오류가 발생했습니다.",
-                        suggested_action="잠시 후 다시 시도해 주세요.",
-                        failed_tool=tool_name,
-                    ),
-                )
+                return internal_validation_failure(exc, "쿼리 가드 실행")
 
             # 감사 로그 파일 쓰기(동기 I/O)가 이벤트 루프를 막지 않도록 스레드풀로 뺀다.
             # 감사 로그는 부가 기능이라 여기서 예외가 나도(디스크 풀/권한 문제 등)
@@ -192,207 +201,224 @@ def make_retry_agent_subgraph(
                 )
             except Exception as exc:
                 logger.error("%s: 감사 로그 기록 실패(무시하고 계속): %s", label, exc)
-            if not guard_result.allowed:
+            if guard_result.allowed:
+                return None
+            logger.warning(
+                "%s: 쿼리 가드 차단(%s): %s",
+                label,
+                guard_result.reason_code,
+                guard_result.reason_detail,
+            )
+            # 상세 사유(reason_detail)는 로그에만 남긴다 - attempts/error를
+            # 거쳐 API 응답(final_answer)까지 그대로 노출되면, 사용자가 재시도
+            # 3번 동안 실제 테이블/라벨명을 하나씩 유추해낼 수 있기 때문이다.
+            return failure(
+                f"쿼리가 안전 정책에 의해 차단되었습니다({guard_result.reason_code}).",
+                retryable=guard_result.reason_code not in _NON_RETRYABLE_GUARD_REASONS,
+                safe_failure=make_query_failure(
+                    code="QUERY_POLICY_BLOCKED",
+                    stage="validation",
+                    category="POLICY_BLOCKED",
+                    kind="user_correctable",
+                    retryable=False,
+                    user_safe_reason="생성된 조회가 데이터 안전 정책을 통과하지 못했습니다.",
+                    suggested_action=(
+                        "데이터를 변경하지 않는 조회 요청으로 질문을 바꿔 주세요."
+                    ),
+                    failed_tool=tool_name,
+                ),
+            )
+
+        async def check_contract() -> dict | None:
+            if query_contract_error is None:
+                return None
+            contract_error = query_contract_error(
+                query_text, state.get("required_outputs", [])
+            )
+            if contract_error is None:
+                return None
+            return failure(
+                contract_error,
+                retryable=True,
+                safe_failure=make_query_failure(
+                    code="QUERY_CONTRACT_FAILED",
+                    stage="validation",
+                    category="QUERY_INVALID",
+                    kind="user_correctable",
+                    retryable=True,
+                    user_safe_reason="질문에 필요한 결과 형식을 만족하는 조회를 만들지 못했습니다.",
+                    suggested_action="필요한 항목과 조회 조건을 더 구체적으로 지정해 주세요.",
+                    failed_tool=tool_name,
+                ),
+            )
+
+        async def execute_and_classify() -> dict:
+            """실행 -> 예외 3분류 -> 결과 정규화 -> 빈 결과 처리 -> 필수
+            출력 검증까지 마치고 다음 노드로 넘길 dict 하나를 반환한다."""
+            try:
+                executed = await execute(query_text)
+            except retryable_exceptions as exc:
                 logger.warning(
-                    "%s: 쿼리 가드 차단(%s): %s",
-                    label,
-                    guard_result.reason_code,
-                    guard_result.reason_detail,
+                    "%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True
                 )
-                # 상세 사유(reason_detail)는 로그에만 남긴다 - attempts/error를
-                # 거쳐 API 응답(final_answer)까지 그대로 노출되면, 사용자가 재시도
-                # 3번 동안 실제 테이블/라벨명을 하나씩 유추해낼 수 있기 때문이다.
+                is_timeout = (
+                    "timeout" in type(exc).__name__.lower()
+                    or "canceled" in type(exc).__name__.lower()
+                )
                 return failure(
-                    f"쿼리가 안전 정책에 의해 차단되었습니다({guard_result.reason_code}).",
-                    retryable=guard_result.reason_code
-                    not in _NON_RETRYABLE_GUARD_REASONS,
+                    str(exc),
+                    retryable=True,
                     safe_failure=make_query_failure(
-                        code="QUERY_POLICY_BLOCKED",
-                        stage="validation",
-                        category="POLICY_BLOCKED",
+                        code=(
+                            "QUERY_TIMEOUT" if is_timeout else "QUERY_EXECUTION_FAILED"
+                        ),
+                        stage="execution",
+                        category="TIMEOUT" if is_timeout else "QUERY_INVALID",
                         kind="user_correctable",
-                        retryable=False,
-                        user_safe_reason="생성된 조회가 데이터 안전 정책을 통과하지 못했습니다.",
+                        retryable=True,
+                        user_safe_reason=(
+                            "조회가 제한 시간 안에 완료되지 않았습니다."
+                            if is_timeout
+                            else "생성된 조회를 정상적으로 실행하지 못했습니다."
+                        ),
                         suggested_action=(
-                            "데이터를 변경하지 않는 조회 요청으로 질문을 바꿔 주세요."
+                            "조회 기간이나 대상 범위를 줄여 다시 질문해 주세요."
+                            if is_timeout
+                            else "조회 대상과 조건을 더 구체적으로 지정해 주세요."
                         ),
                         failed_tool=tool_name,
                     ),
                 )
-
-        if query_contract_error is not None:
-            contract_error = query_contract_error(
-                query_text, state.get("required_outputs", [])
-            )
-            if contract_error is not None:
+            except connection_exceptions as exc:
+                logger.error(
+                    "%s: 접속 오류(재시도 대상 아님): %s", label, exc, exc_info=True
+                )
                 return failure(
-                    contract_error,
-                    retryable=True,
+                    "접속 오류가 발생했습니다.",
+                    retryable=False,
                     safe_failure=make_query_failure(
-                        code="QUERY_CONTRACT_FAILED",
-                        stage="validation",
-                        category="QUERY_INVALID",
-                        kind="user_correctable",
+                        code="INFRASTRUCTURE_UNAVAILABLE",
+                        stage="execution",
+                        category="CONNECTION_ERROR",
+                        kind="infrastructure",
                         retryable=True,
-                        user_safe_reason="질문에 필요한 결과 형식을 만족하는 조회를 만들지 못했습니다.",
-                        suggested_action="필요한 항목과 조회 조건을 더 구체적으로 지정해 주세요.",
+                        user_safe_reason="조회 시스템에 일시적으로 연결할 수 없습니다.",
+                        suggested_action="잠시 후 다시 시도해 주세요.",
+                        failed_tool=tool_name,
+                    ),
+                )
+            except Exception as exc:
+                # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망
+                logger.error(
+                    "%s: 미분류 예외(재시도 대상 아님, 안전망): %s",
+                    label,
+                    exc,
+                    exc_info=True,
+                )
+                return failure(
+                    str(exc),
+                    retryable=False,
+                    safe_failure=make_query_failure(
+                        code="INTERNAL_QUERY_FAILURE",
+                        stage="execution",
+                        category="INTERNAL_QUERY_FAILURE",
+                        kind="internal",
+                        retryable=False,
+                        user_safe_reason="질의 실행 중 내부 오류가 발생했습니다.",
+                        suggested_action="잠시 후 다시 시도해 주세요.",
                         failed_tool=tool_name,
                     ),
                 )
 
-        try:
-            executed = await execute(query_text)
-        except retryable_exceptions as exc:
-            logger.warning("%s: 실행 오류(재시도 대상): %s", label, exc, exc_info=True)
-            is_timeout = (
-                "timeout" in type(exc).__name__.lower()
-                or "canceled" in type(exc).__name__.lower()
-            )
-            return failure(
-                str(exc),
-                retryable=True,
-                safe_failure=make_query_failure(
-                    code="QUERY_TIMEOUT" if is_timeout else "QUERY_EXECUTION_FAILED",
-                    stage="execution",
-                    category="TIMEOUT" if is_timeout else "QUERY_INVALID",
-                    kind="user_correctable",
-                    retryable=True,
-                    user_safe_reason=(
-                        "조회가 제한 시간 안에 완료되지 않았습니다."
-                        if is_timeout
-                        else "생성된 조회를 정상적으로 실행하지 못했습니다."
-                    ),
-                    suggested_action=(
-                        "조회 기간이나 대상 범위를 줄여 다시 질문해 주세요."
-                        if is_timeout
-                        else "조회 대상과 조건을 더 구체적으로 지정해 주세요."
-                    ),
-                    failed_tool=tool_name,
-                ),
-            )
-        except connection_exceptions as exc:
-            logger.error(
-                "%s: 접속 오류(재시도 대상 아님): %s", label, exc, exc_info=True
-            )
-            return failure(
-                "접속 오류가 발생했습니다.",
-                retryable=False,
-                safe_failure=make_query_failure(
-                    code="INFRASTRUCTURE_UNAVAILABLE",
-                    stage="execution",
-                    category="CONNECTION_ERROR",
-                    kind="infrastructure",
-                    retryable=True,
-                    user_safe_reason="조회 시스템에 일시적으로 연결할 수 없습니다.",
-                    suggested_action="잠시 후 다시 시도해 주세요.",
-                    failed_tool=tool_name,
-                ),
-            )
-        except Exception as exc:
-            # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망
-            logger.error(
-                "%s: 미분류 예외(재시도 대상 아님, 안전망): %s",
-                label,
-                exc,
-                exc_info=True,
-            )
-            return failure(
-                str(exc),
-                retryable=False,
-                safe_failure=make_query_failure(
-                    code="INTERNAL_QUERY_FAILURE",
-                    stage="execution",
-                    category="INTERNAL_QUERY_FAILURE",
-                    kind="internal",
-                    retryable=False,
-                    user_safe_reason="질의 실행 중 내부 오류가 발생했습니다.",
-                    suggested_action="잠시 후 다시 시도해 주세요.",
-                    failed_tool=tool_name,
-                ),
-            )
+            if (
+                isinstance(executed, dict)
+                and isinstance(executed.get("rows"), list)
+                and isinstance(executed.get("truncated"), bool)
+            ):
+                batch = QueryResultBatch(
+                    rows=executed["rows"],
+                    truncated=executed["truncated"],
+                )
+                result = batch["rows"]
+                truncated = batch["truncated"]
+            else:
+                # 주입형 테스트 executor와 기존 사용자 정의 executor는 list 반환도
+                # 계속 지원한다. production executor는 위 QueryResultBatch를 사용한다.
+                result = executed
+                truncated = False
 
-        if (
-            isinstance(executed, dict)
-            and isinstance(executed.get("rows"), list)
-            and isinstance(executed.get("truncated"), bool)
-        ):
-            batch = QueryResultBatch(
-                rows=executed["rows"],
-                truncated=executed["truncated"],
-            )
-            result = batch["rows"]
-            truncated = batch["truncated"]
-        else:
-            # 주입형 테스트 executor와 기존 사용자 정의 executor는 list 반환도
-            # 계속 지원한다. production executor는 위 QueryResultBatch를 사용한다.
-            result = executed
-            truncated = False
-
-        if not result:
-            new_attempts = [
-                *attempts,
-                {"query": query_text, "error": EMPTY_RESULT_ERROR},
-            ]
-            can_retry_empty = (
-                not state.get("empty_retried", False)
-                and state.get("attempt_count", 0) < MAX_ATTEMPTS
-            )
-            if can_retry_empty:
-                logger.info("%s: 결과 없음 - 1회 한정 재시도", label)
+            if not result:
+                new_attempts = [
+                    *attempts,
+                    {"query": query_text, "error": EMPTY_RESULT_ERROR},
+                ]
+                can_retry_empty = (
+                    not state.get("empty_retried", False)
+                    and state.get("attempt_count", 0) < MAX_ATTEMPTS
+                )
+                if can_retry_empty:
+                    logger.info("%s: 결과 없음 - 1회 한정 재시도", label)
+                    return {
+                        "error": EMPTY_RESULT_ERROR,
+                        "result": result,
+                        "attempts": new_attempts,
+                        "retryable": True,
+                        "empty_retried": True,
+                        "truncated": truncated,
+                        "failure": None,
+                    }
+                reason = _classify_empty_result(attempts)
+                logger.info("%s: 결과 없음으로 최종 수용 (%s)", label, reason)
                 return {
-                    "error": EMPTY_RESULT_ERROR,
                     "result": result,
+                    "error": None,
+                    "empty_reason": reason,
                     "attempts": new_attempts,
-                    "retryable": True,
-                    "empty_retried": True,
+                    "retryable": False,
                     "truncated": truncated,
                     "failure": None,
                 }
-            reason = _classify_empty_result(attempts)
-            logger.info("%s: 결과 없음으로 최종 수용 (%s)", label, reason)
+
+            required_outputs = state.get("required_outputs", [])
+            for row_index, row in enumerate(result):
+                missing = [
+                    alias
+                    for alias in required_outputs
+                    if not isinstance(row, dict) or alias not in row
+                ]
+                if missing:
+                    aliases = ", ".join(missing)
+                    return failure(
+                        f"결과의 {row_index}번 행에 필수 alias가 없습니다: {aliases}",
+                        retryable=True,
+                        safe_failure=make_query_failure(
+                            code="QUERY_CONTRACT_FAILED",
+                            stage="validation",
+                            category="QUERY_INVALID",
+                            kind="user_correctable",
+                            retryable=True,
+                            user_safe_reason="질문에 필요한 항목을 조회 결과에서 확인하지 못했습니다.",
+                            suggested_action="필요한 결과 항목을 명확하게 지정해 다시 질문해 주세요.",
+                            failed_tool=tool_name,
+                        ),
+                    )
+
             return {
                 "result": result,
                 "error": None,
-                "empty_reason": reason,
-                "attempts": new_attempts,
+                "empty_reason": None,
+                "attempts": [*attempts, {"query": query_text, "error": None}],
                 "retryable": False,
                 "truncated": truncated,
                 "failure": None,
             }
 
-        required_outputs = state.get("required_outputs", [])
-        for row_index, row in enumerate(result):
-            missing = [
-                alias
-                for alias in required_outputs
-                if not isinstance(row, dict) or alias not in row
-            ]
-            if missing:
-                aliases = ", ".join(missing)
-                return failure(
-                    f"결과의 {row_index}번 행에 필수 alias가 없습니다: {aliases}",
-                    retryable=True,
-                    safe_failure=make_query_failure(
-                        code="QUERY_CONTRACT_FAILED",
-                        stage="validation",
-                        category="QUERY_INVALID",
-                        kind="user_correctable",
-                        retryable=True,
-                        user_safe_reason="질문에 필요한 항목을 조회 결과에서 확인하지 못했습니다.",
-                        suggested_action="필요한 결과 항목을 명확하게 지정해 다시 질문해 주세요.",
-                        failed_tool=tool_name,
-                    ),
-                )
+        for check in (check_guard, check_contract):
+            outcome = await check()
+            if outcome is not None:
+                return outcome
 
-        return {
-            "result": result,
-            "error": None,
-            "empty_reason": None,
-            "attempts": [*attempts, {"query": query_text, "error": None}],
-            "retryable": False,
-            "truncated": truncated,
-            "failure": None,
-        }
+        return await execute_and_classify()
 
     def should_retry(state: RetryAgentState) -> str:
         if state["error"] is None:

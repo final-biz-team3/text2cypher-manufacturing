@@ -90,6 +90,12 @@ def _iter_table_candidates(token: Any) -> list[Any]:
     return [token]
 
 
+def _safe_call(obj: Any, method_name: str) -> Any:
+    """sqlparse Identifier에만 있는 get_real_name()/get_parent_name()을
+    그 메서드가 없는 토큰 타입에도 안전하게 호출한다(없으면 None)."""
+    return getattr(obj, method_name, lambda: None)()
+
+
 def _safe_from_function(token: Any) -> str | None:
     """Return an allowlisted set-returning function used as a FROM source.
 
@@ -98,7 +104,7 @@ def _safe_from_function(token: Any) -> str | None:
     the candidate's real relation name. Only the built-in unqualified form and
     an explicit pg_catalog qualification are accepted.
     """
-    real_name = getattr(token, "get_real_name", lambda: None)()
+    real_name = _safe_call(token, "get_real_name")
     if not isinstance(real_name, str):
         return None
     functions = (
@@ -114,7 +120,7 @@ def _safe_from_function(token: Any) -> str | None:
         name = function.get_name()
         if not isinstance(name, str) or name.casefold() != real_name.casefold():
             continue
-        parent_name = getattr(token, "get_parent_name", lambda: None)()
+        parent_name = _safe_call(token, "get_parent_name")
         if parent_name is not None and str(parent_name).casefold() != "pg_catalog":
             return None
         if name.casefold() in _SAFE_FROM_FUNCTIONS:
@@ -166,7 +172,7 @@ def _walk_for_tables(tokens: list[Any], cte_names: set[str], tables: set[str]) -
                 index += 1
             if index < len(non_ws):
                 for cte_ident in _iter_table_candidates(non_ws[index]):
-                    name = getattr(cte_ident, "get_real_name", lambda: None)()
+                    name = _safe_call(cte_ident, "get_real_name")
                     if isinstance(name, str) and name:
                         cte_names.add(name.lower())
                     paren = _find_parenthesis(cte_ident)
@@ -194,8 +200,8 @@ def _walk_for_tables(tokens: list[Any], cte_names: set[str], tables: set[str]) -
                     if _walk_for_tables(paren.tokens, cte_names, tables):
                         unresolved = True
                     continue
-                real_name = getattr(candidate, "get_real_name", lambda: None)()
-                parent_name = getattr(candidate, "get_parent_name", lambda: None)()
+                real_name = _safe_call(candidate, "get_real_name")
+                parent_name = _safe_call(candidate, "get_parent_name")
                 if not isinstance(real_name, str) or not real_name:
                     unresolved = True
                     continue

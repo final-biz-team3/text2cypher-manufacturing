@@ -33,11 +33,22 @@ def _format_decimal(value: Decimal) -> str:
 
 
 def normalize_numeric_literal(value: str) -> str:
-    """`1만`, `3억 5천만`을 DB 숫자 리터럴과 비교 가능한 값으로 바꾼다."""
+    """`1만`, `3억 5천만`을 DB 숫자 리터럴과 비교 가능한 값으로 바꾼다.
+
+    한글 단위가 없는 일반 숫자도 Decimal로 정규화해 trailing zero를
+    벗겨낸다 - PostgreSQL NUMERIC 컬럼의 SUM/AVG 결과는 Decimal("6373.00")로
+    돌아와 json.dumps(default=str)를 거치면 "6373.00" 문자열이 되는데, LLM
+    답변은 자연스럽게 "6373"으로 쓴다. 벗겨내지 않으면 두 표현이 다른 숫자로
+    취급돼 정상 답변이 "근거 없는 숫자"로 오탐되어 AnswerGenerationError(502)가
+    발생했다(실제로 재현됨: totalRejectedQty 집계 질의)."""
     compact = re.sub(r"\s+", "", value).replace(",", "")
     parts = list(_SCALED_PART.finditer(compact))
     if not parts or "".join(part.group(0) for part in parts) != compact:
-        return compact.removeprefix("+")
+        unscaled = compact.removeprefix("+")
+        try:
+            return _format_decimal(Decimal(unscaled))
+        except InvalidOperation:
+            return unscaled
     try:
         scaled = sum(
             (

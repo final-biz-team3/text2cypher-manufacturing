@@ -1,9 +1,11 @@
 """generate_answer의 LLM 호출·안전 분기 계약을 테스트한다."""
 
+import json
 from typing import Any, cast
 
 import pytest
 
+import orchestrator.guards.audit as audit_module
 from orchestrator.errors import AnswerGenerationError, QueryInfrastructureError
 from orchestrator.nodes.generate_answer import (
     generate_failure_answer,
@@ -65,7 +67,7 @@ async def test_generate_answer_uses_only_query_and_composed_result(
         }
     )
 
-    assert result == {"final_answer": "**재고는 10입니다.**"}
+    assert result == {"final_answer": "**재고는 10개입니다.**"}
     assert len(client.calls) == 1
     call = client.calls[0]
     assert call["model"] == "answer-model"
@@ -320,6 +322,9 @@ async def test_generate_answer_rejects_unknown_latin_identifier() -> None:
 async def test_generate_answer_rejects_unknown_korean_entity_name(
     unknown_name: str,
 ) -> None:
+    """ "가상제품"은 "제품"을 포함하지만 그 사실만으로 근거 있다고 보면
+    안 된다 - 부분 문자열 완화는 만들어낸 엔티티명까지 통과시켜 PR #53
+    리뷰에서 지적됐다. 정확 일치만 허용해야 이 두 이름을 잡는다."""
     client = MockOpenAIClient(
         make_content_response(f"{unknown_name}의 재고는 10입니다.")
     )
@@ -373,3 +378,128 @@ async def test_generate_answer_accepts_grounded_korean_scaled_number() -> None:
     )
 
     assert result["final_answer"] == "재고는 1만입니다."
+
+
+async def test_generate_answer_keeps_generic_counter_units() -> None:
+    """원본 데이터는 순수 JSON 숫자(예: 10)라 "10건"처럼 숫자+단위 조합이
+    문자 그대로 있을 수 없다. "개"/"건"은 수량의 종류(화폐·시간·비율 등)를
+    새로 주장하지 않는 일반 분류사라, 근거 대조 없이 그대로 남겨야
+    "재고는 10개입니다"가 어색하게 "재고는 10입니다"로 잘리지 않는다."""
+    client = MockOpenAIClient(make_content_response("재고는 10건입니다."))
+
+    result = await make_generate_answer_node(client)(
+        {"query": "재고를 알려줘", "composed_result": _composed_result()}
+    )
+
+    assert result["final_answer"] == "재고는 10건입니다."
+
+
+async def test_generate_answer_still_strips_ungrounded_specific_units() -> None:
+    """ "개"/"건"과 달리 "원"(화폐)처럼 수량의 종류를 새로 주장하는 단위는
+    여전히 원본과 대조해, 근거 없으면 단위를 뗀다."""
+    client = MockOpenAIClient(make_content_response("재고는 10원입니다."))
+
+    result = await make_generate_answer_node(client)(
+        {"query": "재고를 알려줘", "composed_result": _composed_result()}
+    )
+
+    assert result["final_answer"] == "재고는 10입니다."
+
+
+async def test_generate_answer_accepts_korean_only_particle_misread_as_scale_unit() -> (
+    None
+):
+    """ "73만 포함"은 730000(73만)이 아니라 "73개만"(only 73)이라는 뜻일 수
+    있다 - 한국어는 배율 단위 "만"과 "~만"(only) 조사가 표기상 구분되지
+    않는다. 73이 근거 데이터에 있으면 730000으로 오인식해 거부하지 않는다."""
+    client = MockOpenAIClient(
+        make_content_response("전체 141건 중 73만 포함되어 있습니다.")
+    )
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "재고를 알려줘",
+            "composed_result": _composed_result(
+                mode="single",
+                rows=[{"id": i, "stock": 10} for i in range(73)],
+                total_count=141,
+            ),
+        }
+    )
+
+    assert "73만 포함" in result["final_answer"]
+
+
+async def test_generate_answer_rejects_scale_claim_misread_as_only_particle() -> None:
+    """ "73만 포함"과 달리 "73만입니다"는 "포함" 문맥이 없어 배율 주장
+    (73만=730000)으로만 읽힌다. source에는 73만 있으므로 730000은 근거가
+    없는 값이라 거부해야 한다 - 문맥 확인 없이 조사로 해석하면 근거 없는
+    배율 값이 그대로 통과한다(PR #53 리뷰 코멘트)."""
+    client = MockOpenAIClient(make_content_response("재고는 73만입니다."))
+
+    with pytest.raises(AnswerGenerationError):
+        await make_generate_answer_node(client)(
+            {
+                "query": "재고를 알려줘",
+                "composed_result": _composed_result(
+                    mode="single", rows=[{"id": i, "stock": 10} for i in range(73)]
+                ),
+            }
+        )
+
+
+async def test_generate_answer_logs_accepted_validation_to_audit_trail(
+    tmp_path, monkeypatch
+) -> None:
+    """모니터링 지표(PR #53 리뷰 권장사항)를 위해 통과 건도 stage/outcome을
+    남겨야 사후에 오탐률(거부/전체)을 계산할 수 있다."""
+    log_path = tmp_path / "answer_validation_audit.jsonl"
+    monkeypatch.setenv("ANSWER_AUDIT_LOG_PATH", str(log_path))
+    monkeypatch.setenv("ANSWER_AUDIT_ALSO_CONSOLE", "false")
+    audit_module.reset_answer_audit_for_tests()
+    client = MockOpenAIClient(make_content_response("재고는 10입니다."))
+
+    await make_generate_answer_node(client)(
+        {"query": "재고를 알려줘", "composed_result": _composed_result()}
+    )
+
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0]) == {
+        "stage": "generate_answer",
+        "outcome": "accepted",
+        "reason": None,
+        "detail": None,
+    }
+
+
+async def test_generate_answer_logs_rejected_korean_entity_to_audit_trail(
+    tmp_path, monkeypatch
+) -> None:
+    """근거 없는 한국어 엔티티 거부 시 실패 사유와 실제 토큰을 감사 로그에
+    남겨야, 나중에 "가상제품"류 진짜 환각과 "안전재고"류 정당한 스키마
+    의역 오탐을 구분해 온톨로지 투자 여부를 데이터로 판단할 수 있다."""
+    log_path = tmp_path / "answer_validation_audit.jsonl"
+    monkeypatch.setenv("ANSWER_AUDIT_LOG_PATH", str(log_path))
+    monkeypatch.setenv("ANSWER_AUDIT_ALSO_CONSOLE", "false")
+    audit_module.reset_answer_audit_for_tests()
+    client = MockOpenAIClient(make_content_response("가상제품의 재고는 10입니다."))
+
+    with pytest.raises(AnswerGenerationError):
+        await make_generate_answer_node(client)(
+            {
+                "query": "재고를 알려줘",
+                "composed_result": _composed_result(
+                    rows=[{"productName": "프레임", "stock": 10}]
+                ),
+            }
+        )
+
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0]) == {
+        "stage": "generate_answer",
+        "outcome": "rejected",
+        "reason": "ungrounded_korean_entity",
+        "detail": ["가상제품"],
+    }

@@ -26,12 +26,32 @@ export function NaturalLanguageAnswerBox({ answer }: NaturalLanguageAnswerBoxPro
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            h1: ({ children }) => <h3 className="mb-2 mt-4 text-base font-semibold">{children}</h3>,
-            h2: ({ children }) => <h3 className="mb-2 mt-4 text-base font-semibold">{children}</h3>,
-            h3: ({ children }) => <h3 className="mb-1.5 mt-3 font-semibold">{children}</h3>,
+            h1: ({ children }) => (
+              <h3 className="mb-2 mt-4 border-b border-info/20 pb-1.5 text-base font-semibold text-text first:mt-0">
+                {children}
+              </h3>
+            ),
+            h2: ({ children }) => (
+              <h3 className="mb-2 mt-4 border-b border-info/20 pb-1.5 text-base font-semibold text-text first:mt-0">
+                {children}
+              </h3>
+            ),
+            h3: ({ children }) => (
+              <h3 className="mb-1.5 mt-3 font-semibold text-text">{children}</h3>
+            ),
             p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
-            ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
-            ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
+            strong: ({ children }) => (
+              <strong className="font-semibold text-info">{children}</strong>
+            ),
+            ul: ({ children }) => (
+              <ul className="my-2 list-disc space-y-1 pl-5 marker:text-info">{children}</ul>
+            ),
+            ol: ({ children }) => (
+              <ol className="my-2 list-decimal space-y-1 pl-5 marker:text-info marker:font-semibold">
+                {children}
+              </ol>
+            ),
+            hr: () => <hr className="my-3 border-border" />,
             table: ({ children }) => (
               <div className="my-3 max-w-full overflow-x-auto rounded-sm border border-border">
                 <table className="min-w-full border-collapse text-left text-xs">{children}</table>
