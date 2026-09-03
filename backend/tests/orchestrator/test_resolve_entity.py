@@ -185,8 +185,9 @@ async def test_one_success_and_one_miss_fails_instead_of_partial_success() -> No
     )
     pool = MockAsyncPostgresPool(rows_by_name={"Known": (41, "Known")})
 
-    with pytest.raises(EntityNotFoundError):
+    with pytest.raises(EntityNotFoundError) as exc_info:
         await _node(client, pool)({"query": "Known and Absent"})
+    assert exc_info.value.entity_name == "Absent"
 
 
 async def test_alias_fragments_are_explicit_claims_and_fail_lookup() -> None:
@@ -335,8 +336,9 @@ async def test_pg_trgm_unavailable_becomes_not_found() -> None:
         similarity_error=psycopg.errors.UndefinedFunction("missing similarity"),
     )
 
-    with pytest.raises(EntityNotFoundError):
+    with pytest.raises(EntityNotFoundError) as exc_info:
         await _node(client, pool)({"query": "Absent"})
+    assert exc_info.value.entity_name == "Absent"
     assert pool.rollback_called is True
 
 
