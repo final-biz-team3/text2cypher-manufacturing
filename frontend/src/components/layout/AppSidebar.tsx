@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react'
-import { LayoutDashboard, MessageSquareText } from 'lucide-react'
+import { LayoutDashboard, MessageSquareText, ShieldAlert } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { useAuthStore } from '@/store/useAuthStore'
 
 interface AppSidebarProps {
-  activeSection: 'dashboard' | 'chat'
+  activeSection: 'dashboard' | 'chat' | 'admin'
   onNavigateDashboard: () => void
   onNavigateChat: () => void
   children?: ReactNode
@@ -19,6 +21,11 @@ export function AppSidebar({
   onNavigateChat,
   children,
 }: AppSidebarProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const isAdmin = useAuthStore((s) => s.user?.role === 'admin')
+  const onAdminPage = location.pathname.startsWith('/admin')
+
   return (
     <aside className="flex w-16 shrink-0 flex-col overflow-hidden border-r border-border bg-panel sm:w-[240px]">
       <nav className="shrink-0 border-b border-border p-2 sm:p-3" aria-label="주요 화면">
@@ -48,6 +55,23 @@ export function AppSidebar({
               </button>
             )
           })}
+          {isAdmin ? (
+            <button
+              type="button"
+              title="관리자"
+              aria-current={onAdminPage ? 'page' : undefined}
+              aria-label="관리자"
+              onClick={() => navigate('/admin/query-failures')}
+              className={`flex h-10 w-full items-center justify-center gap-2.5 rounded-md px-2 text-[12.5px] font-semibold transition-colors sm:justify-start ${
+                onAdminPage
+                  ? 'bg-info text-white shadow-sm'
+                  : 'text-text-muted hover:bg-panel-2 hover:text-text'
+              }`}
+            >
+              <ShieldAlert className="size-4 shrink-0" aria-hidden="true" />
+              <span className="hidden sm:inline">관리자</span>
+            </button>
+          ) : null}
         </div>
       </nav>
       {children ? <div className="hidden min-h-0 flex-1 flex-col sm:flex">{children}</div> : null}
