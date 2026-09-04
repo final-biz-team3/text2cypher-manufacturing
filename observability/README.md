@@ -26,7 +26,7 @@ docker compose -f docker-compose.observability.yml down
 - Loki: <http://127.0.0.1:3100>
 - Alloy: <http://127.0.0.1:12345>
 
-Prometheus는 호스트에 공개된 `backend`의 `127.0.0.1:8001` 포트를 통해
+Prometheus는 호스트에 공개된 `backend`의 `127.0.0.1:8000` 포트를 통해
 `/internal/metrics`를 수집한다. Alloy는 Docker 소켓에서 이름이 `backend`인
 컨테이너의 표준 출력을 찾아 Loki로 전송한다. 따라서 애플리케이션 스택을 먼저
 실행해야 실제 메트릭과 로그가 표시된다.
