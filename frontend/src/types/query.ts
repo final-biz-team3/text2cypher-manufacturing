@@ -1,5 +1,7 @@
 // 자연어 질의 → Cypher 생성/실행 흐름에서 오가는 데이터 모델 정의
 
+import type { VisualizationSpec } from '@/lib/schemas'
+
 // 자가 수정(self-correction) 타임라인 한 단계(생성/실행 시도)
 export interface SelfCorrectionStep {
   id: string
@@ -33,6 +35,7 @@ export interface DisplayResult {
   graphEmptyReason: string | null
   sqlAttempts: RetryAttempt[]
   cypherAttempts: RetryAttempt[]
+  visualization: VisualizationSpec | null
 }
 
 export type NodeLabel =
