@@ -165,7 +165,7 @@ tables:
       locationid: {type: SMALLINT, primaryKey: false, nullable: false, aliases: []}
 
   production.scrapreason:
-    aliases: [폐기사유, 폐기 사유]
+    aliases: [폐기사유, 폐기 사유, 폐기이유, 폐기 이유]
     outputAliases:
       scrapreasonid: [scrapReasonId]
       name: [scrapReasonName]

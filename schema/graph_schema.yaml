@@ -84,7 +84,7 @@ nodes:
       syncRunId: {type: STRING, required: true, technical: true}
 
   ScrapReason:
-    aliases: [폐기 사유, 폐기사유]
+    aliases: [폐기 사유, 폐기사유, 폐기 이유, 폐기이유]
     uniqueKey: scrapReasonId
     constraintName: scrap_reason_id
     source: {schema: production, table: scrapreason}

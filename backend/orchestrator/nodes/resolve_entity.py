@@ -432,7 +432,16 @@ def _lookup_is_inside_selected_literal(
 
 
 def _is_exact_type_alias(name: str, type_aliases: frozenset[str]) -> bool:
-    return _normalized_label(name) in type_aliases
+    normalized = _normalized_label(name)
+    if normalized in type_aliases:
+        return True
+    if not normalized or any(
+        not (character.isspace() or "가" <= character <= "힣")
+        for character in normalized
+    ):
+        return False
+    compact = normalized.replace(" ", "")
+    return compact in {alias.replace(" ", "") for alias in type_aliases}
 
 
 def _strip_edge_type_alias(name: str, config: NamedEntityType) -> str:
@@ -663,6 +672,13 @@ def make_resolve_entity_node(
                 continue
             lookup_name = _strip_edge_type_alias(extracted_name, config)
             if not lookup_name or _is_exact_type_alias(lookup_name, type_aliases):
+                continue
+            if lookup_name.isdigit():
+                logger.info(
+                    "resolve_entity: type=%r name=%r -> digits-only lookup ignored",
+                    entity_type,
+                    lookup_name,
+                )
                 continue
             lookups.append((entity_type, lookup_name, config))
 
