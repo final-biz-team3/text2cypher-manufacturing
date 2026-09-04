@@ -119,6 +119,46 @@ async def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
     assert result["attempts"][1]["error"] is None
 
 
+async def test_sql_agent_retries_after_postgresql_42p10_then_succeeds() -> None:
+    """SELECT DISTINCT와 ORDER BY 투영 불일치(42P10)를 보정해 재실행한다."""
+    first_sql = "SELECT DISTINCT productid FROM production.product ORDER BY name"
+    corrected_sql = (
+        "SELECT DISTINCT productid, name FROM production.product ORDER BY name"
+    )
+    error_message = (
+        "for SELECT DISTINCT, ORDER BY expressions must appear in select list"
+    )
+    openai_client = MockOpenAIClient(
+        make_content_response(first_sql),
+        make_content_response(corrected_sql),
+    )
+    executor_calls = []
+
+    async def execute_sql(sql: str) -> list[dict]:
+        executor_calls.append(sql)
+        if len(executor_calls) == 1:
+            raise psycopg.errors.InvalidColumnReference(error_message)
+        return [{"productid": 10, "name": "Widget"}]
+
+    subgraph = make_sql_agent_subgraph(
+        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert len(openai_client.calls) == 2
+    assert executor_calls == [first_sql, corrected_sql]
+    retry_system_prompt = openai_client.calls[1]["messages"][0]["content"]
+    assert first_sql in retry_system_prompt
+    assert error_message in retry_system_prompt
+    assert result["attempts"] == [
+        {"query": first_sql, "error": error_message},
+        {"query": corrected_sql, "error": None},
+    ]
+    assert result["result"] == [{"productid": 10, "name": "Widget"}]
+    assert result["error"] is None
+
+
 async def test_sql_agent_retries_when_required_alias_is_missing() -> None:
     """비어 있지 않은 결과의 모든 행에 필수 alias가 있을 때까지 재생성한다."""
     openai_client = MockOpenAIClient(

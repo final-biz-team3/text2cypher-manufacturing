@@ -30,6 +30,7 @@ _RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
     psycopg.errors.UndefinedColumn,
     psycopg.errors.UndefinedTable,
     psycopg.errors.UndefinedFunction,
+    psycopg.errors.InvalidColumnReference,
     psycopg.errors.QueryCanceled,
 )
 
