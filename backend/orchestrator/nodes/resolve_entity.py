@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_SIMILARITY_THRESHOLD = 0.3
 _DEFAULT_CANDIDATE_LIMIT = 5
+
+# 한국어 질문에 포함된 영문 DB 이름 후보를 equality 조회에 사용한다.
+_ASCII_NAME_CANDIDATE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 \t,.'&()+/_-]*")
 
 _SYSTEM_PROMPT = (
     "사용자에게 답변하거나 추가 자료를 요청하지 않는다. 도구에 정의된 entity "
@@ -193,6 +197,20 @@ def _normalized_label(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def _literal_name_candidates(query: str) -> tuple[str, ...]:
+    """질문의 영문 이름 후보와 문장부호 제거 변형을 반환한다."""
+    candidates: list[str] = []
+    for match in _ASCII_NAME_CANDIDATE.finditer(query):
+        value = match.group().strip()
+        if not value or not any(character.isalpha() for character in value):
+            continue
+        variants = (value, value.rstrip(".,;:!?"))
+        for candidate in variants:
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+    return tuple(candidates)
+
+
 def _is_ascii_word_character(value: str) -> bool:
     return value.isascii() and (value.isalnum() or value == "_")
 
@@ -238,32 +256,49 @@ class _LiteralEntityMatch:
     entity: dict[str, Any]
 
 
-async def _find_entities_contained_in_query(
+async def _find_entities_by_names(
     config: NamedEntityType,
-    query: str,
+    names: tuple[str, ...],
     pool: AsyncConnectionPool,
-) -> list[_LiteralEntityMatch]:
-    """질문에 문자열 그대로 등장하는 설정된 엔티티 이름을 찾는다."""
+) -> dict[str, list[dict[str, Any]]]:
+    """후보 이름만 equality로 조회해 이름별 엔티티 목록을 반환한다."""
+    if not names:
+        return {}
     async with pool.connection() as conn:
         cursor = await conn.execute(
             f"SELECT {config.id_column}, {config.name_column} "
             f"FROM {config.table} "
-            f"WHERE {config.name_column} IS NOT NULL "
-            f"AND {config.name_column} <> '' "
-            f"AND strpos(lower(%s), lower({config.name_column})) > 0",
-            (query,),
+            f"WHERE {config.name_column} = ANY(%s)",
+            (list(names),),
         )
         rows = await cursor.fetchall()
 
-    matches: list[_LiteralEntityMatch] = []
+    entities_by_name: dict[str, list[dict[str, Any]]] = {}
     for identifier, name in rows:
         if not isinstance(name, str):
             continue
         entity = {config.id_field: identifier, config.name_field: name}
-        matches.extend(
-            _LiteralEntityMatch(start, end, config, entity)
-            for start, end in _literal_name_spans(query, name)
-        )
+        entities_by_name.setdefault(name, []).append(entity)
+    return entities_by_name
+
+
+def _literal_matches(
+    query: str,
+    candidate_names: tuple[str, ...],
+    config: NamedEntityType,
+    entities_by_name: dict[str, list[dict[str, Any]]],
+) -> list[_LiteralEntityMatch]:
+    """equality 조회 결과를 질문상의 literal span과 다시 연결한다."""
+    candidates = set(candidate_names)
+    matches: list[_LiteralEntityMatch] = []
+    for name, entities in entities_by_name.items():
+        if name not in candidates:
+            continue
+        spans = _literal_name_spans(query, name)
+        for entity in entities:
+            matches.extend(
+                _LiteralEntityMatch(start, end, config, entity) for start, end in spans
+            )
     return matches
 
 
@@ -323,23 +358,6 @@ def _strip_edge_type_alias(name: str, config: NamedEntityType) -> str:
         if folded.endswith(f" {alias_folded}"):
             return normalized[: -len(alias)].strip()
     return normalized
-
-
-async def _find_entity_by_name(
-    config: NamedEntityType,
-    name: str,
-    pool: AsyncConnectionPool,
-) -> dict[str, Any] | None:
-    async with pool.connection() as conn:
-        cursor = await conn.execute(
-            f"SELECT {config.id_column}, {config.name_column} "
-            f"FROM {config.table} WHERE {config.name_column} = %s",
-            (name,),
-        )
-        row = await cursor.fetchone()
-    if row is None:
-        return None
-    return {config.id_field: row[0], config.name_field: row[1]}
 
 
 async def _find_similar_entities(
@@ -490,6 +508,28 @@ def _append_unique(target: list[dict[str, Any]], values: list[dict[str, Any]]) -
             target.append(value)
 
 
+def _sort_entities_by_question(
+    query: str, entities: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """여러 경로에서 합친 엔티티를 질문 등장 순서로 안정화한다."""
+    folded_query = query.casefold()
+
+    def position(item: tuple[int, dict[str, Any]]) -> tuple[int, int]:
+        index, entity = item
+        name = next(
+            (
+                value
+                for key, value in entity.items()
+                if key.endswith("Name") and isinstance(value, str)
+            ),
+            "",
+        )
+        found = folded_query.find(name.casefold()) if name else -1
+        return (found if found >= 0 else len(query) + index, index)
+
+    return [entity for _, entity in sorted(enumerate(entities), key=position)]
+
+
 def make_resolve_entity_node(
     openai_client: Any,
     pool: Any,
@@ -525,26 +565,6 @@ def make_resolve_entity_node(
                     "resolve_entity: invalid confirmed entity ignored: %r", raw
                 )
 
-        literal_match_groups = await asyncio.gather(
-            *(
-                _find_entities_contained_in_query(config, state["query"], pool)
-                for config in entity_types
-            )
-        )
-        literal_entities, has_ambiguous_literal = _select_literal_entities(
-            [match for group in literal_match_groups for match in group]
-        )
-        if literal_entities and not has_ambiguous_literal:
-            resolved = [c.entity for c in valid_confirmed]
-            _append_unique(resolved, literal_entities)
-            result = _collapse_entities(resolved)
-            logger.info(
-                "resolve_entity: query=%r -> literal entity=%s",
-                state["query"],
-                result,
-            )
-            return {"entity": result}
-
         extractions = await _extract_entities(
             state["query"], openai_client, extract_tool, allowed_types
         )
@@ -558,14 +578,64 @@ def make_resolve_entity_node(
                 continue
             lookups.append((entity_type, lookup_name, config))
 
-        if not lookups:
+        literal_names = tuple(
+            name
+            for name in _literal_name_candidates(state["query"])
+            if not _is_exact_type_alias(name, type_aliases)
+        )
+        names_by_type: dict[str, tuple[str, ...]] = {}
+        for config in entity_types:
+            names = list(literal_names)
+            for _, lookup_name, lookup_config in lookups:
+                if lookup_config.entity_type == config.entity_type:
+                    names.append(lookup_name)
+            names_by_type[config.entity_type] = tuple(dict.fromkeys(names))
+
+        queried_configs = [
+            config for config in entity_types if names_by_type[config.entity_type]
+        ]
+        lookup_groups = await asyncio.gather(
+            *(
+                _find_entities_by_names(config, names_by_type[config.entity_type], pool)
+                for config in queried_configs
+            )
+        )
+        entities_by_type = {
+            config.entity_type: group
+            for config, group in zip(queried_configs, lookup_groups, strict=True)
+        }
+        literal_matches = [
+            match
+            for config in queried_configs
+            for match in _literal_matches(
+                state["query"],
+                literal_names,
+                config,
+                entities_by_type[config.entity_type],
+            )
+        ]
+        literal_entities, has_ambiguous_literal = _select_literal_entities(
+            literal_matches
+        )
+        if has_ambiguous_literal:
+            logger.info(
+                "resolve_entity: query=%r -> ambiguous literal span; "
+                "using extracted entity types",
+                state["query"],
+            )
+
+        if not lookups and not literal_entities:
             result = _collapse_entities([c.entity for c in valid_confirmed])
             logger.info("resolve_entity: query=%r -> entity=%s", state["query"], result)
             return {"entity": result}
 
-        exact_results = await asyncio.gather(
-            *(_find_entity_by_name(config, name, pool) for _, name, config in lookups)
-        )
+        exact_results = [
+            next(
+                iter(entities_by_type.get(config.entity_type, {}).get(lookup_name, [])),
+                None,
+            )
+            for _, lookup_name, config in lookups
+        ]
         missing_indices = [
             index for index, result in enumerate(exact_results) if result is None
         ]
@@ -612,11 +682,14 @@ def make_resolve_entity_node(
             )
             raise EntityNotFoundError(entity_name)
 
-        resolved = [c.entity for c in valid_confirmed]
+        discovered: list[dict[str, Any]] = []
         _append_unique(
-            resolved,
+            discovered,
             [result for result in exact_results if result is not None],
         )
+        _append_unique(discovered, literal_entities)
+        resolved = [c.entity for c in valid_confirmed]
+        _append_unique(resolved, _sort_entities_by_question(state["query"], discovered))
         result = _collapse_entities(resolved)
         logger.info("resolve_entity: query=%r -> entity=%s", state["query"], result)
         return {"entity": result}

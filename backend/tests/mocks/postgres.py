@@ -54,18 +54,13 @@ class MockAsyncPostgresPool:
         similar_rows_by_name: dict[str, list[tuple[Any, ...]]] | None = None,
         similarity_error: Exception | None = None,
         rows_by_table_and_name: dict[tuple[str, str], tuple[Any, ...]] | None = None,
-        contained_rows_by_table_and_query: (
-            dict[tuple[str, str], list[tuple[Any, ...]]] | None
-        ) = None,
     ) -> None:
         self._rows_by_name = rows_by_name
         self._rows_by_table_and_name = rows_by_table_and_name or {}
-        self._contained_rows_by_table_and_query = (
-            contained_rows_by_table_and_query or {}
-        )
         self._similar_rows_by_name = similar_rows_by_name or {}
         self._similarity_error = similarity_error
         self.last_query: tuple[str, tuple[Any, ...]] | None = None
+        self.queries: list[tuple[str, tuple[Any, ...]]] = []
         self.rollback_called = False
 
     def connection(self) -> _ConnectionContext:
@@ -73,6 +68,7 @@ class MockAsyncPostgresPool:
 
     def _execute(self, query: str, params: tuple[Any, ...]) -> _MockAsyncCursor:
         self.last_query = (query, params)
+        self.queries.append((query, params))
         if not params:
             return _MockAsyncCursor(None, [])
         if "similarity(" in query:
@@ -87,15 +83,22 @@ class MockAsyncPostgresPool:
             if isinstance(limit, int) and not isinstance(limit, bool):
                 rows = rows[:limit]
             return _MockAsyncCursor(None, rows)
-        if "strpos(lower(" in query:
-            source_query = params[0]
-            for (
-                table,
-                candidate_query,
-            ), rows in self._contained_rows_by_table_and_query.items():
-                if candidate_query == source_query and f"FROM {table} " in query:
-                    return _MockAsyncCursor(None, rows)
-            return _MockAsyncCursor(None, [])
+        if "= ANY(%s)" in query:
+            names = params[0]
+            rows = []
+            if isinstance(names, list):
+                for name in names:
+                    matched_specific = False
+                    for (
+                        table,
+                        candidate_name,
+                    ), row in self._rows_by_table_and_name.items():
+                        if candidate_name == name and f"FROM {table} " in query:
+                            rows.append(row)
+                            matched_specific = True
+                    if not matched_specific and name in self._rows_by_name:
+                        rows.append(self._rows_by_name[name])
+            return _MockAsyncCursor(None, rows)
         if len(params) == 2:
             exists = params in self._rows_by_name.values()
             return _MockAsyncCursor((1,) if exists else None, [])
