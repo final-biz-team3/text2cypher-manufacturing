@@ -45,5 +45,12 @@ async def generate_cypher(
         previous_error=previous_error,
     )
     return await generate_query(
-        openai_client, messages, reasoning_effort=reasoning_effort
+        openai_client,
+        messages,
+        reasoning_effort=reasoning_effort,
+        purpose=(
+            "repair_cypher"
+            if previous_query is not None and previous_error is not None
+            else "generate_cypher"
+        ),
     )

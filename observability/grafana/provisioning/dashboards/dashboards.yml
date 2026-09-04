@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: ITDA
+    folder: ITDA
+    type: file
+    updateIntervalSeconds: 10
+    options: {path: /var/lib/grafana/dashboards}

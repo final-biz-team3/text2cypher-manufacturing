@@ -28,13 +28,13 @@ def test_log_guard_decision_writes_json_line_to_dedicated_file(
     lines = log_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     record = json.loads(lines[0])
-    assert record == {
-        "query_type": "sql_agent",
-        "intent": "제품 수를 알려줘.",
-        "decision": "BLOCK",
-        "stage": "pre_execution_guard",
-        "reason": "WRITE_KEYWORD_DETECTED",
-    }
+    assert record["query_type"] == "sql_agent"
+    assert record["intent"] == "[REDACTED]"
+    assert record["decision"] == "BLOCK"
+    assert record["stage"] == "pre_execution_guard"
+    assert record["reason"] == "WRITE_KEYWORD_DETECTED"
+    assert record["event_version"] == 1
+    assert record["service_version"] == "dev"
 
 
 def test_log_guard_decision_does_not_propagate_to_root_logger_by_default(

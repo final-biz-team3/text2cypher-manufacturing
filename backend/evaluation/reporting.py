@@ -36,6 +36,58 @@ def _p95(values: Sequence[int | float]) -> float:
     return round(float(ordered[index]), 3)
 
 
+def _build_baseline_comparison(
+    metrics: dict[str, Any], baseline: dict[str, Any]
+) -> dict[str, Any]:
+    ratio_metrics = {
+        "queryPipelineAccuracy",
+        "finalResultAccuracy",
+        "firstAttemptExecutionRate",
+        "retryRecoveryRate",
+        "retryPipelineRecoveryRate",
+    }
+    keys = (
+        "queryPipelineAccuracy",
+        "finalResultAccuracy",
+        "firstAttemptExecutionRate",
+        "retryRecoveryRate",
+        "retryPipelineRecoveryRate",
+        "retryAttemptedRuns",
+        "averageLatencyMs",
+        "p95LatencyMs",
+        "averageModelCallCount",
+        "totalInputTokens",
+        "totalOutputTokens",
+        "totalEstimatedCostUsd",
+        "averageEstimatedCostUsd",
+    )
+    values: dict[str, Any] = {}
+    for key in keys:
+        current = metrics.get(key)
+        previous = baseline.get(key)
+        if not isinstance(current, int | float) or isinstance(current, bool):
+            continue
+        if not isinstance(previous, int | float) or isinstance(previous, bool):
+            continue
+        delta = float(current) - float(previous)
+        item: dict[str, Any] = {
+            "baseline": previous,
+            "current": current,
+            "delta": round(delta, 6),
+        }
+        if key in ratio_metrics:
+            item["deltaPercentagePoints"] = round(delta * 100, 3)
+        if previous != 0:
+            item["changePercent"] = round(delta / float(previous) * 100, 3)
+        values[key] = item
+    return {
+        "compatible": baseline.get("compatible") is True,
+        "baselineArtifactSha256": baseline.get("artifactSha256"),
+        "compatibilityErrors": baseline.get("compatibilityErrors", []),
+        "metrics": values,
+    }
+
+
 def _non_negative_int(value: Any) -> int:
     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
@@ -307,6 +359,31 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         if isinstance(record.get("modelCallCount"), int)
         and not isinstance(record.get("modelCallCount"), bool)
     ]
+    token_fields = {
+        "totalInputTokens": "inputTokens",
+        "totalOutputTokens": "outputTokens",
+        "totalCachedInputTokens": "cachedInputTokens",
+        "totalCacheWriteTokens": "cacheWriteTokens",
+        "totalReasoningTokens": "reasoningTokens",
+    }
+    token_totals = {
+        metric: sum(
+            int(record.get(field, 0))
+            for record in non_error
+            if isinstance(record.get(field, 0), int)
+            and not isinstance(record.get(field, 0), bool)
+        )
+        for metric, field in token_fields.items()
+    }
+    total_estimated_cost = round(
+        sum(
+            float(record.get("estimatedCostUsd", 0.0))
+            for record in non_error
+            if isinstance(record.get("estimatedCostUsd", 0.0), int | float)
+            and not isinstance(record.get("estimatedCostUsd", 0.0), bool)
+        ),
+        10,
+    )
     all_model_calls = [
         int(record["modelCallCount"])
         for record in records
@@ -424,6 +501,16 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             sum(record.get("recoveredByRetry") is True for record in retried),
             len(retried),
         ),
+        "retryPipelineRecoveryRate": _ratio(
+            sum(record.get("queryPipelinePass") is True for record in retried),
+            len(retried),
+        ),
+        "retryRecoveredExecutionRuns": sum(
+            record.get("recoveredByRetry") is True for record in retried
+        ),
+        "retryRecoveredPipelineRuns": sum(
+            record.get("queryPipelinePass") is True for record in retried
+        ),
         "retryAttemptedRuns": len(retried),
         "failureStageCounts": dict(sorted(failure_stage_counts.items())),
         "averageLatencyMs": _average(latencies),
@@ -431,6 +518,17 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "totalModelCallCount": sum(all_model_calls),
         "averageModelCallCount": _average(model_calls),
         "maxModelCallCount": max(model_calls, default=0),
+        **token_totals,
+        "totalEstimatedCostUsd": total_estimated_cost,
+        "averageInputTokens": _average(
+            [float(record.get("inputTokens", 0)) for record in non_error]
+        ),
+        "averageOutputTokens": _average(
+            [float(record.get("outputTokens", 0)) for record in non_error]
+        ),
+        "averageEstimatedCostUsd": (
+            round(total_estimated_cost / len(non_error), 10) if non_error else 0.0
+        ),
         "modelTokenUsage": model_token_usage,
         "averageModelTokensPerRun": _ratio(
             _non_negative_int(model_token_usage["totalTokens"]), len(non_error)
@@ -479,6 +577,7 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         for key in (
             "firstAttemptExecutionRate",
             "retryRecoveryRate",
+            "retryPipelineRecoveryRate",
             "retryAttemptedRuns",
             "finalResultCoverage",
             "finalResultAccuracy",
@@ -600,6 +699,10 @@ def build_summary(
                 **ratchet_baseline,
                 "compatibilityErrors": ratchet_errors,
             }
+        if performance_baseline is not None:
+            summary["baselineComparison"] = _build_baseline_comparison(
+                metrics, performance_baseline
+            )
         summary["regressionGate"] = build_regression_gate(
             result.records,
             metrics,
@@ -853,6 +956,7 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                 f"| 승격 지표 사용 | {'예' if metrics.get('promotionEligible') else '아니오'} |",
                 f"| 최초 실행 성공률 | {metric_percentage(metrics.get('firstAttemptExecutionRate'))} |",
                 f"| retry 복구율 | {metric_percentage(metrics.get('retryRecoveryRate'))} |",
+                f"| retry 후 최종 파이프라인 복구율 | {metric_percentage(metrics.get('retryPipelineRecoveryRate'))} |",
                 f"| 평균 / p95 지연시간 | {metrics.get('averageLatencyMs', 0):.1f} / {metrics.get('p95LatencyMs', 0):.1f} ms |",
                 f"| 평균 / 최대 모델 호출 수 | {metrics.get('averageModelCallCount', 0):.2f} / {metrics.get('maxModelCallCount', 0)} |",
                 f"| 총 모델 호출 수 | {_non_negative_int(metrics.get('totalModelCallCount')):,} |",
@@ -877,6 +981,51 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
             )
         else:
             lines.append("| 없음 | 0 |")
+        baseline_comparison = summary.get("baselineComparison")
+        if isinstance(baseline_comparison, dict):
+            comparison_labels = {
+                "queryPipelineAccuracy": "엄격 파이프라인 정확도",
+                "finalResultAccuracy": "최종 결과 정확도",
+                "firstAttemptExecutionRate": "최초 실행 성공률",
+                "retryRecoveryRate": "재시도 복구율",
+                "retryPipelineRecoveryRate": "재시도 후 최종 파이프라인 복구율",
+                "retryAttemptedRuns": "재시도 발생 실행",
+                "averageLatencyMs": "평균 지연시간(ms)",
+                "p95LatencyMs": "p95 지연시간(ms)",
+                "averageModelCallCount": "평균 모델 호출 수",
+                "totalInputTokens": "전체 입력 토큰",
+                "totalOutputTokens": "전체 출력 토큰",
+                "totalEstimatedCostUsd": "전체 추정 비용(USD)",
+                "averageEstimatedCostUsd": "실행당 추정 비용(USD)",
+            }
+            lines.extend(
+                [
+                    "",
+                    "## 기준선 대비 변화",
+                    "",
+                    (
+                        "호환성: PASS"
+                        if baseline_comparison.get("compatible")
+                        else "호환성: FAIL — 동일 모델·snapshot·case·실행 설정이 필요합니다."
+                    ),
+                    "",
+                    "| 지표 | 수정 전 | 현재 | 변화 |",
+                    "|---|---:|---:|---:|",
+                ]
+            )
+            for key, comparison in baseline_comparison.get("metrics", {}).items():
+                if key not in comparison_labels:
+                    continue
+                if "deltaPercentagePoints" in comparison:
+                    delta_label = f"{comparison['deltaPercentagePoints']:+.3f}%p"
+                elif "changePercent" in comparison:
+                    delta_label = f"{comparison['changePercent']:+.3f}%"
+                else:
+                    delta_label = f"{comparison['delta']:+.6f}"
+                lines.append(
+                    f"| {comparison_labels[key]} | {comparison['baseline']} | "
+                    f"{comparison['current']} | {delta_label} |"
+                )
         if runs > 1:
             trial_summary = summary.get("metrics", {}).get("caseTrialSummary", {})
             complete_trials = [

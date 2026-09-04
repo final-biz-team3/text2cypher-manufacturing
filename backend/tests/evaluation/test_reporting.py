@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from evaluation.gates import (
     build_answer_quality_gate,
     build_change_regression_gate,
@@ -348,6 +350,7 @@ def test_source_mode_marks_execution_retry_and_composition_not_applicable(
     assert metrics["stageAccuracy"]["finalResult"] is None
     assert metrics["firstAttemptExecutionRate"] is None
     assert metrics["retryRecoveryRate"] is None
+    assert metrics["retryPipelineRecoveryRate"] is None
     assert metrics["finalResultAccuracy"] is None
 
     summary = build_summary(
@@ -483,6 +486,112 @@ def test_cost_thresholds_warn_without_changing_absolute_gate() -> None:
         "averageModelTokensPerRun",
         "averageModelCallCount",
     }
+
+
+def test_summary_compares_accuracy_recovery_latency_tokens_and_cost_to_baseline(
+    tmp_path: Path,
+) -> None:
+    record = _record("RQ01", passed=True)
+    record.update(
+        {
+            "firstAttemptExecutionPass": True,
+            "recoveredByRetry": False,
+            "attemptCount": 1,
+            "modelCallCount": 3,
+            "elapsedMs": 800.0,
+            "inputTokens": 1200,
+            "outputTokens": 200,
+            "cachedInputTokens": 100,
+            "cacheWriteTokens": 50,
+            "reasoningTokens": 25,
+            "estimatedCostUsd": 0.02,
+        }
+    )
+    baseline = {
+        "artifactSha256": "baseline-sha",
+        "workingTreeDirty": False,
+        "executionMode": "orchestrator",
+        "model": "test-model",
+        "reasoningEffort": "medium",
+        "snapshotSha256": "snapshot",
+        "caseIds": ["RQ01"],
+        "averageModelCallCount": 4.0,
+        "p95LatencyMs": 1000.0,
+        "queryPipelineAccuracy": 0.5,
+        "finalResultAccuracy": 0.5,
+        "firstAttemptExecutionRate": 0.5,
+        "retryRecoveryRate": 0.25,
+        "retryAttemptedRuns": 1,
+        "averageLatencyMs": 1000.0,
+        "totalInputTokens": 1500,
+        "totalOutputTokens": 300,
+        "totalEstimatedCostUsd": 0.03,
+        "averageEstimatedCostUsd": 0.03,
+    }
+    summary = build_summary(
+        EvaluationRun([record], {"sha256": "snapshot"}, False),
+        model="test-model",
+        commit="current",
+        validate_gold=False,
+        working_tree_dirty=False,
+        reasoning_effort="medium",
+        performance_baseline=baseline,
+    )
+
+    write_artifacts(tmp_path, summary, [record])
+
+    comparison = summary["baselineComparison"]
+    assert comparison["compatible"] is True
+    assert (
+        comparison["metrics"]["queryPipelineAccuracy"]["deltaPercentagePoints"] == 50.0
+    )
+    assert comparison["metrics"]["totalEstimatedCostUsd"][
+        "changePercent"
+    ] == pytest.approx(-33.333)
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "## 기준선 대비 변화" in report
+    assert "| 엄격 파이프라인 정확도 | 0.5 | 1.0 | +50.000%p |" in report
+
+
+def test_metrics_include_evaluation_token_and_cost_totals() -> None:
+    first = _record("RQ01", passed=True)
+    second = _record("RQ02", passed=True)
+    first.update({"inputTokens": 100, "outputTokens": 20, "estimatedCostUsd": 0.01})
+    second.update({"inputTokens": 300, "outputTokens": 40, "estimatedCostUsd": 0.03})
+
+    metrics = calculate_metrics([first, second])
+
+    assert metrics["totalInputTokens"] == 400
+    assert metrics["totalOutputTokens"] == 60
+    assert metrics["averageInputTokens"] == 200.0
+    assert metrics["totalEstimatedCostUsd"] == 0.04
+    assert metrics["averageEstimatedCostUsd"] == 0.02
+
+
+def test_retry_execution_and_final_pipeline_recovery_are_separate() -> None:
+    recovered = _record("RQ01", passed=True)
+    recovered.update(
+        {
+            "attemptCount": 2,
+            "recoveredByRetry": True,
+            "subqueries": [{"attempts": [{"error": "x"}, {"error": None}]}],
+        }
+    )
+    contract_failed = _record("RQ02", passed=False)
+    contract_failed.update(
+        {
+            "attemptCount": 2,
+            "recoveredByRetry": True,
+            "subqueries": [{"attempts": [{"error": "x"}, {"error": None}]}],
+        }
+    )
+
+    metrics = calculate_metrics([recovered, contract_failed])
+
+    assert metrics["retryRecoveryRate"] == 1.0
+    assert metrics["retryPipelineRecoveryRate"] == 0.5
+    assert metrics["retryRecoveredExecutionRuns"] == 2
+    assert metrics["retryRecoveredPipelineRuns"] == 1
 
 
 def test_report_is_compact_and_keeps_query_details_in_evaluation_json(

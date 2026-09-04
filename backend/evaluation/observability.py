@@ -3,6 +3,8 @@
 from time import perf_counter
 from typing import Any
 
+from core.observability.pricing import estimate_cost_usd
+
 
 def _field(value: Any, name: str) -> Any:
     if isinstance(value, dict):
@@ -26,7 +28,7 @@ class _CountingCompletions:
         self._owner.call_count += 1
         try:
             response = await self._completions.create(*args, **kwargs)
-            self._owner.record_usage(_field(response, "usage"))
+            self._owner.record_usage(response, str(kwargs.get("model", "")))
             return response
         finally:
             self._owner.model_elapsed_ms += (perf_counter() - started) * 1000
@@ -49,47 +51,66 @@ class CountingOpenAIClient:
         self.chat = _CountingChat(self, client.chat)
         self.reset_case()
 
+    def record_usage(self, response: Any, model: str) -> None:
+        usage = _field(response, "usage")
+        if usage is None:
+            return
+        input_tokens = _token_count(_field(usage, "prompt_tokens"))
+        output_tokens = _token_count(_field(usage, "completion_tokens"))
+        prompt_details = _field(usage, "prompt_tokens_details")
+        completion_details = _field(usage, "completion_tokens_details")
+        cached_input_tokens = _token_count(_field(prompt_details, "cached_tokens"))
+        cache_write_tokens = _token_count(
+            _field(prompt_details, "cache_write_tokens")
+            or _field(prompt_details, "cache_creation_tokens")
+        )
+        reasoning_tokens = _token_count(_field(completion_details, "reasoning_tokens"))
+        total_tokens = _token_count(_field(usage, "total_tokens"))
+        estimated_cost, _ = estimate_cost_usd(
+            model,
+            input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_tokens=cache_write_tokens,
+            output_tokens=output_tokens,
+        )
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cached_input_tokens += cached_input_tokens
+        self.cache_write_tokens += cache_write_tokens
+        self.reasoning_tokens += reasoning_tokens
+        self.total_tokens += total_tokens
+        self.usage_reported_call_count += 1
+        if estimated_cost is not None:
+            self.estimated_cost_usd += estimated_cost
+
     def reset_case(self) -> None:
         self.call_count = 0
         self.model_elapsed_ms = 0.0
-        self.usage_reported_call_count = 0
-        self.prompt_tokens = 0
-        self.cached_prompt_tokens = 0
-        self.cache_write_prompt_tokens = 0
-        self.completion_tokens = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cached_input_tokens = 0
+        self.cache_write_tokens = 0
         self.reasoning_tokens = 0
+        self.estimated_cost_usd = 0.0
+        self.usage_reported_call_count = 0
         self.total_tokens = 0
-
-    def record_usage(self, usage: Any) -> None:
-        """성공 응답에 포함된 Chat Completions usage를 누적한다."""
-        if usage is None:
-            return
-        prompt_details = _field(usage, "prompt_tokens_details")
-        completion_details = _field(usage, "completion_tokens_details")
-        self.usage_reported_call_count += 1
-        self.prompt_tokens += _token_count(_field(usage, "prompt_tokens"))
-        self.cached_prompt_tokens += _token_count(
-            _field(prompt_details, "cached_tokens")
-        )
-        self.cache_write_prompt_tokens += _token_count(
-            _field(prompt_details, "cache_write_tokens")
-        )
-        self.completion_tokens += _token_count(_field(usage, "completion_tokens"))
-        self.reasoning_tokens += _token_count(
-            _field(completion_details, "reasoning_tokens")
-        )
-        self.total_tokens += _token_count(_field(usage, "total_tokens"))
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "modelCallCount": self.call_count,
             "modelElapsedMs": round(self.model_elapsed_ms, 3),
+            "inputTokens": self.input_tokens,
+            "outputTokens": self.output_tokens,
+            "cachedInputTokens": self.cached_input_tokens,
+            "cacheWriteTokens": self.cache_write_tokens,
+            "reasoningTokens": self.reasoning_tokens,
+            "estimatedCostUsd": round(self.estimated_cost_usd, 10),
             "modelTokenUsage": {
                 "reportedCallCount": self.usage_reported_call_count,
-                "promptTokens": self.prompt_tokens,
-                "cachedPromptTokens": self.cached_prompt_tokens,
-                "cacheWritePromptTokens": self.cache_write_prompt_tokens,
-                "completionTokens": self.completion_tokens,
+                "promptTokens": self.input_tokens,
+                "cachedPromptTokens": self.cached_input_tokens,
+                "cacheWritePromptTokens": self.cache_write_tokens,
+                "completionTokens": self.output_tokens,
                 "reasoningTokens": self.reasoning_tokens,
                 "totalTokens": self.total_tokens,
             },

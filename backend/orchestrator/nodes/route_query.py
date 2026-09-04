@@ -9,6 +9,10 @@ from collections.abc import Callable
 from typing import Any
 
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
+from core.observability.context import get_request_context
+from core.observability.events import emit_event
+from core.observability.metrics import ROUTING
+from core.observability.model_calls import observe_model_call
 from orchestrator.planning import (
     DEFAULT_SHARED_JOIN_ALIASES,
     parse_route_draft,
@@ -133,11 +137,16 @@ def make_route_query_node(
             else None
         )
         for attempt in range(2):
-            response = await openai_client.chat.completions.create(
-                model=os.environ["OPENAI_MODEL"],
-                messages=messages,
-                response_format=response_format,
-                reasoning_effort=reasoning_effort,
+            model = os.environ["OPENAI_MODEL"]
+            response = await observe_model_call(
+                "route_query",
+                model,
+                openai_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    response_format=response_format,
+                    reasoning_effort=reasoning_effort,
+                ),
             )
             content = response.choices[0].message.content
             last_content = content if isinstance(content, str) else ""
@@ -185,6 +194,27 @@ def make_route_query_node(
                 ]
         if plan is None:
             raise AssertionError("route retry loop did not terminate")
+        route = (
+            "HYBRID"
+            if len(set(plan["tool_plan"])) > 1
+            else (
+                {"sql": "SQL", "graph": "GRAPH"}.get(plan["tool_plan"][0], "UNKNOWN")
+                if plan["tool_plan"]
+                else "UNKNOWN"
+            )
+        )
+        context = get_request_context()
+        if context:
+            context.route = route
+            context.planned_tools = list(plan["tool_plan"])
+        ROUTING.labels(route, "success").inc()
+        emit_event(
+            "routing.completed",
+            "pipeline",
+            route=route,
+            planned_tools=plan["tool_plan"],
+            policy_version=os.getenv("POLICY_VERSION", "v1"),
+        )
         logger.info(
             "route_query: query=%r -> tool_plan=%s subqueries=%s",
             state["query"],

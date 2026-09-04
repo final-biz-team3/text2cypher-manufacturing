@@ -222,6 +222,9 @@ def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> N
                         "averageModelTokensPerRun": 1_000.0,
                         "answerFallbackRate": 0.1,
                         "answerFallbackReasonCounts": {"length": 1},
+                        "queryPipelineAccuracy": 0.75,
+                        "retryRecoveryRate": 0.5,
+                        "totalEstimatedCostUsd": 0.12,
                     },
                 }
             }
@@ -235,6 +238,9 @@ def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> N
     assert baseline["averageModelCallCount"] == 3.0
     assert baseline["averageModelTokensPerRun"] == 1_000.0
     assert baseline["answerFallbackRate"] == 0.1
+    assert baseline["queryPipelineAccuracy"] == 0.75
+    assert baseline["retryRecoveryRate"] == 0.5
+    assert baseline["totalEstimatedCostUsd"] == 0.12
     assert len(baseline["artifactSha256"]) == 64
 
 

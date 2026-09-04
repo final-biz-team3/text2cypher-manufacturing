@@ -10,6 +10,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from core.observability.context import get_request_context
+from core.observability.events import emit_event
+
 
 class _JsonlAuditLogger:
     """지정된 파일에 JSON Lines로 한 줄씩 남기는 전용 로거를 지연 생성한다.
@@ -95,14 +98,28 @@ def log_guard_decision(
     reason: str | None,
 ) -> None:
     """쿼리 가드 판정 하나를 JSON Lines 한 줄로 기록한다."""
-    _guard_audit.log(
-        {
-            "query_type": query_type,
-            "intent": intent,
-            "decision": decision,
-            "stage": stage,
-            "reason": reason,
-        }
+    context = get_request_context()
+    record: dict[str, Any] = {
+        "event_version": 1,
+        "request_id": context.request_id if context else None,
+        "service_version": os.getenv("SERVICE_VERSION", "dev"),
+        "query_type": query_type,
+        "intent": "[REDACTED]",
+        "decision": decision,
+        "stage": stage,
+        "reason": reason,
+    }
+    _guard_audit.log(record)
+    emit_event(
+        "audit.guard.decision",
+        "audit",
+        force=True,
+        route=context.route if context else "UNKNOWN",
+        tool="sql" if query_type.startswith("sql") else "graph",
+        outcome="success" if decision == "ALLOW" else "blocked",
+        decision=decision,
+        stage=stage,
+        issue_code=reason,
     )
 
 

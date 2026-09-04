@@ -1,4 +1,6 @@
+import hmac
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 
@@ -6,16 +8,25 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from api.auth import router as auth_router
 from api.chat import router as chat_router
 from api.dashboard import router as dashboard_router
+from api.demo_metrics import router as demo_metrics_router
 from api.entities import router as entities_router
 from api.health import router as health_router
 from api.history import router as history_router
+from api.query_failures import router as query_failures_router
 from core.auth import check_jwt_secret
 from core.event_loop import use_windows_selector_event_loop_policy
+from core.migrations import apply_migrations
 from core.neo4j import close_driver, get_driver
+from core.observability.logging import (
+    configure_observability_logging,
+    stop_observability_logging,
+)
+from core.observability.middleware import ObservabilityMiddleware
 from core.openai_client import get_openai_client
 from core.postgres import bootstrap_postgres, close_pool, get_pool, open_pool
 from orchestrator.errors import AppError
@@ -43,9 +54,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     check_jwt_secret()
+    configure_observability_logging()
     get_driver()
     try:
         await bootstrap_postgres()
+        await apply_migrations()
         await open_pool()
         try:
             # execute_cypher 전용 reader 드라이버(관리자 드라이버와 별개)도
@@ -78,6 +91,7 @@ async def lifespan(app: FastAPI):
             await close_pool()
     finally:
         await close_driver()
+        stop_observability_logging()
 
 
 app = FastAPI(
@@ -88,11 +102,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ObservabilityMiddleware)
 
 app.include_router(health_router, tags=["System"])
 app.include_router(auth_router, tags=["Auth"])
@@ -100,13 +115,21 @@ app.include_router(chat_router, tags=["Chat"])
 app.include_router(history_router, tags=["History"])
 app.include_router(dashboard_router, tags=["Dashboard"])
 app.include_router(entities_router, tags=["Entities"])
+app.include_router(query_failures_router, tags=["Admin query failures"])
+app.include_router(demo_metrics_router, tags=["Development"])
+
+
+@app.get("/internal/metrics", include_in_schema=False)
+async def metrics(request: Request) -> Response:
+    expected = os.getenv("METRICS_SCRAPE_TOKEN", "")
+    supplied = request.headers.get("X-Metrics-Token", "")
+    if not expected or not hmac.compare_digest(expected, supplied):
+        return Response(status_code=404)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError):
-    # RetryExceededError는 여기 등록돼 있지만 self-correction 설계상(retry_agent.py)
-    # 재시도 루프가 소진돼도 raise하지 않고 error 필드로만 전달하도록 구현돼 있어
-    # 이 경로로는 절대 들어오지 않는다.
     content = {"code": exc.code, "message": exc.message}
     if hasattr(exc, "candidates"):
         content["candidates"] = exc.candidates

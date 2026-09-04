@@ -3,6 +3,8 @@
 import os
 from typing import Any, Literal
 
+from core.observability.model_calls import observe_model_call
+
 ReasoningEffort = Literal["medium", "high"]
 DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium"
 
@@ -11,13 +13,17 @@ async def generate_query(
     openai_client: Any,
     messages: list[dict[str, str]],
     *,
+    purpose: str = "generate_query",
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
 ) -> str:
     """LLM 응답에서 비어 있지 않은 쿼리 문자열을 추출한다."""
-    response = await openai_client.chat.completions.create(
-        model=os.environ["OPENAI_MODEL"],
-        messages=messages,
-        reasoning_effort=reasoning_effort,
+    model = os.environ["OPENAI_MODEL"]
+    response = await observe_model_call(
+        purpose,
+        model,
+        openai_client.chat.completions.create(
+            model=model, messages=messages, reasoning_effort=reasoning_effort
+        ),
     )
 
     if not response.choices:

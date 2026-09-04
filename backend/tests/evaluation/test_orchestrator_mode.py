@@ -64,6 +64,12 @@ async def test_counting_client_measures_chat_completion_calls() -> None:
     assert client.snapshot() == {
         "modelCallCount": 0,
         "modelElapsedMs": 0.0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedInputTokens": 0,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 0,
+        "estimatedCostUsd": 0.0,
         "modelTokenUsage": {
             "reportedCallCount": 0,
             "promptTokens": 0,
@@ -74,6 +80,33 @@ async def test_counting_client_measures_chat_completion_calls() -> None:
             "totalTokens": 0,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_counting_client_records_tokens_and_estimated_cost() -> None:
+    usage = SimpleNamespace(
+        prompt_tokens=100,
+        completion_tokens=20,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=40, cache_write_tokens=10),
+        completion_tokens_details=SimpleNamespace(reasoning_tokens=5),
+    )
+
+    class _UsageCompletions:
+        async def create(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(usage=usage)
+
+    raw = SimpleNamespace(chat=SimpleNamespace(completions=_UsageCompletions()))
+    client = CountingOpenAIClient(raw)
+
+    await client.chat.completions.create(model="gpt-5.6-luna")
+
+    snapshot = client.snapshot()
+    assert snapshot["inputTokens"] == 100
+    assert snapshot["outputTokens"] == 20
+    assert snapshot["cachedInputTokens"] == 40
+    assert snapshot["cacheWriteTokens"] == 10
+    assert snapshot["reasoningTokens"] == 5
+    assert snapshot["estimatedCostUsd"] == pytest.approx(0.0000373)
 
 
 @pytest.mark.asyncio

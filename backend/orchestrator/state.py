@@ -12,6 +12,7 @@ FailureStage = Literal[
     "planning",
     "validation",
     "execution",
+    "result",
     "dependency",
 ]
 
