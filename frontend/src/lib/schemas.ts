@@ -67,7 +67,7 @@ export const NodeLabelSchema = z.enum([
 ])
 
 export const VisualizationSpecSchema = z.object({
-  type: z.enum(['kpi', 'bar', 'ranked_progress', 'histogram', 'scatter']),
+  type: z.enum(['kpi', 'bar', 'comparison_bar', 'ranked_progress', 'histogram', 'scatter']),
   title: z.string().nullable().optional(),
   items: z.array(VisualizationKpiItemSchema).nullable().optional(),
   categoryLabel: z.string().nullable().optional(),

@@ -180,4 +180,108 @@ describe('AnswerVisualization', () => {
 
     expect(html).toBe('')
   })
+
+  it('renders a bar-in-bar comparison chart with widths proportional to each value', () => {
+    const html = renderToStaticMarkup(
+      <AnswerVisualization
+        visualization={{
+          type: 'comparison_bar',
+          title: null,
+          categoryLabel: '제품명',
+          series: [
+            { key: 'listPrice', label: '정가', unit: '원' },
+            { key: 'standardCost', label: '표준원가', unit: '원' },
+          ],
+          data: [
+            { category: 'Product A', listPrice: 1200, standardCost: 800 },
+            { category: 'Product B', listPrice: 900, standardCost: 650 },
+          ],
+        }}
+      />,
+    )
+
+    expect(html).toContain('제품명별 정가 vs 표준원가')
+    expect(html).toContain('role="img"')
+    expect(html).toContain('Product A')
+    expect(html).toContain('Product B')
+    // 범례에 두 시리즈 라벨이 모두 보여야 한다.
+    const legendMatches = html.match(/정가/g) ?? []
+    expect(legendMatches.length).toBeGreaterThan(0)
+    expect(html).toContain('표준원가')
+
+    // 두 막대 폭이 우연히 같아지지 않고, 실제 값 비율(listPrice > standardCost)
+    // 만큼 서로 다르게 나와야 한다 - back(더 큰 값)이 먼저, front(더 작은 값)가
+    // 뒤에 온다.
+    const widths = [...html.matchAll(/width:(\d+(?:\.\d+)?)%/g)].map((match) => Number(match[1]))
+    expect(widths).toHaveLength(4)
+    const [productABack, productAFront, productBBack, productBFront] = widths
+    expect(productABack).toBeCloseTo(100)
+    expect(productAFront).toBeCloseTo((800 / 1200) * 100)
+    expect(productAFront).toBeLessThan(productABack)
+    expect(productBBack).toBeCloseTo((900 / 1200) * 100)
+    expect(productBFront).toBeCloseTo((650 / 1200) * 100)
+    expect(productBFront).toBeLessThan(productBBack)
+  })
+
+  it('draws the larger value behind and the smaller value in front regardless of series order', () => {
+    // standardCost가 listPrice보다 큰(비정상적이지만 규칙 엔진은 어느 쪽이
+    // 큰지 신경 쓰지 않는다) 행에서도, 항상 큰 값이 뒤(back)에, 작은 값이
+    // 앞(front)에 와야 한다 - 시리즈 순서가 아니라 값 크기로 정렬된다.
+    const html = renderToStaticMarkup(
+      <AnswerVisualization
+        visualization={{
+          type: 'comparison_bar',
+          title: null,
+          categoryLabel: '제품명',
+          series: [
+            { key: 'listPrice', label: '정가' },
+            { key: 'standardCost', label: '표준원가' },
+          ],
+          data: [{ category: 'Product Z', listPrice: 500, standardCost: 900 }],
+        }}
+      />,
+    )
+
+    const domainMax = 900
+    const widths = [...html.matchAll(/width:(\d+(?:\.\d+)?)%/g)].map((match) => Number(match[1]))
+    expect(widths).toHaveLength(2)
+    const [back, front] = widths
+    expect(back).toBeCloseTo((900 / domainMax) * 100)
+    expect(front).toBeCloseTo((500 / domainMax) * 100)
+  })
+
+  it('renders nothing when comparison_bar has fewer than two series', () => {
+    const html = renderToStaticMarkup(
+      <AnswerVisualization
+        visualization={{
+          type: 'comparison_bar',
+          title: null,
+          categoryLabel: '제품명',
+          series: [{ key: 'listPrice', label: '정가' }],
+          data: [{ category: 'Product A', listPrice: 1200 }],
+        }}
+      />,
+    )
+
+    expect(html).toBe('')
+  })
+
+  it('renders nothing when comparison_bar data is empty', () => {
+    const html = renderToStaticMarkup(
+      <AnswerVisualization
+        visualization={{
+          type: 'comparison_bar',
+          title: null,
+          categoryLabel: '제품명',
+          series: [
+            { key: 'listPrice', label: '정가' },
+            { key: 'standardCost', label: '표준원가' },
+          ],
+          data: [],
+        }}
+      />,
+    )
+
+    expect(html).toBe('')
+  })
 })
