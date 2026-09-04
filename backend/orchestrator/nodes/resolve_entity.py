@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -194,7 +195,17 @@ def _entity_type_config(
 
 
 def _normalized_label(value: str) -> str:
-    return " ".join(value.casefold().split())
+    return " ".join(unicodedata.normalize("NFC", value).casefold().split())
+
+
+def _normalized_name_comparison(value: str, *, remove_commas: bool) -> str:
+    """이름 span 비교에만 쓰는 제한적인 표기 정규화를 적용한다."""
+    normalized = unicodedata.normalize("NFC", value).casefold()
+    if remove_commas:
+        normalized = normalized.replace(",", " ")
+    else:
+        normalized = re.sub(r"\s*,\s*", ",", normalized)
+    return " ".join(normalized.split())
 
 
 def _literal_name_candidates(query: str) -> tuple[str, ...]:
@@ -224,8 +235,8 @@ def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
     """
     if not name:
         return []
-    folded_query = query.casefold()
-    folded_name = name.casefold()
+    folded_query = unicodedata.normalize("NFC", query).casefold()
+    folded_name = unicodedata.normalize("NFC", name).casefold()
     spans: list[tuple[int, int]] = []
     offset = 0
     while True:
@@ -246,6 +257,48 @@ def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
         if not starts_inside_word and not ends_inside_word:
             spans.append((start, end))
         offset = start + 1
+
+
+def _normalized_name_spans(
+    query: str, name: str, *, remove_commas: bool
+) -> list[tuple[int, int]]:
+    """공백·쉼표 표기만 다른 실제 질문 구간을 보수적으로 찾는다.
+
+    반환 좌표는 NFC 정규화된 질문 기준이다. literal span도 같은 좌표계를 쓰므로
+    포함 관계를 안전하게 비교할 수 있다.
+    """
+    normalized_query = unicodedata.normalize("NFC", query)
+    normalized_name = unicodedata.normalize("NFC", name)
+    target = _normalized_name_comparison(normalized_name, remove_commas=remove_commas)
+    if not target:
+        return []
+
+    spans: list[tuple[int, int]] = []
+    for start, first in enumerate(normalized_query):
+        if first.isspace():
+            continue
+        for end in range(start + 1, len(normalized_query) + 1):
+            if normalized_query[end - 1].isspace():
+                continue
+            candidate = normalized_query[start:end]
+            if (
+                _normalized_name_comparison(candidate, remove_commas=remove_commas)
+                != target
+            ):
+                continue
+            starts_inside_word = (
+                start > 0
+                and _is_ascii_word_character(normalized_name[0])
+                and _is_ascii_word_character(normalized_query[start - 1])
+            )
+            ends_inside_word = (
+                end < len(normalized_query)
+                and _is_ascii_word_character(normalized_name[-1])
+                and _is_ascii_word_character(normalized_query[end])
+            )
+            if not starts_inside_word and not ends_inside_word:
+                spans.append((start, end))
+    return list(dict.fromkeys(spans))
 
 
 @dataclass(frozen=True)
@@ -304,7 +357,7 @@ def _literal_matches(
 
 def _select_literal_entities(
     matches: list[_LiteralEntityMatch],
-) -> tuple[list[dict[str, Any]], bool]:
+) -> tuple[list[_LiteralEntityMatch], bool]:
     """겹치지 않는 가장 긴 literal 이름을 질문 순서대로 선택한다.
 
     서로 다른 엔티티 타입이 같은 범위를 공유하면 DB 텍스트만으로 의미 역할을
@@ -338,9 +391,44 @@ def _select_literal_entities(
         selected.append(candidates[0])
 
     selected.sort(key=lambda match: match.start)
-    entities: list[dict[str, Any]] = []
-    _append_unique(entities, [match.entity for match in selected])
-    return entities, has_ambiguous_span
+    unique: list[_LiteralEntityMatch] = []
+    for match in selected:
+        if not any(item.entity == match.entity for item in unique):
+            unique.append(match)
+    return unique, has_ambiguous_span
+
+
+def _lookup_is_inside_selected_literal(
+    query: str,
+    entity_type: str,
+    lookup_name: str,
+    selected_literals: list[_LiteralEntityMatch],
+) -> bool:
+    """긴 exact literal 내부에서만 생긴 같은 타입 extraction을 중복 제거한다."""
+    containers = [
+        (match.start, match.end)
+        for match in selected_literals
+        if match.config.entity_type == entity_type
+    ]
+    if not containers:
+        return False
+
+    spans = _literal_name_spans(query, lookup_name)
+    if not spans:
+        spans = _normalized_name_spans(query, lookup_name, remove_commas=False)
+    if not spans:
+        # 쉼표 제거 비교형은 같은 타입의 선택된 exact literal과 중복을 판정하는
+        # 이 경로에서만 허용한다.
+        spans = _normalized_name_spans(query, lookup_name, remove_commas=True)
+    if not spans:
+        return False
+    return all(
+        any(
+            container_start <= start and end <= container_end
+            for container_start, container_end in containers
+        )
+        for start, end in spans
+    )
 
 
 def _is_exact_type_alias(name: str, type_aliases: frozenset[str]) -> bool:
@@ -614,15 +702,31 @@ def make_resolve_entity_node(
                 entities_by_type[config.entity_type],
             )
         ]
-        literal_entities, has_ambiguous_literal = _select_literal_entities(
+        selected_literals, has_ambiguous_literal = _select_literal_entities(
             literal_matches
         )
+        literal_entities = [match.entity for match in selected_literals]
         if has_ambiguous_literal:
             logger.info(
                 "resolve_entity: query=%r -> ambiguous literal span; "
                 "using extracted entity types",
                 state["query"],
             )
+
+        filtered_lookups: list[tuple[str, str, NamedEntityType]] = []
+        for entity_type, lookup_name, config in lookups:
+            if _lookup_is_inside_selected_literal(
+                state["query"], entity_type, lookup_name, selected_literals
+            ):
+                logger.info(
+                    "resolve_entity: type=%r name=%r -> selected exact literal 내부 "
+                    "중복 extraction ignored",
+                    entity_type,
+                    lookup_name,
+                )
+                continue
+            filtered_lookups.append((entity_type, lookup_name, config))
+        lookups = filtered_lookups
 
         if not lookups and not literal_entities:
             result = _collapse_entities([c.entity for c in valid_confirmed])
