@@ -138,6 +138,10 @@ class EntityRoleDefinition(_SemanticModel):
         return self
 
 
+class ResultInvariantParameters(_SemanticModel):
+    min_hops: int = Field(alias="minHops", ge=0)
+
+
 class ResultShapeSourceDefinition(_SemanticModel):
     display_entities: list[NonEmptyString] = Field(alias="displayEntities")
     required_outputs: list[NonEmptyString] = Field(alias="requiredOutputs")
@@ -147,6 +151,9 @@ class ResultShapeSourceDefinition(_SemanticModel):
     )
     result_invariant: Literal["bom_path_v1"] | None = Field(
         default=None, alias="resultInvariant"
+    )
+    invariant_parameters: ResultInvariantParameters | None = Field(
+        default=None, alias="invariantParameters"
     )
 
     @model_validator(mode="after")
@@ -161,6 +168,10 @@ class ResultShapeSourceDefinition(_SemanticModel):
                 raise ValueError(
                     "shape completion groups must be subsets of requiredOutputs"
                 )
+        if (self.result_invariant is None) != (self.invariant_parameters is None):
+            raise ValueError(
+                "resultInvariant and invariantParameters must be defined together"
+            )
         return self
 
 
@@ -364,6 +375,7 @@ class ResultShapeSourceSpec:
     row_grain: tuple[str, ...]
     completion_groups: tuple[tuple[str, ...], ...]
     result_invariant: str | None
+    min_hops: int | None
 
 
 @dataclass(frozen=True)
@@ -541,6 +553,25 @@ class QuerySemanticCatalog:
                 return None
             inferred.update(next(iter(source_sets)))
         return frozenset(inferred) if inferred else None
+
+    def result_invariant_for_outputs(
+        self, tool: str, outputs: list[str]
+    ) -> tuple[str, int] | None:
+        source = _tool_name(tool)
+        selected = set(outputs)
+        contracts = {
+            (contract.result_invariant, contract.min_hops)
+            for shape in self.result_shapes.values()
+            if (contract := shape.sources.get(source)) is not None
+            and contract.result_invariant is not None
+            and contract.min_hops is not None
+            and set(contract.required_outputs) <= selected
+        }
+        if len(contracts) != 1:
+            return None
+        invariant_id, min_hops = next(iter(contracts))
+        assert invariant_id is not None and min_hops is not None
+        return invariant_id, min_hops
 
 
 # 이전 import 이름과의 호환성을 위한 별칭이다. 구현과 기준 정보는 semantic이다.
@@ -789,6 +820,11 @@ def build_query_semantic_catalog(
                     tuple(group) for group in shape_definition.completion_groups
                 ),
                 result_invariant=shape_definition.result_invariant,
+                min_hops=(
+                    shape_definition.invariant_parameters.min_hops
+                    if shape_definition.invariant_parameters is not None
+                    else None
+                ),
             )
         result_shapes[shape.shape_id] = ResultShapeSpec(
             shape_id=shape.shape_id,
@@ -905,6 +941,11 @@ def build_query_semantic_catalog(
                         "rowGrain": spec.row_grain,
                         "completionGroups": spec.completion_groups,
                         "resultInvariant": spec.result_invariant,
+                        "invariantParameters": (
+                            {"minHops": spec.min_hops}
+                            if spec.min_hops is not None
+                            else None
+                        ),
                     }
                     for source, spec in sorted(shape.sources.items())
                 },

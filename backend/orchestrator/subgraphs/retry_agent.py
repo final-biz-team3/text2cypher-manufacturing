@@ -63,6 +63,7 @@ class RetryAgentState(TypedDict):
     input_bindings: NotRequired[dict[str, list[Any]]]
     business_rules: NotRequired[list[str]]
     failure: NotRequired[QueryFailure | None]
+    retryDiagnostics: NotRequired[list[dict[str, Any]]]
 
 
 def _classify_empty_result(prior_attempts: list[dict]) -> str:
@@ -86,6 +87,9 @@ def make_retry_agent_subgraph(
     empty_result_feedback: str,
     guard: Callable[[str], GuardResult] | None = None,
     query_contract_error: Callable[[str, list[str]], str | None] | None = None,
+    result_contract_error: (
+        Callable[[list[dict[str, Any]], RetryAgentState], str | None] | None
+    ) = None,
 ) -> CompiledStateGraph:
     """query/entity/schema를 state에서 읽어 쿼리 문자열을 생성하는 generate와,
     쿼리 문자열을 실행하는 execute를 주입받아 재시도 SubGraph를 만든다.
@@ -142,12 +146,29 @@ def make_retry_agent_subgraph(
         attempts = state.get("attempts", [])
 
         def failure(
-            message: str, *, retryable: bool, safe_failure: QueryFailure
+            message: str,
+            *,
+            retryable: bool,
+            safe_failure: QueryFailure,
+            stage: str,
+            reason_code: str,
+            error: Exception | None = None,
         ) -> dict:
+            diagnostic = {
+                "stage": stage,
+                "reasonCode": reason_code,
+                "errorType": type(error).__name__ if error is not None else None,
+                "sqlstate": getattr(error, "sqlstate", None),
+                "recovered": False,
+            }
             return {
                 "error": message,
                 "result": None,
                 "attempts": [*attempts, {"query": query_text, "error": message}],
+                "retryDiagnostics": [
+                    *state.get("retryDiagnostics", []),
+                    diagnostic,
+                ],
                 "retryable": retryable,
                 "failure": safe_failure,
             }
@@ -174,6 +195,9 @@ def make_retry_agent_subgraph(
                     suggested_action="잠시 후 다시 시도해 주세요.",
                     failed_tool=tool_name,
                 ),
+                stage="validation",
+                reason_code="QUERY_VALIDATION_INTERNAL_ERROR",
+                error=exc,
             )
 
         async def check_guard() -> dict | None:
@@ -227,6 +251,8 @@ def make_retry_agent_subgraph(
                     ),
                     failed_tool=tool_name,
                 ),
+                stage="validation",
+                reason_code=guard_result.reason_code or "QUERY_POLICY_BLOCKED",
             )
 
         async def check_contract() -> dict | None:
@@ -250,6 +276,8 @@ def make_retry_agent_subgraph(
                     suggested_action="필요한 항목과 조회 조건을 더 구체적으로 지정해 주세요.",
                     failed_tool=tool_name,
                 ),
+                stage="validation",
+                reason_code="QUERY_CONTRACT_FAILED",
             )
 
         async def execute_and_classify() -> dict:
@@ -288,6 +316,11 @@ def make_retry_agent_subgraph(
                         ),
                         failed_tool=tool_name,
                     ),
+                    stage="execution",
+                    reason_code=(
+                        "QUERY_TIMEOUT" if is_timeout else "QUERY_EXECUTION_FAILED"
+                    ),
+                    error=exc,
                 )
             except connection_exceptions as exc:
                 logger.error(
@@ -306,6 +339,9 @@ def make_retry_agent_subgraph(
                         suggested_action="잠시 후 다시 시도해 주세요.",
                         failed_tool=tool_name,
                     ),
+                    stage="execution",
+                    reason_code="INFRASTRUCTURE_UNAVAILABLE",
+                    error=exc,
                 )
             except Exception as exc:
                 # 화이트리스트 밖 예외: 예상 못 한 버그가 재시도 뒤에 숨는 것을 막기 위한 안전망
@@ -328,6 +364,9 @@ def make_retry_agent_subgraph(
                         suggested_action="잠시 후 다시 시도해 주세요.",
                         failed_tool=tool_name,
                     ),
+                    stage="execution",
+                    reason_code="INTERNAL_QUERY_FAILURE",
+                    error=exc,
                 )
 
             if (
@@ -352,6 +391,16 @@ def make_retry_agent_subgraph(
                     *attempts,
                     {"query": query_text, "error": EMPTY_RESULT_ERROR},
                 ]
+                empty_diagnostics = [
+                    *state.get("retryDiagnostics", []),
+                    {
+                        "stage": "result",
+                        "reasonCode": EMPTY_RESULT_ERROR,
+                        "errorType": None,
+                        "sqlstate": None,
+                        "recovered": False,
+                    },
+                ]
                 can_retry_empty = (
                     not state.get("empty_retried", False)
                     and state.get("attempt_count", 0) < MAX_ATTEMPTS
@@ -362,6 +411,7 @@ def make_retry_agent_subgraph(
                         "error": EMPTY_RESULT_ERROR,
                         "result": result,
                         "attempts": new_attempts,
+                        "retryDiagnostics": empty_diagnostics,
                         "retryable": True,
                         "empty_retried": True,
                         "truncated": truncated,
@@ -374,6 +424,7 @@ def make_retry_agent_subgraph(
                     "error": None,
                     "empty_reason": reason,
                     "attempts": new_attempts,
+                    "retryDiagnostics": empty_diagnostics,
                     "retryable": False,
                     "truncated": truncated,
                     "failure": None,
@@ -401,6 +452,36 @@ def make_retry_agent_subgraph(
                             suggested_action="필요한 결과 항목을 명확하게 지정해 다시 질문해 주세요.",
                             failed_tool=tool_name,
                         ),
+                        stage="result_contract",
+                        reason_code="REQUIRED_ALIAS_MISSING",
+                    )
+
+            if result_contract_error is not None:
+                try:
+                    invariant_error = result_contract_error(result, state)
+                except Exception as exc:
+                    return internal_validation_failure(exc, "결과 불변식 검증")
+                if invariant_error is not None:
+                    return failure(
+                        invariant_error,
+                        retryable=True,
+                        safe_failure=make_query_failure(
+                            code="QUERY_CONTRACT_FAILED",
+                            stage="validation",
+                            category="QUERY_INVALID",
+                            kind="user_correctable",
+                            retryable=True,
+                            user_safe_reason=(
+                                "질문에 필요한 결과 형식을 조회 결과에서 확인하지 "
+                                "못했습니다."
+                            ),
+                            suggested_action=(
+                                "필요한 결과 항목을 명확하게 지정해 다시 질문해 주세요."
+                            ),
+                            failed_tool=tool_name,
+                        ),
+                        stage="result_invariant",
+                        reason_code="RESULT_INVARIANT_VIOLATION",
                     )
 
             return {
@@ -408,6 +489,10 @@ def make_retry_agent_subgraph(
                 "error": None,
                 "empty_reason": None,
                 "attempts": [*attempts, {"query": query_text, "error": None}],
+                "retryDiagnostics": [
+                    {**item, "recovered": True}
+                    for item in state.get("retryDiagnostics", [])
+                ],
                 "retryable": False,
                 "truncated": truncated,
                 "failure": None,

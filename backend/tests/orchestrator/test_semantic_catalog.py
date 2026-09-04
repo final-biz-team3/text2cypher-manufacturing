@@ -106,6 +106,46 @@ def test_result_shape_references_are_source_validated_and_fingerprinted() -> Non
         _compile(changed)
 
 
+def test_result_invariant_is_selected_only_for_a_complete_path_contract() -> None:
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    assert catalog.result_invariant_for_outputs(
+        "graph",
+        [
+            "rootProductId",
+            "rootProductName",
+            "componentId",
+            "componentName",
+            "depth",
+            "pathProductIds",
+            "pathProductNames",
+        ],
+    ) == ("bom_path_v1", 1)
+    assert (
+        catalog.result_invariant_for_outputs(
+            "graph", ["componentId", "componentName", "minDepth"]
+        )
+        is None
+    )
+
+
+def test_result_invariant_parameters_are_required_and_fingerprinted() -> None:
+    data = _ontology_data()
+    changed = deepcopy(data)
+    changed["resultShapes"][0]["sources"]["graph"]["invariantParameters"] = {
+        "minHops": 0
+    }
+
+    assert _compile(data).fingerprint != _compile(changed).fingerprint
+
+    del changed["resultShapes"][0]["sources"]["graph"]["invariantParameters"]
+    with pytest.raises(
+        ValidationError,
+        match="resultInvariant and invariantParameters must be defined together",
+    ):
+        ManufacturingOntology.model_validate(changed)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

@@ -24,6 +24,7 @@ from orchestrator.cypher_contracts import (
     has_relationship_list_used_as_path,
 )
 from orchestrator.guards.cypher_guard import make_cypher_guard
+from orchestrator.semantic_catalog import QuerySemanticCatalog
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
     make_retry_agent_subgraph,
@@ -138,6 +139,49 @@ def _query_contract_error(cypher: str, required_outputs: list[str]) -> str | Non
     return "RETURN에 필수 alias가 없습니다: " + ", ".join(missing)
 
 
+def _result_contract_error(
+    rows: list[dict[str, Any]],
+    state: RetryAgentState,
+    catalog: QuerySemanticCatalog,
+) -> str | None:
+    invariant = catalog.result_invariant_for_outputs(
+        "graph", state.get("required_outputs", [])
+    )
+    if invariant is None:
+        return None
+    invariant_id, min_hops = invariant
+    if invariant_id != "bom_path_v1":
+        return None
+
+    required = set(state.get("required_outputs", []))
+    for row_index, row in enumerate(rows):
+        depth = row.get("depth")
+        if isinstance(depth, bool) or not isinstance(depth, int):
+            return f"결과의 {row_index}번 행 depth는 정수여야 합니다."
+        if depth < min_hops:
+            return f"결과의 {row_index}번 행 depth는 최소 {min_hops} 이상이어야 합니다."
+        path_ids = row.get("pathProductIds")
+        if not isinstance(path_ids, list) or len(path_ids) != depth + 1:
+            return (
+                f"결과의 {row_index}번 행 pathProductIds 길이는 depth + 1이어야 합니다."
+            )
+        if "pathProductNames" in required:
+            path_names = row.get("pathProductNames")
+            if not isinstance(path_names, list) or len(path_names) != len(path_ids):
+                return (
+                    f"결과의 {row_index}번 행 pathProductNames 길이는 "
+                    "pathProductIds와 같아야 합니다."
+                )
+        if "quantityPerAssembly" in required:
+            quantities = row.get("quantityPerAssembly")
+            if not isinstance(quantities, list) or len(quantities) != depth:
+                return (
+                    f"결과의 {row_index}번 행 quantityPerAssembly 길이는 "
+                    "depth와 같아야 합니다."
+                )
+    return None
+
+
 def make_cypher_agent_subgraph(
     openai_client: Any,
     execute_cypher: Callable[[str], Awaitable[Any]],
@@ -145,6 +189,7 @@ def make_cypher_agent_subgraph(
     graph_schema: GraphSchema,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
     semantic_context: str = "",
+    semantic_catalog: QuerySemanticCatalog | None = None,
 ) -> CompiledStateGraph:
     """Cypher 생성 -> 실행 -> (실패 시) 재생성 재시도 SubGraph를 만든다.
     execute_cypher 내부 구현에 대한 전제는 make_retry_agent_subgraph 참고."""
@@ -168,6 +213,14 @@ def make_cypher_agent_subgraph(
             reasoning_effort=reasoning_effort,
         )
 
+    result_validator = None
+    if semantic_catalog is not None:
+
+        def result_validator(
+            rows: list[dict[str, Any]], state: RetryAgentState
+        ) -> str | None:
+            return _result_contract_error(rows, state, semantic_catalog)
+
     return make_retry_agent_subgraph(
         logger=logger,
         label="cypher_agent",
@@ -178,4 +231,5 @@ def make_cypher_agent_subgraph(
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
         guard=make_cypher_guard(graph_schema),
         query_contract_error=_query_contract_error,
+        result_contract_error=result_validator,
     )

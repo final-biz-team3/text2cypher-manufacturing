@@ -397,6 +397,7 @@ resultShapes:
         completionGroups:
           - [depth, pathProductIds, pathProductNames]
         resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
   - shapeId: bom-path
     canonical: BOM 두 끝점 사이의 개별 경로
     triggerTermGroups:
@@ -410,6 +411,7 @@ resultShapes:
         completionGroups:
           - [depth, pathProductIds, pathProductNames]
         resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
   - shapeId: bom-hierarchy
     canonical: BOM 계층 또는 부품 트리
     triggerTermGroups:
@@ -423,6 +425,7 @@ resultShapes:
         completionGroups:
           - [depth, pathProductIds, pathProductNames]
         resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
   - shapeId: bom-leaf-components
     canonical: BOM 최하위 부품별 최소 깊이
     triggerTermGroups:
@@ -447,6 +450,7 @@ resultShapes:
         completionGroups:
           - [depth, pathProductIds]
         resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
   - shapeId: work-order-scrap-routing
     canonical: 작업지시의 생산·폐기 사실과 공정·작업장
     triggerTermGroups:

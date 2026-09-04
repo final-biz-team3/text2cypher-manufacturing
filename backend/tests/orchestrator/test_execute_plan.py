@@ -41,6 +41,7 @@ def _result(
     error: str | None = None,
     empty_reason: str | None = None,
     failure: QueryFailure | None = None,
+    retry_diagnostics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "messages": [{"role": "assistant", "content": query}],
@@ -49,6 +50,7 @@ def _result(
         "attempts": [{"query": query, "error": error}],
         "empty_reason": empty_reason,
         "failure": failure,
+        "retryDiagnostics": retry_diagnostics or [],
     }
 
 
@@ -108,6 +110,34 @@ async def test_execute_plan_keeps_single_tool_result_fields(
     assert result[result_field]["result"] == [{"value": 1}]
     unused_tool = "graph" if tool == "sql" else "sql"
     assert result["cypher_query" if unused_tool == "graph" else "sql_query"] is None
+
+
+async def test_execute_plan_counts_result_invariant_retries() -> None:
+    diagnostic = {
+        "stage": "result_invariant",
+        "reasonCode": "RESULT_INVARIANT_VIOLATION",
+        "errorType": None,
+        "sqlstate": None,
+        "recovered": True,
+    }
+    graph_agent = _FakeAgent(
+        _result(
+            "MATCH path",
+            [{"componentId": 2}],
+            retry_diagnostics=[diagnostic],
+        )
+    )
+    sql_agent = _FakeAgent(_result("SELECT 1", [{"value": 1}]))
+
+    result = await _node(sql_agent, graph_agent)(
+        {
+            "query": "BOM 경로",
+            "subqueries": [_step("path", "graph", "BOM 경로")],
+        }
+    )
+
+    assert result["resultInvariantRetryCount"] == 1
+    assert result["graph_result"]["retryDiagnostics"] == [diagnostic]
 
 
 async def test_execute_plan_runs_independent_subqueries_concurrently() -> None:

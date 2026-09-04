@@ -104,6 +104,15 @@ async def test_sql_agent_recovers_from_postgresql_42p10(
         {"query": FIRST_SQL, "error": str(actual_error)},
         {"query": CORRECTED_SQL, "error": None},
     ]
+    assert result["retryDiagnostics"] == [
+        {
+            "stage": "execution",
+            "reasonCode": "QUERY_EXECUTION_FAILED",
+            "errorType": "InvalidColumnReference",
+            "sqlstate": "42P10",
+            "recovered": True,
+        }
+    ]
     assert result["result"] == [
         {"productId": 1, "productName": "A"},
         {"productId": 2, "productName": "B"},

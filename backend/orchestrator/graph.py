@@ -78,6 +78,7 @@ def build_orchestrator_graph(
         graph_schema=cypher_schema,
         reasoning_effort=reasoning_effort,
         semantic_context=output_catalog.describe("graph"),
+        semantic_catalog=output_catalog,
     )
 
     graph = StateGraph(OrchestratorState)

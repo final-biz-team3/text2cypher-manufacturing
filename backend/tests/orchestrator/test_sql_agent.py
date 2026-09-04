@@ -155,6 +155,15 @@ async def test_sql_agent_retries_after_postgresql_42p10_then_succeeds() -> None:
         {"query": first_sql, "error": error_message},
         {"query": corrected_sql, "error": None},
     ]
+    assert result["retryDiagnostics"] == [
+        {
+            "stage": "execution",
+            "reasonCode": "QUERY_EXECUTION_FAILED",
+            "errorType": "InvalidColumnReference",
+            "sqlstate": "42P10",
+            "recovered": True,
+        }
+    ]
     assert result["result"] == [{"productid": 10, "name": "Widget"}]
     assert result["error"] is None
 
