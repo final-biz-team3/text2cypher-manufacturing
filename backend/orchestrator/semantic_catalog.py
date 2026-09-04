@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -133,6 +135,57 @@ class EntityRoleDefinition(_SemanticModel):
         return self
 
 
+class ResultShapeSourceDefinition(_SemanticModel):
+    display_entities: list[NonEmptyString] = Field(alias="displayEntities")
+    required_outputs: list[NonEmptyString] = Field(alias="requiredOutputs")
+    row_grain: list[NonEmptyString] = Field(alias="rowGrain")
+    completion_groups: list[list[NonEmptyString]] = Field(
+        default_factory=list, alias="completionGroups"
+    )
+    result_invariant: Literal["bom_path_v1"] | None = Field(
+        default=None, alias="resultInvariant"
+    )
+
+    @model_validator(mode="after")
+    def validate_definition(self) -> Self:
+        _validate_unique(self.display_entities, "shape display entity")
+        _validate_unique(self.required_outputs, "shape required output")
+        _validate_unique(self.row_grain, "shape row grain")
+        for group in self.completion_groups:
+            if not group or len(group) != len(set(group)):
+                raise ValueError("shape completion groups must be non-empty and unique")
+            if not set(group) <= set(self.required_outputs):
+                raise ValueError(
+                    "shape completion groups must be subsets of requiredOutputs"
+                )
+        return self
+
+
+class ResultShapeDefinition(_SemanticModel):
+    shape_id: NonEmptyString = Field(alias="shapeId")
+    canonical: NonEmptyString
+    trigger_term_groups: list[list[NonEmptyString]] = Field(
+        alias="triggerTermGroups", min_length=1
+    )
+    sources: dict[ToolName, ResultShapeSourceDefinition]
+
+    @model_validator(mode="after")
+    def validate_definition(self) -> Self:
+        if not self.sources:
+            raise ValueError("result shape must define at least one source")
+        normalized_groups: list[tuple[str, ...]] = []
+        for group in self.trigger_term_groups:
+            if not group:
+                raise ValueError("result shape trigger groups must be non-empty")
+            normalized = tuple(_normalized_term(term) for term in group)
+            if len(normalized) != len(set(normalized)):
+                raise ValueError("result shape trigger terms must be unique")
+            normalized_groups.append(normalized)
+        if len(normalized_groups) != len(set(normalized_groups)):
+            raise ValueError("result shape trigger groups must be unique")
+        return self
+
+
 class BusinessConceptDefinition(_SemanticModel):
     concept_id: NonEmptyString = Field(alias="conceptId")
     alias: NonEmptyString
@@ -197,6 +250,9 @@ class ManufacturingOntology(_SemanticModel):
     business_concepts: list[BusinessConceptDefinition] = Field(
         default_factory=list, alias="businessConcepts"
     )
+    result_shapes: list[ResultShapeDefinition] = Field(
+        default_factory=list, alias="resultShapes"
+    )
     transforms: list[TransformDefinition] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -209,6 +265,9 @@ class ManufacturingOntology(_SemanticModel):
         )
         _validate_unique(
             [transform.transform_id for transform in self.transforms], "transform ID"
+        )
+        _validate_unique(
+            [shape.shape_id for shape in self.result_shapes], "result shape ID"
         )
         semantic_aliases = [role.alias for role in self.output_roles] + [
             concept.alias for concept in self.business_concepts
@@ -295,12 +354,30 @@ class EntityRoleSpec:
 
 
 @dataclass(frozen=True)
+class ResultShapeSourceSpec:
+    display_entities: tuple[str, ...]
+    required_outputs: tuple[str, ...]
+    row_grain: tuple[str, ...]
+    completion_groups: tuple[tuple[str, ...], ...]
+    result_invariant: str | None
+
+
+@dataclass(frozen=True)
+class ResultShapeSpec:
+    shape_id: str
+    canonical: str
+    trigger_term_groups: tuple[tuple[str, ...], ...]
+    sources: Mapping[ToolName, ResultShapeSourceSpec]
+
+
+@dataclass(frozen=True)
 class QuerySemanticCatalog:
     ontology_version: str
     by_tool: Mapping[ToolName, Mapping[str, AliasSpec]]
     identity_aliases_by_tool: Mapping[ToolName, frozenset[str]]
     shared_join_aliases: frozenset[str]
     entity_roles: Mapping[str, EntityRoleSpec]
+    result_shapes: Mapping[str, ResultShapeSpec]
     transforms: Mapping[str, TransformSpec]
     fingerprint: str
 
@@ -383,6 +460,43 @@ class QuerySemanticCatalog:
         except KeyError as exc:
             raise ValueError(f"unsupported transform: {transform_id!r}") from exc
 
+    def match_result_shape_sources(
+        self, query: str, entity: object | None
+    ) -> Mapping[ToolName, ResultShapeSourceSpec]:
+        """질문의 좁은 trigger 증거가 source별로 유일할 때만 shape를 확정한다."""
+        comparable = _shape_comparison_text(query, entity)
+        candidates: dict[
+            ToolName, list[tuple[tuple[int, int], ResultShapeSourceSpec]]
+        ] = {"sql": [], "graph": []}
+        for shape in self.result_shapes.values():
+            matching_groups = [
+                group
+                for group in shape.trigger_term_groups
+                if all(term in comparable for term in group)
+            ]
+            if not matching_groups:
+                continue
+            group = max(
+                matching_groups,
+                key=lambda terms: (sum(len(term) for term in terms), len(terms)),
+            )
+            score = (sum(len(term) for term in group), len(group))
+            for source, contract in shape.sources.items():
+                candidates[source].append((score, contract))
+
+        selected: dict[ToolName, ResultShapeSourceSpec] = {}
+        for source, source_candidates in candidates.items():
+            if not source_candidates:
+                continue
+            best_score = max(score for score, _ in source_candidates)
+            best = [
+                contract for score, contract in source_candidates if score == best_score
+            ]
+            if len(best) != 1:
+                return MappingProxyType({})
+            selected[source] = best[0]
+        return MappingProxyType(selected)
+
 
 # 이전 import 이름과의 호환성을 위한 별칭이다. 구현과 기준 정보는 semantic이다.
 OutputCatalog = QuerySemanticCatalog
@@ -394,6 +508,27 @@ def _tool_name(tool: str) -> ToolName:
     if tool == "graph":
         return "graph"
     raise ValueError(f"unsupported output source: {tool!r}")
+
+
+def _entity_names(entity: object | None) -> tuple[str, ...]:
+    if isinstance(entity, dict):
+        return tuple(
+            value
+            for key, value in entity.items()
+            if key.endswith("Name") and isinstance(value, str) and value
+        )
+    if isinstance(entity, list):
+        return tuple(name for item in entity for name in _entity_names(item))
+    return ()
+
+
+def _shape_comparison_text(query: str, entity: object | None) -> str:
+    comparable = unicodedata.normalize("NFC", query).casefold()
+    for name in sorted(_entity_names(entity), key=len, reverse=True):
+        normalized_name = unicodedata.normalize("NFC", name).casefold()
+        comparable = comparable.replace(normalized_name, " ")
+    comparable = re.sub(r"\d+(?:[.,]\d+)*", " ", comparable)
+    return " ".join(comparable.split())
 
 
 def load_manufacturing_ontology(path: str | Path) -> ManufacturingOntology:
@@ -568,6 +703,43 @@ def build_query_semantic_catalog(
         if not any(source in role.projections for role in entity_roles.values()):
             raise ValueError(f"semantic catalog has no {source} entity roles")
 
+    result_shapes: dict[str, ResultShapeSpec] = {}
+    for shape in ontology.result_shapes:
+        source_specs: dict[ToolName, ResultShapeSourceSpec] = {}
+        for source, shape_definition in shape.sources.items():
+            unknown_roles = set(shape_definition.display_entities) - {
+                role_id
+                for role_id, role in entity_roles.items()
+                if source in role.projections
+            }
+            unknown_aliases = (
+                set(shape_definition.required_outputs) | set(shape_definition.row_grain)
+            ) - set(by_tool[source])
+            if unknown_roles or unknown_aliases:
+                unknown = unknown_roles | unknown_aliases
+                raise ValueError(
+                    f"result shape {shape.shape_id!r} references values unavailable "
+                    f"from {source}: {', '.join(sorted(unknown))}"
+                )
+            source_specs[source] = ResultShapeSourceSpec(
+                display_entities=tuple(shape_definition.display_entities),
+                required_outputs=tuple(shape_definition.required_outputs),
+                row_grain=tuple(shape_definition.row_grain),
+                completion_groups=tuple(
+                    tuple(group) for group in shape_definition.completion_groups
+                ),
+                result_invariant=shape_definition.result_invariant,
+            )
+        result_shapes[shape.shape_id] = ResultShapeSpec(
+            shape_id=shape.shape_id,
+            canonical=shape.canonical,
+            trigger_term_groups=tuple(
+                tuple(_normalized_term(term) for term in group)
+                for group in shape.trigger_term_groups
+            ),
+            sources=MappingProxyType(source_specs),
+        )
+
     transforms: dict[str, TransformSpec] = {}
     for transform in ontology.transforms:
         compiled_outputs: dict[ToolName, tuple[str, ...]] = {}
@@ -647,6 +819,23 @@ def build_query_semantic_catalog(
             }
             for role_id, role in sorted(entity_roles.items())
         },
+        "resultShapes": {
+            shape_id: {
+                "canonical": shape.canonical,
+                "triggerTermGroups": shape.trigger_term_groups,
+                "sources": {
+                    source: {
+                        "displayEntities": spec.display_entities,
+                        "requiredOutputs": spec.required_outputs,
+                        "rowGrain": spec.row_grain,
+                        "completionGroups": spec.completion_groups,
+                        "resultInvariant": spec.result_invariant,
+                    }
+                    for source, spec in sorted(shape.sources.items())
+                },
+            }
+            for shape_id, shape in sorted(result_shapes.items())
+        },
     }
     fingerprint = hashlib.sha256(
         json.dumps(
@@ -669,6 +858,7 @@ def build_query_semantic_catalog(
         ),
         shared_join_aliases=frozenset(shared_join_aliases),
         entity_roles=MappingProxyType(dict(entity_roles)),
+        result_shapes=MappingProxyType(dict(result_shapes)),
         transforms=MappingProxyType(dict(transforms)),
         fingerprint=fingerprint,
     )

@@ -18,7 +18,7 @@ from orchestrator.planning import (
     validate_result_transform,
     validate_subqueries,
 )
-from orchestrator.semantic_catalog import ToolName
+from orchestrator.semantic_catalog import ResultShapeSourceSpec, ToolName
 from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -223,6 +223,55 @@ def compile_semantic_output_plan(
     return _ordered_union(plan.required_outputs, identity_outputs)
 
 
+def conform_output_plan_to_shape(
+    plan: SemanticOutputPlan,
+    contract: ResultShapeSourceSpec | None,
+    catalog: OutputCatalog,
+    *,
+    tool: str,
+) -> SemanticOutputPlan:
+    """고유하게 매칭된 shape의 grain-safe 보강 또는 재계획 필요를 판정한다."""
+    if contract is None:
+        return plan
+
+    required_outputs = list(plan.required_outputs)
+    display_entities = list(plan.display_entities)
+    selected_aliases = set(required_outputs)
+
+    for role_id in contract.display_entities:
+        if role_id in display_entities:
+            continue
+        projection = catalog.identity_projection(role_id, tool)
+        if selected_aliases & set(projection.keys):
+            display_entities.append(role_id)
+
+    for group in contract.completion_groups:
+        if selected_aliases & set(group):
+            required_outputs = _ordered_union(required_outputs, group)
+            selected_aliases.update(group)
+
+    missing_roles = [
+        role_id
+        for role_id in contract.display_entities
+        if role_id not in display_entities
+    ]
+    missing_outputs = [
+        alias for alias in contract.required_outputs if alias not in required_outputs
+    ]
+    if missing_roles or missing_outputs:
+        details: list[str] = []
+        if missing_roles:
+            details.append("displayEntities=" + ",".join(missing_roles))
+        if missing_outputs:
+            details.append("requiredOutputs=" + ",".join(missing_outputs))
+        raise ValueError("matched result shape is incomplete: " + "; ".join(details))
+
+    return SemanticOutputPlan(
+        required_outputs=tuple(required_outputs),
+        display_entities=tuple(display_entities),
+    )
+
+
 def compile_graph_generator_rules(
     _plan: SemanticOutputPlan,
     catalog: OutputCatalog,
@@ -314,6 +363,7 @@ async def _select_output_plan(
     entity: object | None,
     catalog: OutputCatalog,
     reasoning_effort: ReasoningEffort,
+    shape_contract: ResultShapeSourceSpec | None = None,
 ) -> tuple[SemanticOutputPlan, int]:
     tool = route_subquery["tool"]
     user_content = f"source: {tool}\noriginal question: {original_question}\n"
@@ -353,7 +403,16 @@ async def _select_output_plan(
         try:
             if not isinstance(content, str):
                 raise ValueError("output planner returned an empty response")
-            return _parse_output_plan(content, tool=tool, catalog=catalog), attempt
+            parsed = _parse_output_plan(content, tool=tool, catalog=catalog)
+            return (
+                conform_output_plan_to_shape(
+                    parsed,
+                    shape_contract,
+                    catalog,
+                    tool=tool,
+                ),
+                attempt,
+            )
         except (json.JSONDecodeError, ValueError) as exc:
             if attempt == 1:
                 raise OutputPlanningError(str(exc), last_content) from exc
@@ -402,6 +461,9 @@ def make_plan_outputs_node(
                         raw_questions[raw_id] = raw_question
         outgoing = _outgoing_binding_outputs(route_subqueries)
         transform = state.get("resultTransform")
+        shape_sources = catalog.match_result_shape_sources(
+            state["query"], state.get("entity")
+        )
 
         async def plan_one(route_subquery: RouteSubquery) -> tuple[Subquery, int]:
             tool = cast(ToolName, route_subquery["tool"])
@@ -435,6 +497,7 @@ def make_plan_outputs_node(
                     entity=state.get("entity"),
                     catalog=catalog,
                     reasoning_effort=reasoning_effort,
+                    shape_contract=shape_sources.get(tool),
                 )
                 selected = compile_semantic_output_plan(
                     semantic_plan,
@@ -504,6 +567,7 @@ __all__ = [
     "SemanticOutputPlan",
     "compile_graph_generator_rules",
     "compile_semantic_output_plan",
+    "conform_output_plan_to_shape",
     "finalize_required_outputs",
     "make_plan_outputs_node",
     "output_plan_json_schema",

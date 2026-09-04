@@ -45,6 +45,65 @@ def test_package_loader_and_explicit_loader_have_the_same_fingerprint() -> None:
     assert production.fingerprint == evaluation.fingerprint
     assert production.ontology_version == "manufacturing-v1"
     assert "sellableFinishedGood" in production.allowed_aliases("graph")
+    assert "bom-component-usage" in production.result_shapes
+
+
+def test_result_shape_matches_narrow_terms_and_excludes_entity_names_and_numbers() -> (
+    None
+):
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    matched = catalog.match_result_shape_sources(
+        "부품 Paint - Black을 사용하는 완제품을 최대 4단계까지 알려줘",
+        {"productId": 680, "productName": "Paint - Black"},
+    )
+    broad = catalog.match_result_shape_sources("제품을 알려줘", None)
+    masked = catalog.match_result_shape_sources(
+        "공급 영향 완제품 123의 color",
+        {"productId": 123, "productName": "공급 영향 완제품 123"},
+    )
+
+    assert set(matched) == {"graph"}
+    assert matched["graph"].row_grain == ("pathProductIds",)
+    assert matched["graph"].result_invariant == "bom_path_v1"
+    assert not broad
+    assert not masked
+
+
+def test_result_shape_ambiguity_fails_open() -> None:
+    data = _ontology_data()
+    existing = next(
+        shape
+        for shape in data["resultShapes"]
+        if shape["shapeId"] == "workplace-products"
+    )
+    duplicate = deepcopy(existing)
+    duplicate["shapeId"] = "ambiguous-workplace-products"
+    duplicate["sources"]["graph"]["rowGrain"] = ["locationId"]
+    data["resultShapes"].append(duplicate)
+
+    matched = _compile(data).match_result_shape_sources(
+        "Frame Forming 작업장을 거친 제품을 알려줘", None
+    )
+
+    assert not matched
+
+
+def test_result_shape_references_are_source_validated_and_fingerprinted() -> None:
+    data = _ontology_data()
+    changed = deepcopy(data)
+    changed["resultShapes"][0]["sources"]["graph"]["requiredOutputs"].append(
+        "quantityPerAssembly"
+    )
+    changed["resultShapes"][0]["sources"]["graph"]["completionGroups"][0].append(
+        "quantityPerAssembly"
+    )
+
+    assert _compile(data).fingerprint != _compile(changed).fingerprint
+
+    changed["resultShapes"][0]["sources"]["graph"]["rowGrain"] = ["notAnAlias"]
+    with pytest.raises(ValueError, match="unavailable from graph"):
+        _compile(changed)
 
 
 @pytest.mark.parametrize(

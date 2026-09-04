@@ -82,7 +82,7 @@ def test_output_schema_uses_provider_supported_shape() -> None:
 async def test_prompt_uses_composable_roles_without_query_family_recipes() -> None:
     client = MockOpenAIClient(
         make_output_plan_response(
-            required_outputs=[],
+            required_outputs=["depth", "pathProductIds", "pathProductNames"],
             display_entities=["component", "finishedProduct"],
         )
     )
@@ -270,6 +270,78 @@ async def test_sql_display_only_plan_is_retried_as_incomplete() -> None:
     assert result["subqueries"][0]["requiredOutputs"] == [
         "productId",
         "productName",
+    ]
+
+
+async def test_shape_completes_an_already_selected_path_group() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=["pathProductIds"],
+            display_entities=["component", "finishedProduct"],
+        )
+    )
+    question = "부품 Paint - Black을 사용하는 완제품을 알려줘"
+    subquery: RouteSubquery = {
+        "id": "graph_component_usage",
+        "tool": "graph",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state(
+            [subquery],
+            query=question,
+            entity={"productId": 680, "productName": "Paint - Black"},
+        )
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "pathProductIds",
+        "depth",
+        "pathProductNames",
+        "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
+    ]
+    assert len(client.calls) == 1
+
+
+async def test_shape_replans_when_a_role_or_entire_path_is_missing() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[], display_entities=["finishedProduct"]
+        ),
+        make_output_plan_response(
+            required_outputs=["depth", "pathProductIds", "pathProductNames"],
+            display_entities=["component", "finishedProduct"],
+        ),
+    )
+    question = "부품 Paint - Black을 사용하는 완제품을 알려줘"
+    subquery: RouteSubquery = {
+        "id": "graph_component_usage",
+        "tool": "graph",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=question)
+    )
+
+    assert len(client.calls) == 2
+    assert result["outputPlanRepairCount"] == 1
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "depth",
+        "pathProductIds",
+        "pathProductNames",
+        "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
     ]
 
 
