@@ -1,4 +1,4 @@
-"""Physical schemas and declarative manufacturing semantics compiled together."""
+"""physical schema와 선언형 제조 의미를 함께 컴파일한다."""
 
 from __future__ import annotations
 
@@ -33,6 +33,27 @@ SemanticKind = Literal["physical", "role", "aggregate", "derived", "path"]
 ValueType = Literal["identity", "name", "scalar", "path"]
 PredicateOperator = Literal["equals"]
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+_OPERATIONS_BY_KIND: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "aggregate": frozenset({"count", "countDistinct", "sum", "average"}),
+        "derived": frozenset({"difference", "clampedDifference"}),
+        "path": frozenset({"pathLength", "minimumPathLength", "orderedPathProjection"}),
+    }
+)
+_OPERATION_INPUT_ARITY: Mapping[str, tuple[int, int]] = MappingProxyType(
+    {
+        "count": (0, 1),
+        "countDistinct": (1, 1),
+        "sum": (1, 1),
+        "average": (1, 1),
+        "difference": (2, 2),
+        "clampedDifference": (2, 2),
+        "pathLength": (0, 0),
+        "minimumPathLength": (1, 1),
+        "orderedPathProjection": (1, 1),
+    }
+)
 
 
 class _SemanticModel(BaseModel):
@@ -90,6 +111,12 @@ class IdentityProjectionDefinition(_SemanticModel):
         return self
 
 
+class TypedPredicate(_SemanticModel):
+    field: NonEmptyString
+    operator: PredicateOperator
+    value: bool | int | float | NonEmptyString
+
+
 class EntityRoleDefinition(_SemanticModel):
     role_id: NonEmptyString = Field(alias="roleId")
     canonical: NonEmptyString
@@ -104,12 +131,6 @@ class EntityRoleDefinition(_SemanticModel):
         if not self.identity_projection:
             raise ValueError("entity role must define at least one source projection")
         return self
-
-
-class TypedPredicate(_SemanticModel):
-    field: NonEmptyString
-    operator: PredicateOperator
-    value: bool | int | float | NonEmptyString
 
 
 class BusinessConceptDefinition(_SemanticModel):
@@ -133,6 +154,18 @@ class BusinessConceptDefinition(_SemanticModel):
             raise ValueError("concept grain aliases must be unique")
         if len(self.inputs) != len(set(self.inputs)):
             raise ValueError("concept inputs must be unique")
+        allowed_operations = _OPERATIONS_BY_KIND[self.kind]
+        if self.operation not in allowed_operations:
+            raise ValueError(
+                f"{self.kind} concept cannot use operation {self.operation!r}"
+            )
+        minimum, maximum = _OPERATION_INPUT_ARITY[self.operation]
+        if not minimum <= len(self.inputs) <= maximum:
+            expected = str(minimum) if minimum == maximum else f"{minimum}..{maximum}"
+            raise ValueError(
+                f"operation {self.operation!r} requires {expected} input(s), "
+                f"got {len(self.inputs)}"
+            )
         return self
 
 
@@ -222,12 +255,12 @@ class AliasSpec:
 
     @property
     def meaning(self) -> str:
-        """Compatibility name for callers while canonical is the source of truth."""
+        """canonical을 기준 정보로 유지하면서 호출부에 호환 이름을 제공한다."""
         return self.canonical
 
     @property
     def calculation_type(self) -> str:
-        """Compatibility name for the previous output catalog contract."""
+        """이전 output catalog 계약을 위한 호환 이름을 제공한다."""
         return self.kind
 
     @property
@@ -276,7 +309,7 @@ class QuerySemanticCatalog:
         return tuple(sorted(self.by_tool[source]))
 
     def describe(self, tool: str) -> str:
-        """Render physical ownership and semantic provenance for a model prompt."""
+        """모델 프롬프트용 physical ownership과 semantic provenance를 렌더링한다."""
         source = _tool_name(tool)
         lines: list[str] = []
         for alias, spec in sorted(self.by_tool[source].items()):
@@ -351,7 +384,7 @@ class QuerySemanticCatalog:
             raise ValueError(f"unsupported transform: {transform_id!r}") from exc
 
 
-# Transitional import name. The implementation and source of truth are semantic.
+# 이전 import 이름과의 호환성을 위한 별칭이다. 구현과 기준 정보는 semantic이다.
 OutputCatalog = QuerySemanticCatalog
 
 
@@ -709,23 +742,26 @@ def _compile_physical_aliases(
 def _transform_generator_rules(
     transform_id: str,
 ) -> dict[ToolName, tuple[str, ...]]:
-    """Render the allowlisted transform's execution semantics, never query syntax."""
+    """query syntax가 아닌 허용된 transform의 실행 의미만 렌더링한다."""
     if transform_id != "bom_shortage_v1":
         raise ValueError(f"unsupported transform: {transform_id!r}")
     return {
         "graph": (
-            "Preserve every valid BOM component path in anchor-to-destination order; "
-            "do not pre-filter components by purchase classification.",
-            "Supplier fan-out is optional: preserve a component path when no active "
-            "supplier exists and return null supplier identity fields for that row.",
-            "pathProductIds and quantityPerAssembly arrays must be aligned to the same "
-            "BOM path direction and row.",
+            "anchor에서 destination 순서로 유효한 모든 BOM 부품 경로를 보존하고, "
+            "purchase classification으로 부품을 미리 filter하지 않는다.",
+            "Supplier fan-out은 선택 사항이다. 활성 supplier가 없는 경우에도 부품 "
+            "경로를 보존하고 해당 행의 supplier identity 필드는 null로 반환한다.",
+            "pathProductIds와 quantityPerAssembly 배열은 같은 BOM 경로 방향과 행에 "
+            "맞춰 정렬한다.",
+            "quantityPerAssembly에는 parent assembly별 relationship 원본 값을 담는다. "
+            "productionQty나 요청 생산 수량을 곱하지 않는다. composer가 "
+            "productionQty를 정확히 한 번 적용한다.",
         ),
         "sql": (
-            "The binding componentIds defines the complete lookup domain. Return one "
-            "row per distinct component with makeFlag and actualStock; do not drop "
-            "internally manufactured components.",
-            "Required quantity and shortage are calculated by the composer, not SQL.",
+            "binding componentIds가 전체 조회 범위를 정의한다. 서로 다른 component마다 "
+            "makeFlag와 actualStock을 포함한 행 하나를 반환하고 내부 제조 부품을 "
+            "제외하지 않는다.",
+            "필요 수량과 부족량은 SQL이 아니라 composer가 계산한다.",
         ),
     }
 
@@ -786,7 +822,7 @@ def _reject_alias_collision(
 
 
 def _physical_owners(spec: AliasSpec) -> set[str]:
-    """Return canonical physical owners behind a physical or role alias."""
+    """physical 또는 role alias의 canonical physical owner를 반환한다."""
     return {path.rsplit(".", 1)[0] for path in spec.schema_paths}
 
 

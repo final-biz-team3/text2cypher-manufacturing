@@ -1,4 +1,4 @@
-"""Build a Neo4j prompt from graph policy and semantic provenance."""
+"""그래프 정책과 의미 출처 정보를 사용해 Neo4j 프롬프트를 구성한다."""
 
 from collections.abc import Sequence
 from typing import Any
@@ -29,10 +29,14 @@ _CYPHER_INSTRUCTIONS = """당신은 제조 데이터용 Neo4j Cypher 쿼리 생�
 
 
 def _build_graph_policy_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...]:
-    """Render only syntax, direction, snapshot, and path-integrity policy."""
+    """문법, 방향, snapshot 및 경로 무결성 정책만 렌더링한다."""
     return (
         "REQUIRES_COMPONENT 방향은 상위 조립품에서 하위 부품이다. 사용처는 "
         "역방향으로, 하위 부품은 정방향으로 탐색한다.",
+        "required output의 finishedProductId 또는 finishedProductName은 해당 Product를 "
+        "판매 가능한 완제품 역할로 분류하므로 physical schema의 "
+        "sellableFinishedGood = true predicate를 적용한다. rootProduct나 일반 product "
+        "역할에는 이 predicate를 자동으로 추가하지 않는다.",
         f"BOM 가변 경로는 1..{query_policy.bom_max_depth} 범위이며 Neo4j 5 "
         "relationship range 문법을 사용한다. 상한 없는 경로와 quantified path "
         "문법은 사용하지 않는다.",
@@ -50,14 +54,17 @@ def _build_graph_policy_rules(query_policy: GraphQueryPolicy) -> tuple[str, ...]
         "경로는 각각 별도의 MATCH 절에서 탐색하고 destination 변수로 결합한다. "
         "한 MATCH의 comma-separated graph pattern으로 합치면 Neo4j 5의 "
         "relationship uniqueness가 경로 사이에도 적용되므로 사용하지 않는다. "
-        "anchor별 minimumPathLength는 destination grain으로 먼저 집계한 뒤 다음 "
-        "anchor 경로를 탐색한다.",
+        "anchor별 minimumPathLength가 필요하면 첫 경로를 destination grain으로 "
+        "집계한 뒤 다음 anchor 경로를 탐색한다.",
         "nodes(path)는 MATCH에 작성한 시작점에서 끝점 순서이며 그 물리 순서가 "
-        "질문의 의미 anchor에서 destination 순서와 같다고 가정하지 않는다. "
-        "orderedPathProjection은 semantic entity role order를 기준으로 하고, 물리 "
-        "MATCH path가 반대면 nodes(path)의 projection에 reverse를 적용한다. "
+        "질문의 의미 anchor에서 destination 순서와 같다고 가정하지 않는다. 사용처나 "
+        "영향 탐색은 고정되거나 공급된 부품에서 판매 가능한 완제품 순서이고, 하위 "
+        "구성 탐색은 조립품에서 부품 순서다. orderedPathProjection은 이 질문의 탐색 "
+        "의미를 따르며 displayEntities나 required output의 배열 순서로 정하지 않는다. "
+        "물리 MATCH path가 반대면 nodes(path)의 projection에 reverse를 적용하고, "
         "relationship 수량 배열도 같은 의미 방향과 index 정렬을 유지한다.",
-        "minimumPathLength는 destination grain별 min(length(path))로 계산한다.",
+        "minimumPathLength가 required output일 때만 해당 grain별 "
+        "min(length(path))로 계산한다.",
         "ORDER BY가 계산 alias를 사용하면 최종 RETURN에도 같은 alias를 정확히 "
         "포함한다.",
     )
@@ -77,7 +84,7 @@ def build_cypher_prompt(
     previous_query: str | None = None,
     previous_error: str | None = None,
 ) -> list[dict[str, str]]:
-    """Return Cypher generation messages for one execution subquery."""
+    """실행 subquery 하나에 대한 Cypher 생성 메시지를 반환한다."""
     return build_prompt_messages(
         instructions=_CYPHER_INSTRUCTIONS,
         query=query,

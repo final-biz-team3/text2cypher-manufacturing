@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+import yaml
+
 from evaluation.models import load_manifest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -72,6 +74,18 @@ def test_semantic_catalog_source_is_independent_of_evaluation_contracts() -> Non
     assert "manifest" not in source
     assert re.search(r"\b(?:RQ|HQ)\d{2}\b", source) is None
     assert "gold/" not in source.casefold()
+
+
+def test_graph_ontology_does_not_encode_role_or_output_recipes() -> None:
+    ontology = yaml.safe_load(
+        (PROJECT_ROOT / "ontology" / "manufacturing_terms.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert "graphTraversals" not in ontology
+    assert "graphQualifiers" not in ontology
+    assert all("predicates" not in role for role in ontology["entityRoles"])
 
 
 def test_production_prompt_sources_do_not_copy_long_gold_fragments() -> None:

@@ -1,4 +1,4 @@
-"""Route one question across the currently representable SQL/Graph capabilities."""
+"""질문 하나를 현재 표현 가능한 SQL/Graph 기능에 맞게 라우팅한다."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class RoutePlanError(ValueError):
-    """Preserve only the raw failed response for controlled diagnostics."""
+    """통제된 진단을 위해 실패한 원본 응답만 보존한다."""
 
     def __init__(self, message: str, raw_response: str) -> None:
         super().__init__(message)

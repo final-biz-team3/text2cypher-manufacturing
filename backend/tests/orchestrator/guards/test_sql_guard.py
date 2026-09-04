@@ -30,8 +30,7 @@ def test_sql_guard_allows_read_only_with_cte() -> None:
     guard = make_sql_guard(_SCHEMA)
 
     result = guard(
-        "WITH p AS (SELECT productid FROM production.product) "
-        "SELECT productid FROM p"
+        "WITH p AS (SELECT productid FROM production.product) SELECT productid FROM p"
     )
 
     assert result.allowed is True
@@ -83,9 +82,7 @@ def test_sql_guard_blocks_do_block() -> None:
     WRITE_KEYWORD_DETECTED로 잡혀야 한다."""
     guard = make_sql_guard(_SCHEMA)
 
-    result = guard(
-        "DO $$ BEGIN " "UPDATE production.product SET name = 'x'; " "END $$;"
-    )
+    result = guard("DO $$ BEGIN UPDATE production.product SET name = 'x'; END $$;")
 
     assert result.allowed is False
     assert result.reason_code == "WRITE_KEYWORD_DETECTED"
@@ -260,8 +257,65 @@ def test_sql_guard_allows_with_recursive() -> None:
     guard = make_sql_guard(_SCHEMA)
 
     result = guard(
-        "WITH RECURSIVE x AS (SELECT productid FROM production.product) "
-        "SELECT * FROM x"
+        "WITH RECURSIVE x AS (SELECT productid FROM production.product) SELECT * FROM x"
     )
 
     assert result.allowed is True
+
+
+def test_sql_guard_allows_unnest_as_read_only_input_relation() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard("SELECT id FROM unnest(ARRAY[1, 2]) AS input(id)")
+
+    assert result.allowed is True
+
+
+def test_sql_guard_allows_unnest_inside_cte() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard(
+        "WITH ids AS (SELECT id FROM unnest(ARRAY[1, 2]) AS input(id)) "
+        "SELECT p.productid FROM production.product AS p "
+        "JOIN ids ON ids.id = p.productid"
+    )
+
+    assert result.allowed is True
+
+
+def test_sql_guard_allows_explicit_pg_catalog_unnest() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard("SELECT id FROM pg_catalog.unnest(ARRAY[1, 2]) AS input(id)")
+
+    assert result.allowed is True
+
+
+def test_sql_guard_keeps_other_from_functions_blocked() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    for function in ("generate_series(1, 5)", "unknown_relation_function(1)"):
+        result = guard(f"SELECT * FROM {function} AS input")
+        assert result.allowed is False
+        assert result.reason_code == "UNRESOLVED_TABLE_REFERENCE"
+
+
+def test_sql_guard_blocks_non_catalog_unnest_qualification() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard("SELECT id FROM public.unnest(ARRAY[1, 2]) AS input(id)")
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_TABLE"
+
+
+def test_sql_guard_still_checks_subqueries_inside_unnest() -> None:
+    guard = make_sql_guard(_SCHEMA)
+
+    result = guard(
+        "SELECT id FROM unnest((SELECT array_agg(id) FROM pg_catalog.pg_shadow)) "
+        "AS input(id)"
+    )
+
+    assert result.allowed is False
+    assert result.reason_code == "UNKNOWN_TABLE"

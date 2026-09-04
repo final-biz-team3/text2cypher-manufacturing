@@ -2,6 +2,7 @@
 
 import math
 import re
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
 
@@ -23,8 +24,13 @@ _KOREAN_NUMBER_WORDS = {
 }
 
 
-def _question_matches(expected: str, actual: Any, source_question: str) -> bool:
-    """Require a minimal deterministic lexical link to the expected intent."""
+def _question_matches(
+    expected: str,
+    actual: Any,
+    source_question: str,
+    parameters: Mapping[str, Any],
+) -> bool:
+    """예상 의도와 최소한의 결정적 어휘 연결을 요구한다."""
     if not isinstance(actual, str) or not actual.strip():
         return False
 
@@ -38,16 +44,25 @@ def _question_matches(expected: str, actual: Any, source_question: str) -> bool:
     if expected_text == actual_text:
         return True
 
+    # 이름에 포함된 숫자(예: 제품명 끝의 규격 58)는 resolver가 canonical ID로
+    # 치환해도 의미가 보존된다. 반면 productionQty, limit, 명시적 ID처럼 독립된
+    # 구조 파라미터는 subquery 책임에서 사라지면 안 된다.
+    parameter_numbers = {
+        number
+        for key, value in parameters.items()
+        if not key.casefold().endswith("name") and not isinstance(value, bool)
+        for number in re.findall(r"\d+", str(value))
+    }
     actual_numbers = set(re.findall(r"\d+", actual_text))
-    for number in set(re.findall(r"\d+", expected_text)):
+    for number in set(re.findall(r"\d+", expected_text)) & parameter_numbers:
         source_numbers = set(re.findall(r"\d+", normalize(source_question)))
         source_has_number = number in source_numbers or any(
             word in normalize(source_question)
             for word in _KOREAN_NUMBER_WORDS.get(number, ())
         )
-        # Robustness/complexity wording may intentionally omit a canonical fixture
-        # parameter (for example the default BOM depth). Do not require the router
-        # to invent a constraint that was absent from the user's actual question.
+        # Robustness/complexity 표현은 canonical fixture 파라미터(예: 기본 BOM
+        # 깊이)를 의도적으로 생략할 수 있다. 실제 사용자 질문에 없던 제약을
+        # router가 새로 만들도록 요구하지 않는다.
         if not source_has_number:
             continue
         if number in actual_numbers:
@@ -150,7 +165,10 @@ def compare_execution_contract(
             ),
         }
         structural_checks["question"] = _question_matches(
-            expected.question, actual.get("question"), case.question
+            expected.question,
+            actual.get("question"),
+            case.question,
+            case.parameters,
         )
         step_checks.append(
             {
@@ -190,7 +208,7 @@ def compare_execution_plan_contract(
     actual_subqueries: Any,
     id_mapping: dict[str, str],
 ) -> dict[str, Any]:
-    """Compare output and binding contracts on the completed execution plan."""
+    """완성된 execution plan의 output 및 binding 계약을 비교한다."""
     actual_items = (
         [item for item in actual_subqueries if isinstance(item, dict)]
         if isinstance(actual_subqueries, list)

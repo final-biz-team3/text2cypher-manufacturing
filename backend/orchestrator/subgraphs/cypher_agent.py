@@ -108,8 +108,8 @@ def _query_contract_error(cypher: str, required_outputs: list[str]) -> str | Non
             "서로 다른 anchor의 독립적인 REQUIRES_COMPONENT 가변 경로가 같은 "
             "MATCH 절에서 공통 endpoint에 결합되었습니다. Neo4j 5의 relationship "
             "uniqueness가 경로 사이를 제약하지 않도록 각 anchor 경로를 별도의 "
-            "MATCH 절에서 탐색하고 공통 destination 변수로 결합하세요. anchor별 "
-            "minimumPathLength는 destination grain으로 먼저 집계하세요."
+            "MATCH 절에서 탐색하고 공통 destination 변수로 결합하세요. 원래 "
+            "required output과 결과 grain은 그대로 보존하세요."
         )
     if not required_outputs:
         return None
