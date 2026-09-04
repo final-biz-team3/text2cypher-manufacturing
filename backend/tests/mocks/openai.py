@@ -106,7 +106,7 @@ def make_output_plan_response(
     required_outputs: list[str] | tuple[str, ...],
     display_entities: list[str] | tuple[str, ...] = (),
 ) -> MockChatCompletion:
-    """Build the additive semantic output-plan response used by the planner."""
+    """planner가 사용하는 additive semantic output plan 응답을 구성한다."""
     payload: dict[str, Any] = {
         "requiredOutputs": list(required_outputs),
         "displayEntities": list(display_entities),

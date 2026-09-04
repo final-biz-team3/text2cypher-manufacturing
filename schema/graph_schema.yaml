@@ -1,30 +1,3 @@
-# =============================================================================
-# 그래프 스키마 (구조화 MVP, 2026-08-19 교체)
-#
-# 이 파일은 Neo4j / backend / frontend / LLM 프롬프트가 함께 참조하는
-# "기준 문서"다. PostgreSQL(AdventureWorks)이 원본(system of record)이고
-# Neo4j는 관계 탐색 전용 read model이다.
-#
-# 근거 자료: neo4j_structured_mvp_design/ 패키지(structured_mvp_graph_schema.yaml,
-# structured_mvp_source_mapping.md, structured_mvp_loading_rules.md,
-# structured_mvp_physical_design_validation.md), ITDA-Neo4j_v4(arrows.app 다이어그램,
-# etl/data/에 로컬 보관, git 추적 제외).
-#
-# 참고: backend/agents/cypher/schema의 로더(models.py, extra="ignore")는 노드·관계·속성의
-# aliases와 nodes.*.properties.*.type,
-# relationships.*.{from,to,properties.*.type}를 프롬프트 직렬화에 읽는다.
-# nodes.*.uniqueKey/source/properties.*.sourceColumn은 entity_types.py가 엔티티 리졸브용으로
-# 별도로 읽는다(프롬프트 직렬화에는 쓰이지 않음). 그 외 필드는 전부 무시한다.
-#
-# 제약조건은 이 yaml에서 자동 생성하지 않는다(Enterprise 전용 문법을 쓰는
-# etl/graph_constraints.py는 이번 스키마엔 적용하지 않기로 결정 — 대신
-# schema/structured_mvp_constraints.cypher를 그대로 실행한다. 이 DDL은 Community
-# 호환 문법이지만(md/2026-08-19-structured-mvp-data-loading.md 참고), 실제 실행
-# 환경(docker-compose.yml, 원격 공유 서버)은 neo4j:5-enterprise다(2026-08-20
-# 결정: 평가판 Enterprise 유지, PR #16 리뷰 대응) — DDL 문법 선택과 실행 환경
-# 에디션은 별개다.
-# =============================================================================
-
 meta:
   confirmedAt: "2026-08-19"
   nodeCount: 6

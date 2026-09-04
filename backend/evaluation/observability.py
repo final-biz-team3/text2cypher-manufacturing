@@ -6,6 +6,18 @@ from typing import Any
 from core.observability.pricing import estimate_cost_usd
 
 
+def _field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _token_count(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
+
+
 class _CountingCompletions:
     def __init__(self, owner: "CountingOpenAIClient", completions: Any) -> None:
         self._owner = owner
@@ -36,29 +48,24 @@ class CountingOpenAIClient:
 
     def __init__(self, client: Any) -> None:
         self._client = client
-        self.call_count = 0
-        self.model_elapsed_ms = 0.0
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.cached_input_tokens = 0
-        self.cache_write_tokens = 0
-        self.reasoning_tokens = 0
-        self.estimated_cost_usd = 0.0
         self.chat = _CountingChat(self, client.chat)
+        self.reset_case()
 
     def record_usage(self, response: Any, model: str) -> None:
-        usage = getattr(response, "usage", None)
-        input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
-        output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-        prompt_details = getattr(usage, "prompt_tokens_details", None)
-        completion_details = getattr(usage, "completion_tokens_details", None)
-        cached_input_tokens = int(getattr(prompt_details, "cached_tokens", 0) or 0)
-        cache_write_tokens = int(
-            getattr(prompt_details, "cache_write_tokens", 0)
-            or getattr(prompt_details, "cache_creation_tokens", 0)
-            or 0
+        usage = _field(response, "usage")
+        if usage is None:
+            return
+        input_tokens = _token_count(_field(usage, "prompt_tokens"))
+        output_tokens = _token_count(_field(usage, "completion_tokens"))
+        prompt_details = _field(usage, "prompt_tokens_details")
+        completion_details = _field(usage, "completion_tokens_details")
+        cached_input_tokens = _token_count(_field(prompt_details, "cached_tokens"))
+        cache_write_tokens = _token_count(
+            _field(prompt_details, "cache_write_tokens")
+            or _field(prompt_details, "cache_creation_tokens")
         )
-        reasoning_tokens = int(getattr(completion_details, "reasoning_tokens", 0) or 0)
+        reasoning_tokens = _token_count(_field(completion_details, "reasoning_tokens"))
+        total_tokens = _token_count(_field(usage, "total_tokens"))
         estimated_cost, _ = estimate_cost_usd(
             model,
             input_tokens=input_tokens,
@@ -71,6 +78,8 @@ class CountingOpenAIClient:
         self.cached_input_tokens += cached_input_tokens
         self.cache_write_tokens += cache_write_tokens
         self.reasoning_tokens += reasoning_tokens
+        self.total_tokens += total_tokens
+        self.usage_reported_call_count += 1
         if estimated_cost is not None:
             self.estimated_cost_usd += estimated_cost
 
@@ -83,8 +92,10 @@ class CountingOpenAIClient:
         self.cache_write_tokens = 0
         self.reasoning_tokens = 0
         self.estimated_cost_usd = 0.0
+        self.usage_reported_call_count = 0
+        self.total_tokens = 0
 
-    def snapshot(self) -> dict[str, int | float]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "modelCallCount": self.call_count,
             "modelElapsedMs": round(self.model_elapsed_ms, 3),
@@ -94,6 +105,15 @@ class CountingOpenAIClient:
             "cacheWriteTokens": self.cache_write_tokens,
             "reasoningTokens": self.reasoning_tokens,
             "estimatedCostUsd": round(self.estimated_cost_usd, 10),
+            "modelTokenUsage": {
+                "reportedCallCount": self.usage_reported_call_count,
+                "promptTokens": self.input_tokens,
+                "cachedPromptTokens": self.cached_input_tokens,
+                "cacheWritePromptTokens": self.cache_write_tokens,
+                "completionTokens": self.output_tokens,
+                "reasoningTokens": self.reasoning_tokens,
+                "totalTokens": self.total_tokens,
+            },
         }
 
     def __getattr__(self, name: str) -> Any:

@@ -44,7 +44,6 @@ retry_swap() 함수 하나를 공유해서 두 경로가 어긋나지 않게 했
 """
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -54,9 +53,9 @@ from pathlib import Path
 import psycopg2
 import psycopg2.errors
 from dotenv import load_dotenv
+from paths import ROOT_DIR, load_fixture_entities
 from psycopg2 import sql
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
 REQUIRED_ENV_VARS = ["POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_DB", "POSTGRES_USER"]
 
 # 배치 하나당 문장 텍스트 총 길이 상한(문자 수). PostgreSQL이 큰 멀티 문장
@@ -451,11 +450,9 @@ def main() -> None:
         run_fixture_checks,
     )
 
-    parameters_path = ROOT_DIR / "queries" / "query_parameters.json"
-
     try:
         missing_tables = find_missing_tables(expected_tables, restore_conn)
-        entities = json.loads(parameters_path.read_text(encoding="utf-8"))["entities"]
+        entities = load_fixture_entities()
         failures = run_fixture_checks(restore_conn, build_fixture_checks(entities))
     finally:
         restore_conn.close()

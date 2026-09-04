@@ -1,4 +1,4 @@
-"""Evidence-backed anti-overfitting and change-safety scorecard."""
+"""근거 기반 과적합 방지 및 변경 안전성 점수표를 계산한다."""
 
 import re
 from pathlib import Path

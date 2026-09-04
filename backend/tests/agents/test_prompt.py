@@ -23,10 +23,10 @@ def test_build_prompt_messages_separates_trusted_context_and_user_input() -> Non
     assert messages[0]["role"] == "system"
     assert messages[0]["content"] == """읽기 전용 쿼리를 생성하세요.
 
-Schema:
+물리 schema:
 Product {productId: INTEGER}
 
-Business rules:
+업무 규칙:
 - 재고는 수량의 합계다.
 - 재고가 없으면 0이다."""
     assert messages[1]["role"] == "user"
@@ -49,7 +49,7 @@ def test_build_prompt_messages_includes_feedback_with_empty_previous_error() -> 
         previous_error="",
     )
 
-    assert "Previous attempt failed" in messages[0]["content"]
+    assert "이전 시도가 실패했다" in messages[0]["content"]
     assert "SELECT * FROM bad" in messages[0]["content"]
 
 
@@ -64,7 +64,7 @@ def test_build_prompt_messages_omits_empty_business_rules_section() -> None:
 
     assert messages[0]["content"] == """쿼리를 생성하세요.
 
-Schema:
+물리 schema:
 Product {}"""
     assert json.loads(messages[1]["content"]) == {
         "query": "전체 개수를 알려줘.",
@@ -85,8 +85,8 @@ def test_build_prompt_messages_includes_aligned_input_bindings() -> None:
         },
     )
 
-    assert "aligned by row index" in messages[0]["content"]
-    assert "may contain duplicates" in messages[0]["content"]
+    assert "행 index로 정렬" in messages[0]["content"]
+    assert "중복을 포함할 수 있다" in messages[0]["content"]
     assert json.loads(messages[1]["content"])["inputBindings"] == {
         "componentIds": [7, 7, 9],
         "supplierIds": [2, 3, 3],
@@ -105,9 +105,9 @@ def test_build_prompt_messages_keeps_original_query_authoritative_over_scope() -
     )
 
     system = messages[0]["content"]
-    assert "The original query is authoritative" in system
-    assert "Source scope only narrows" in system
-    assert "Required output aliases" in system
+    assert "출력 의미는 원 질문을 기준" in system
+    assert "source scope는 해당 source가 담당하는 실행 범위만 좁힌다" in system
+    assert "필수 출력 alias" in system
     assert json.loads(messages[1]["content"]) == {
         "query": "부품별 재고 부족량을 알려줘.",
         "entity": {"productId": 7},

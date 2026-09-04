@@ -158,12 +158,14 @@
   html {
     @apply font-sans;
     max-width: 100%;
-    overflow-x: hidden;
+    height: 100%;
+    overflow: hidden;
   }
   body,
   #root {
     max-width: 100%;
-    overflow-x: hidden;
+    height: 100%;
+    overflow: hidden;
   }
 }
 

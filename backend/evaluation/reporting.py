@@ -83,6 +83,12 @@ def _build_baseline_comparison(
     }
 
 
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
+
+
 def _pipeline_accuracy(records: list[dict[str, Any]]) -> float:
     applicable = [record for record in records if record.get("status") != "ERROR"]
     return _ratio(
@@ -373,6 +379,48 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         10,
     )
+    all_model_calls = [
+        int(record["modelCallCount"])
+        for record in records
+        if isinstance(record.get("modelCallCount"), int)
+        and not isinstance(record.get("modelCallCount"), bool)
+    ]
+    token_usage_records = [
+        usage
+        for record in records
+        if isinstance((usage := record.get("modelTokenUsage")), dict)
+    ]
+    reported_usage_calls = sum(
+        _non_negative_int(usage.get("reportedCallCount"))
+        for usage in token_usage_records
+    )
+    model_token_usage = {
+        "reportedCallCount": reported_usage_calls,
+        "callCoverage": _ratio(reported_usage_calls, sum(all_model_calls)),
+        "promptTokens": sum(
+            _non_negative_int(usage.get("promptTokens"))
+            for usage in token_usage_records
+        ),
+        "cachedPromptTokens": sum(
+            _non_negative_int(usage.get("cachedPromptTokens"))
+            for usage in token_usage_records
+        ),
+        "cacheWritePromptTokens": sum(
+            _non_negative_int(usage.get("cacheWritePromptTokens"))
+            for usage in token_usage_records
+        ),
+        "completionTokens": sum(
+            _non_negative_int(usage.get("completionTokens"))
+            for usage in token_usage_records
+        ),
+        "reasoningTokens": sum(
+            _non_negative_int(usage.get("reasoningTokens"))
+            for usage in token_usage_records
+        ),
+        "totalTokens": sum(
+            _non_negative_int(usage.get("totalTokens")) for usage in token_usage_records
+        ),
+    }
 
     metrics: dict[str, Any] = {
         "executionMode": "source" if source_only else "orchestrator",
@@ -435,6 +483,7 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "failureStageCounts": dict(sorted(failure_stage_counts.items())),
         "averageLatencyMs": _average(latencies),
         "p95LatencyMs": _p95(latencies),
+        "totalModelCallCount": sum(all_model_calls),
         "averageModelCallCount": _average(model_calls),
         "maxModelCallCount": max(model_calls, default=0),
         **token_totals,
@@ -448,6 +497,7 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "averageEstimatedCostUsd": (
             round(total_estimated_cost / len(non_error), 10) if non_error else 0.0
         ),
+        "modelTokenUsage": model_token_usage,
         "requiredOutputsContractRate": _check_accuracy(records, "requiredOutputs"),
         "requiredOutputsExactRate": _check_accuracy(records, "requiredOutputsExact"),
         "bindingContractRate": _check_accuracy(records, "binding"),
@@ -785,6 +835,9 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
             ]
         )
         metrics = summary.get("metrics", {})
+        model_token_usage = metrics.get("modelTokenUsage", {})
+        if not isinstance(model_token_usage, dict):
+            model_token_usage = {}
         failure_counts = metrics.get("failureStageCounts", {})
         lines.extend(
             [
@@ -800,6 +853,11 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                 f"| retry 후 최종 파이프라인 복구율 | {metric_percentage(metrics.get('retryPipelineRecoveryRate'))} |",
                 f"| 평균 / p95 지연시간 | {metrics.get('averageLatencyMs', 0):.1f} / {metrics.get('p95LatencyMs', 0):.1f} ms |",
                 f"| 평균 / 최대 모델 호출 수 | {metrics.get('averageModelCallCount', 0):.2f} / {metrics.get('maxModelCallCount', 0)} |",
+                f"| 총 모델 호출 수 | {_non_negative_int(metrics.get('totalModelCallCount')):,} |",
+                f"| 토큰 usage 수집 호출 | {_non_negative_int(model_token_usage.get('reportedCallCount')):,} ({metric_percentage(model_token_usage.get('callCoverage'))}) |",
+                f"| 입력 토큰 (캐시 hit / 캐시 write) | {_non_negative_int(model_token_usage.get('promptTokens')):,} ({_non_negative_int(model_token_usage.get('cachedPromptTokens')):,} / {_non_negative_int(model_token_usage.get('cacheWritePromptTokens')):,}) |",
+                f"| 출력 토큰 (추론 포함) | {_non_negative_int(model_token_usage.get('completionTokens')):,} ({_non_negative_int(model_token_usage.get('reasoningTokens')):,}) |",
+                f"| 총 토큰 | {_non_negative_int(model_token_usage.get('totalTokens')):,} |",
                 f"| required output coverage / exact | {metric_percentage(metrics.get('requiredOutputsContractRate'))} / {metric_percentage(metrics.get('requiredOutputsExactRate'))} |",
                 "",
                 "| 최초 실패 단계 | 건수 |",

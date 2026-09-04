@@ -1,4 +1,4 @@
-"""PostgreSQL prompt provenance and structural contract tests."""
+"""PostgreSQL 프롬프트 출처와 구조 계약을 테스트한다."""
 
 import json
 
@@ -22,7 +22,7 @@ def test_sql_prompt_uses_physical_schema_and_semantic_catalog_context() -> None:
     assert "PostgreSQL" in system
     assert "읽기 전용" in system
     assert "production.synthetic {productid: INTEGER}" in system
-    assert "Semantic output catalog" in system
+    assert "의미 출력 catalog" in system
     assert "operation=sum" in system
     assert "grain=productId" in system
     assert "- 선택한 snapshot 범위만 사용한다." in system

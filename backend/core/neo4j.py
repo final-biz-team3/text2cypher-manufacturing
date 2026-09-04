@@ -2,7 +2,7 @@ import os
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
-_driver: AsyncDriver | None = None
+from core.lazy_singleton import LazySingleton
 
 
 def build_driver(user: str, password: str) -> AsyncDriver:
@@ -14,18 +14,18 @@ def build_driver(user: str, password: str) -> AsyncDriver:
     return AsyncGraphDatabase.driver(os.environ["NEO4J_URI"], auth=(user, password))
 
 
+_driver_singleton: LazySingleton[AsyncDriver] = LazySingleton(
+    lambda: build_driver(
+        os.getenv("NEO4J_USER", "neo4j"),
+        os.getenv("NEO4J_PASSWORD", "changeme_local"),
+    ),
+    lambda driver: driver.close(),
+)
+
+
 def get_driver() -> AsyncDriver:
-    global _driver
-    if _driver is None:
-        _driver = build_driver(
-            os.getenv("NEO4J_USER", "neo4j"),
-            os.getenv("NEO4J_PASSWORD", "changeme_local"),
-        )
-    return _driver
+    return _driver_singleton.get()
 
 
 async def close_driver() -> None:
-    global _driver
-    if _driver is not None:
-        await _driver.close()
-        _driver = None
+    await _driver_singleton.close()

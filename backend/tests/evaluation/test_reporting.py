@@ -74,6 +74,68 @@ def test_metrics_calculate_stability_across_repeated_runs() -> None:
     }
 
 
+def test_metrics_aggregate_model_token_usage(tmp_path: Path) -> None:
+    first = _record("RQ01", passed=True)
+    first.update(
+        {
+            "modelCallCount": 2,
+            "modelTokenUsage": {
+                "reportedCallCount": 2,
+                "promptTokens": 1_000,
+                "cachedPromptTokens": 600,
+                "cacheWritePromptTokens": 100,
+                "completionTokens": 200,
+                "reasoningTokens": 80,
+                "totalTokens": 1_200,
+            },
+        }
+    )
+    second = _record("RQ02", passed=True)
+    second.update(
+        {
+            "modelCallCount": 3,
+            "modelTokenUsage": {
+                "reportedCallCount": 3,
+                "promptTokens": 2_000,
+                "cachedPromptTokens": 1_200,
+                "cacheWritePromptTokens": 200,
+                "completionTokens": 400,
+                "reasoningTokens": 160,
+                "totalTokens": 2_400,
+            },
+        }
+    )
+
+    metrics = calculate_metrics([first, second])
+
+    assert metrics["totalModelCallCount"] == 5
+    assert metrics["modelTokenUsage"] == {
+        "reportedCallCount": 5,
+        "callCoverage": 1.0,
+        "promptTokens": 3_000,
+        "cachedPromptTokens": 1_800,
+        "cacheWritePromptTokens": 300,
+        "completionTokens": 600,
+        "reasoningTokens": 240,
+        "totalTokens": 3_600,
+    }
+
+    summary = build_summary(
+        EvaluationRun([first, second], {"sha256": "snapshot"}, False),
+        model="test-model",
+        commit="commit",
+        validate_gold=False,
+        working_tree_dirty=False,
+    )
+    write_artifacts(tmp_path, summary, [first, second])
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "| 총 모델 호출 수 | 5 |" in report
+    assert "| 토큰 usage 수집 호출 | 5 (100.0%) |" in report
+    assert "| 입력 토큰 (캐시 hit / 캐시 write) | 3,000 (1,800 / 300) |" in report
+    assert "| 출력 토큰 (추론 포함) | 600 (240) |" in report
+    assert "| 총 토큰 | 3,600 |" in report
+
+
 def test_report_summarizes_repeated_trial_outcomes(tmp_path: Path) -> None:
     records = [
         _record("RQ01", passed=True, run=1),

@@ -5,7 +5,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import orchestrator.guards.audit as audit_module
-from orchestrator.guards.audit import log_guard_decision
+from orchestrator.guards.audit import log_answer_validation, log_guard_decision
 
 
 def test_log_guard_decision_writes_json_line_to_dedicated_file(
@@ -111,3 +111,61 @@ def test_log_guard_decision_creates_handler_only_once_under_concurrent_calls(
 
     logger = logging.getLogger("orchestrator.guard_audit")
     assert len(logger.handlers) == 1
+
+
+def test_log_answer_validation_writes_json_line_to_dedicated_file(
+    tmp_path, monkeypatch
+) -> None:
+    """가드 감사 로그와 별개 파일·로거를 쓴다 - 답변 검증 실패 사유별
+    빈도를 가드 판정 로그와 섞이지 않게 따로 봐야 한다(PR #53 리뷰의
+    모니터링 지표 권장사항)."""
+    log_path = tmp_path / "answer_validation_audit.jsonl"
+    monkeypatch.setenv("ANSWER_AUDIT_LOG_PATH", str(log_path))
+    monkeypatch.setenv("ANSWER_AUDIT_ALSO_CONSOLE", "false")
+    audit_module.reset_answer_audit_for_tests()
+
+    log_answer_validation(
+        stage="generate_answer",
+        outcome="rejected",
+        reason="ungrounded_korean_entity",
+        detail=["가상제품"],
+    )
+
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record == {
+        "stage": "generate_answer",
+        "outcome": "rejected",
+        "reason": "ungrounded_korean_entity",
+        "detail": ["가상제품"],
+    }
+
+
+def test_log_answer_validation_does_not_share_handler_with_guard_audit(
+    tmp_path, monkeypatch
+) -> None:
+    """두 감사 스트림이 같은 로거/핸들러를 실수로 공유해 서로 다른 파일에
+    끼어 쓰는 것을 방지한다."""
+    guard_log_path = tmp_path / "query_guard_audit.jsonl"
+    answer_log_path = tmp_path / "answer_validation_audit.jsonl"
+    monkeypatch.setenv("GUARD_AUDIT_LOG_PATH", str(guard_log_path))
+    monkeypatch.setenv("ANSWER_AUDIT_LOG_PATH", str(answer_log_path))
+    monkeypatch.setenv("GUARD_AUDIT_ALSO_CONSOLE", "false")
+    monkeypatch.setenv("ANSWER_AUDIT_ALSO_CONSOLE", "false")
+    audit_module.reset_for_tests()
+    audit_module.reset_answer_audit_for_tests()
+
+    log_guard_decision(
+        query_type="sql_agent",
+        intent="질의",
+        decision="ALLOW",
+        stage="pre_execution_guard",
+        reason=None,
+    )
+    log_answer_validation(
+        stage="generate_answer", outcome="accepted", reason=None, detail=None
+    )
+
+    assert len(guard_log_path.read_text(encoding="utf-8").strip().splitlines()) == 1
+    assert len(answer_log_path.read_text(encoding="utf-8").strip().splitlines()) == 1

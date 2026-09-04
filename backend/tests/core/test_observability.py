@@ -5,7 +5,11 @@ from core.observability.context import (
     set_request_context,
 )
 from core.observability.events import _event_summary, normalize_route, normalize_tool
-from core.observability.privacy import question_fingerprint, redact_query, redact_question
+from core.observability.privacy import (
+    question_fingerprint,
+    redact_query,
+    redact_question,
+)
 
 
 def test_question_fingerprint_is_stable_and_secret_dependent(monkeypatch) -> None:

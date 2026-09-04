@@ -19,6 +19,11 @@ from orchestrator.errors import AnswerGenerationError, EntityNotFoundError
 from orchestrator.nodes.plan_outputs import OutputPlanningError
 from orchestrator.nodes.resolve_entity import EntityExtractionError
 from orchestrator.nodes.route_query import RoutePlanError
+from orchestrator.query_failures import (
+    entity_not_found_failure,
+    query_understanding_failure,
+)
+from orchestrator.state import QueryFailure
 from tests.mocks.openai import (
     MockChatCompletion,
     MockOpenAIClient,
@@ -48,7 +53,10 @@ _SQL_ROUTE = json.dumps(
 
 
 def _answering_client(*responses: MockChatCompletion) -> MockOpenAIClient:
-    return MockOpenAIClient(*responses, make_content_response(_ANSWER))
+    """classify_topic이 항상 첫 호출을 소비하므로 ON_TOPIC 응답을 자동으로 붙인다."""
+    return MockOpenAIClient(
+        make_content_response("ON_TOPIC"), *responses, make_content_response(_ANSWER)
+    )
 
 
 def _fake_request() -> Request:
@@ -95,8 +103,11 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
         ChatRequest(
             query="그 제품 정가 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
@@ -118,7 +129,7 @@ async def test_chat_passes_confirmed_entity_and_runs_sql_agent_once(
     assert not hasattr(result, "resultTransform")
     assert not hasattr(result, "subqueries")
     assert not hasattr(result, "subquery_results")
-    assert len(openai_client.calls) == 5
+    assert len(openai_client.calls) == 6
 
 
 async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,8 +162,11 @@ async def test_chat_saves_conversation_history(monkeypatch: pytest.MonkeyPatch) 
         ChatRequest(
             query="그 제품 정가 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
@@ -221,8 +235,11 @@ async def test_chat_returns_response_even_if_save_conversation_fails(
         ChatRequest(
             query="그 제품 정가 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
@@ -391,25 +408,36 @@ def test_chat_endpoint_returns_502_and_does_not_save_on_answer_failure(
 
 
 @pytest.mark.parametrize(
-    ("error", "internal_stage"),
+    ("error", "expected_failure"),
     [
-        (EntityNotFoundError(), "entity_resolution"),
-        (EntityExtractionError("invalid extraction"), "entity_resolution"),
-        (RoutePlanError("internal route error", "SECRET ROUTE RESPONSE"), "routing"),
+        (EntityNotFoundError(), entity_not_found_failure()),
+        (
+            EntityNotFoundError("Widget-9000"),
+            entity_not_found_failure("Widget-9000"),
+        ),
+        (
+            EntityExtractionError("invalid extraction"),
+            query_understanding_failure("entity_resolution"),
+        ),
+        (
+            RoutePlanError("internal route error", "SECRET ROUTE RESPONSE"),
+            query_understanding_failure("routing"),
+        ),
         (
             OutputPlanningError("internal plan error", "SECRET PLAN RESPONSE"),
-            "planning",
+            query_understanding_failure("planning"),
         ),
     ],
 )
 async def test_chat_naturalizes_and_saves_user_correctable_early_failure(
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
-    internal_stage: str,
+    expected_failure: QueryFailure,
 ) -> None:
-    answer = "질문의 대상과 조건을 더 구체적으로 지정해 주세요."
-    openai_client = MockOpenAIClient(make_content_response(answer))
-    monkeypatch.setattr(chat_module, "get_openai_client", lambda: openai_client)
+    """LLM 호출 없이 안전 정보를 그대로 이어붙인 답을 저장·반환한다."""
+    answer = (
+        f"{expected_failure['user_safe_reason']} {expected_failure['suggested_action']}"
+    )
     write_pool = MockAsyncWritePool()
     monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
     app = FastAPI()
@@ -426,12 +454,10 @@ async def test_chat_naturalizes_and_saves_user_correctable_early_failure(
     assert result.cypher_query is None
     assert write_pool.committed is True
     assert write_pool.statements[0][1][2] == answer
-    prompt = str(openai_client.calls[0]["messages"])
-    assert internal_stage not in prompt
-    assert "SECRET ROUTE RESPONSE" not in prompt
-    assert "SECRET PLAN RESPONSE" not in prompt
-    assert "internal route error" not in prompt
-    assert "internal plan error" not in prompt
+    assert "SECRET ROUTE RESPONSE" not in answer
+    assert "SECRET PLAN RESPONSE" not in answer
+    assert "internal route error" not in answer
+    assert "internal plan error" not in answer
 
 
 async def test_chat_removes_raw_query_and_error_from_failed_response_and_history(
@@ -484,30 +510,6 @@ async def test_chat_preserves_successful_tool_attempts_on_partial_failure(
     assert "secret" not in json.dumps(
         result.graph_result.model_dump(), ensure_ascii=False
     )
-
-
-async def test_early_failure_answer_generation_error_does_not_save_history(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("OPENAI_MODEL", "test-model")
-    monkeypatch.setattr(
-        chat_module,
-        "get_openai_client",
-        lambda: MockOpenAIClient(MockChatCompletion(choices=[])),
-    )
-    write_pool = MockAsyncWritePool()
-    monkeypatch.setattr(chat_module, "get_write_pool", lambda: write_pool)
-    app = FastAPI()
-    app.state.graph = _RaisingGraph(EntityNotFoundError())
-
-    with pytest.raises(AnswerGenerationError):
-        await chat(
-            ChatRequest(query="없는 제품"),
-            request=Request({"type": "http", "app": app, "headers": []}),
-            user=CurrentUser(username="kim.quality", role="user"),
-        )
-
-    assert write_pool.statements == []
 
 
 async def test_chat_serializes_decimal_and_neo4j_datetime_results(
@@ -587,8 +589,11 @@ async def test_chat_serializes_decimal_and_neo4j_datetime_results(
         ChatRequest(
             query="정가와 등록일 알려줘.",
             confirmed_entity={
-                "productId": 956,
-                "productName": "Touring-1000 Yellow, 54",
+                "entity": {
+                    "productId": 956,
+                    "productName": "Touring-1000 Yellow, 54",
+                },
+                "forName": "Touring-1000 Yellow, 54",
             },
         ),
         request=_fake_request(),
@@ -635,6 +640,7 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
       "resultTransform": null
     }"""
     openai_client = MockOpenAIClient(
+        make_content_response("ON_TOPIC"),
         make_no_tool_call_response(),
         make_content_response(route_plan),
         make_output_plan_response(required_outputs=["productId"]),

@@ -1,4 +1,4 @@
-"""Route DAG, aligned binding, and formal transform structural contracts."""
+"""route DAG, 정렬된 binding 및 formal transform의 구조 계약을 테스트한다."""
 
 import json
 from functools import lru_cache

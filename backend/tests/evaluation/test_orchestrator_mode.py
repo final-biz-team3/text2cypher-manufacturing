@@ -13,8 +13,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class _FakeCompletions:
-    async def create(self, *args: Any, **kwargs: Any) -> str:
-        return "ok"
+    async def create(self, *args: Any, **kwargs: Any) -> Any:
+        return SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=120,
+                completion_tokens=30,
+                total_tokens=150,
+                prompt_tokens_details=SimpleNamespace(
+                    cached_tokens=80,
+                    cache_write_tokens=20,
+                ),
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=12),
+            )
+        )
+
+
+class _FakeCompletionsWithoutUsage:
+    async def create(self, *args: Any, **kwargs: Any) -> Any:
+        return SimpleNamespace()
 
 
 class _FakeGraph:
@@ -35,6 +51,15 @@ async def test_counting_client_measures_chat_completion_calls() -> None:
 
     assert client.call_count == 1
     assert client.model_elapsed_ms >= 0
+    assert client.snapshot()["modelTokenUsage"] == {
+        "reportedCallCount": 1,
+        "promptTokens": 120,
+        "cachedPromptTokens": 80,
+        "cacheWritePromptTokens": 20,
+        "completionTokens": 30,
+        "reasoningTokens": 12,
+        "totalTokens": 150,
+    }
     client.reset_case()
     assert client.snapshot() == {
         "modelCallCount": 0,
@@ -45,6 +70,15 @@ async def test_counting_client_measures_chat_completion_calls() -> None:
         "cacheWriteTokens": 0,
         "reasoningTokens": 0,
         "estimatedCostUsd": 0.0,
+        "modelTokenUsage": {
+            "reportedCallCount": 0,
+            "promptTokens": 0,
+            "cachedPromptTokens": 0,
+            "cacheWritePromptTokens": 0,
+            "completionTokens": 0,
+            "reasoningTokens": 0,
+            "totalTokens": 0,
+        },
     }
 
 
@@ -73,6 +107,19 @@ async def test_counting_client_records_tokens_and_estimated_cost() -> None:
     assert snapshot["cacheWriteTokens"] == 10
     assert snapshot["reasoningTokens"] == 5
     assert snapshot["estimatedCostUsd"] == pytest.approx(0.0000373)
+
+
+@pytest.mark.asyncio
+async def test_counting_client_tolerates_responses_without_usage() -> None:
+    raw = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FakeCompletionsWithoutUsage())
+    )
+    client = CountingOpenAIClient(raw)
+
+    await client.chat.completions.create(model="test")
+
+    assert client.snapshot()["modelCallCount"] == 1
+    assert client.snapshot()["modelTokenUsage"]["reportedCallCount"] == 0
 
 
 def test_orchestrator_mode_scores_production_state_and_attempts() -> None:

@@ -1,4 +1,4 @@
-"""Lossless output planning and structural finalization contracts."""
+"""손실 없는 output 계획과 구조적 마무리 계약을 테스트한다."""
 
 import asyncio
 from functools import lru_cache
@@ -75,14 +75,14 @@ def test_output_schema_uses_provider_supported_shape() -> None:
     assert schema["properties"]["requiredOutputs"]["minItems"] == 1
     assert "minItems" not in graph_schema["properties"]["requiredOutputs"]
     assert schema["required"] == ["requiredOutputs", "displayEntities"]
-    assert "graphResultMode" not in graph_schema["properties"]
     assert graph_schema["required"] == ["requiredOutputs", "displayEntities"]
+    assert "graphRelations" not in graph_schema["properties"]
 
 
 async def test_prompt_uses_composable_roles_without_query_family_recipes() -> None:
     client = MockOpenAIClient(
         make_output_plan_response(
-            required_outputs=["depth", "pathProductIds"],
+            required_outputs=[],
             display_entities=["component", "finishedProduct"],
         )
     )
@@ -100,13 +100,28 @@ async def test_prompt_uses_composable_roles_without_query_family_recipes() -> No
     system_prompt = client.calls[0]["messages"][0]["content"]
     user_prompt = client.calls[0]["messages"][1]["content"]
     assert "anchor에서" in system_prompt
-    assert "destination 순서" in system_prompt
+    assert "ordered path\n  projection의 방향 계약이 아닙니다" in system_prompt
     assert "고정 출력 묶음" in system_prompt
     assert "공급업체의 BOM 영향" not in system_prompt
     assert "작업지시의 공정과 작업장" not in system_prompt
     assert "resultGrain" not in system_prompt
     assert "provenance" in system_prompt
     assert "cardinality" in system_prompt
+    assert "고정된 anchor라도 결과 문맥과 grain" in system_prompt
+    assert "graphRelations" not in system_prompt
+    assert "graphQualifiers" not in system_prompt
+    assert "Cypher 생성 단계에서 결정합니다" in system_prompt
+    assert "물리 관계와 방향은 Cypher 생성 단계" in system_prompt
+    assert "path-preserving traversal" in system_prompt
+    assert "서로 다른 전체 경로가 결과 행을" in system_prompt
+    assert "짧은 endpoint 목록 표현이어도" in system_prompt
+    assert "depth와 ordered ID path" in system_prompt
+    assert "교집합·비교 결과" in system_prompt
+    assert "minimum path\n  length" in system_prompt
+    assert "계층·트리의\n  조상-자손 구조" in system_prompt
+    assert "사람이 읽는 결과 표현의 일부이면 ordered name path" in system_prompt
+    assert "endpoint 목록만 요구하면 name path는 추가하지 않습니다" in system_prompt
+    assert "순서값 자체를 결과로 요구" in system_prompt
     assert question in user_prompt
     assert "ROUTE_SCOPE_SENTINEL" not in user_prompt
 
@@ -257,20 +272,14 @@ async def test_sql_display_only_plan_is_retried_as_incomplete() -> None:
     ]
 
 
-def test_graph_path_rules_preserve_semantic_role_order_only() -> None:
+def test_graph_role_without_path_adds_no_generator_rule() -> None:
     plan = SemanticOutputPlan(
-        required_outputs=("depth", "pathProductIds"),
-        display_entities=("component", "finishedProduct"),
+        required_outputs=(),
+        display_entities=("finishedProduct",),
     )
     selected = compile_semantic_output_plan(plan, _catalog(), tool="graph")
 
-    rules = compile_graph_generator_rules(plan, _catalog(), selected)
-
-    assert len(rules) == 1
-    assert "component" in rules[0]
-    assert "finishedProduct" in rules[0]
-    assert rules[0].index("component") < rules[0].index("finishedProduct")
-    assert "physical MATCH path direction" in rules[0]
+    assert compile_graph_generator_rules(plan, _catalog(), selected) == []
 
 
 def test_non_path_graph_plan_adds_no_generator_rule() -> None:
@@ -283,7 +292,28 @@ def test_non_path_graph_plan_adds_no_generator_rule() -> None:
     assert compile_graph_generator_rules(plan, _catalog(), selected) == []
 
 
-def test_path_outputs_are_compiled_only_when_selected_directly() -> None:
+def test_graph_path_generator_rule_does_not_treat_display_order_as_direction() -> None:
+    catalog = _catalog()
+    component_first = SemanticOutputPlan(
+        required_outputs=("depth", "pathProductIds"),
+        display_entities=("component", "finishedProduct"),
+    )
+
+    rules = compile_graph_generator_rules(
+        component_first,
+        catalog,
+        compile_semantic_output_plan(component_first, catalog, tool="graph"),
+    )
+
+    assert len(rules) == 1
+    assert "component" not in rules[0]
+    assert "finishedProduct" not in rules[0]
+    assert "displayEntities 순서" in rules[0]
+    assert "required output 순서" in rules[0]
+    assert "물리 MATCH 방향" in rules[0]
+
+
+def test_graph_path_evidence_remains_a_direct_required_output() -> None:
     plan = SemanticOutputPlan(
         required_outputs=("depth", "pathProductIds"),
         display_entities=("component", "finishedProduct"),
@@ -297,17 +327,6 @@ def test_path_outputs_are_compiled_only_when_selected_directly() -> None:
         "finishedProductId",
         "finishedProductName",
     ]
-
-
-def test_path_names_are_not_added_to_id_only_path_selection() -> None:
-    plan = SemanticOutputPlan(
-        required_outputs=("depth", "pathProductIds"),
-        display_entities=("component", "finishedProduct"),
-    )
-
-    assert "pathProductNames" not in compile_semantic_output_plan(
-        plan, _catalog(), tool="graph"
-    )
 
 
 def test_physical_scalar_does_not_add_an_implicit_owner_role() -> None:
@@ -548,7 +567,7 @@ async def test_hybrid_output_planning_uses_scope_only_as_source_responsibility()
 ):
     client = MockOpenAIClient(
         make_output_plan_response(
-            required_outputs=[],
+            required_outputs=["depth", "pathProductIds"],
             display_entities=["component", "finishedProduct"],
         ),
         make_output_plan_response(
@@ -589,6 +608,8 @@ async def test_hybrid_output_planning_uses_scope_only_as_source_responsibility()
     assert f"original question: {original}" in sql_prompt
     assert f"source responsibility: {sql_scope}" in sql_prompt
     assert result["subqueries"][0]["requiredOutputs"] == [
+        "depth",
+        "pathProductIds",
         "componentId",
         "componentName",
         "finishedProductId",
@@ -612,7 +633,7 @@ async def test_independent_output_selection_calls_run_concurrently() -> None:
             if len(started) == 2:
                 both_started.set()
             await asyncio.wait_for(both_started.wait(), timeout=0.2)
-            output = "productCount" if tool == "sql" else "minDepth"
+            output = "productCount" if tool == "sql" else "sequence"
             return make_output_plan_response(
                 required_outputs=[output],
             )
@@ -640,7 +661,7 @@ async def test_independent_output_selection_calls_run_concurrently() -> None:
     assert started == ["sql", "graph"]
     assert [item["requiredOutputs"] for item in result["subqueries"]] == [
         ["productCount"],
-        ["minDepth"],
+        ["sequence"],
     ]
 
 
@@ -701,3 +722,6 @@ async def test_formal_transform_is_model_free_and_keeps_question_text() -> None:
     ]
     assert all(item["question"] == question for item in result["subqueries"])
     assert all(item.get("generatorRules") for item in result["subqueries"])
+    graph_rules = " ".join(result["subqueries"][0]["generatorRules"])
+    assert "parent assembly별 relationship 원본 값" in graph_rules
+    assert "composer가 productionQty를 정확히 한 번 적용" in graph_rules

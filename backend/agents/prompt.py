@@ -46,46 +46,45 @@ def build_prompt_messages(
     system_sections = [instructions.strip()]
     if source_scope:
         system_sections.append(
-            "Semantic authority:\n"
-            "- The original query is authoritative for requested facts, filters, "
-            "result grain, calculations, and output meaning.\n"
-            "- Source scope only narrows which source-owned portion to execute. "
-            "It must not add a filter, output, grain, calculation, or relationship "
-            "property that is not entailed by the original query.\n"
-            "- Required output aliases and Business rules are explicit execution "
-            "contracts and override conflicting wording in source scope."
+            "의미 결정 기준:\n"
+            "- 요청한 사실, filter, result grain, 계산 및 출력 의미는 원 질문을 "
+            "기준으로 한다.\n"
+            "- source scope는 해당 source가 담당하는 실행 범위만 좁힌다. 원 질문에서 "
+            "도출되지 않은 filter, output, grain, calculation 또는 relationship "
+            "property를 추가해서는 안 된다.\n"
+            "- required output alias와 business rule은 명시적인 실행 계약이며 source "
+            "scope의 충돌하는 문구보다 우선한다."
         )
-    system_sections.append(f"Schema:\n{schema_text.strip()}")
+    system_sections.append(f"물리 schema:\n{schema_text.strip()}")
 
     if semantic_context.strip():
-        system_sections.append("Semantic output catalog:\n" + semantic_context.strip())
+        system_sections.append("의미 출력 catalog:\n" + semantic_context.strip())
 
     if business_rules:
         formatted_rules = "\n".join(f"- {rule}" for rule in business_rules)
-        system_sections.append(f"Business rules:\n{formatted_rules}")
+        system_sections.append(f"업무 규칙:\n{formatted_rules}")
 
     if required_outputs:
         formatted_outputs = "\n".join(f"- {field}" for field in required_outputs)
         system_sections.append(
-            "Required output aliases:\n"
+            "필수 출력 alias:\n"
             f"{formatted_outputs}\n"
-            "Return every field above using the exact alias."
+            "위 모든 필드를 정확한 alias로 반환한다."
         )
 
     if input_bindings:
         system_sections.append(
-            "Input bindings are values returned by prerequisite queries. "
-            "Use every value in each array as an exact filter. Arrays produced "
-            "from the same prerequisite result are aligned by row index and "
-            "may contain duplicates."
+            "Input binding은 선행 query가 반환한 값이다. 각 배열의 모든 값을 정확한 "
+            "filter로 사용한다. 같은 선행 결과에서 생성된 배열은 행 index로 정렬되어 "
+            "있으며 중복을 포함할 수 있다."
         )
 
     if previous_query and previous_error is not None:
         system_sections.append(
-            "Previous attempt failed. Fix the issue below and generate a "
-            "corrected query that avoids the same problem:\n"
-            f"Previous query:\n{previous_query}\n"
-            f"Error:\n{previous_error}"
+            "이전 시도가 실패했다. 아래 문제를 수정하고 같은 문제를 피하는 보정된 "
+            "query를 생성한다:\n"
+            f"이전 query:\n{previous_query}\n"
+            f"오류:\n{previous_error}"
         )
 
     user_context: dict[str, Any] = {"query": query, "entity": entity}
