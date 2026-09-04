@@ -101,6 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir", type=Path, default=PROJECT_ROOT / "artifacts" / "t2c-eval"
     )
     parser.add_argument("--performance-baseline", type=Path)
+    parser.add_argument("--stability-policy", type=Path)
+    parser.add_argument("--ratchet-baseline", type=Path)
     return parser
 
 
@@ -123,10 +125,69 @@ def _load_performance_baseline(path: Path) -> dict[str, Any]:
             "caseIds": summary.get("evaluationSet", {}).get("caseIds"),
             "averageModelCallCount": metrics.get("averageModelCallCount"),
             "p95LatencyMs": metrics.get("p95LatencyMs"),
+            "averageModelTokensPerRun": metrics.get("averageModelTokensPerRun"),
+            "answerFallbackRate": metrics.get("answerFallbackRate"),
+            "answerFallbackReasonCounts": metrics.get("answerFallbackReasonCounts"),
         }
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise ConfigurationError(
             f"performance baseline artifact를 읽을 수 없습니다: {resolved}: {exc}"
+        ) from exc
+
+
+def _load_stability_policy(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    try:
+        payload = resolved.read_bytes()
+        policy = json.loads(payload)
+        if not isinstance(policy, dict) or not isinstance(policy.get("baseline"), dict):
+            raise TypeError("baseline object is missing")
+        if not isinstance(policy.get("cases"), dict):
+            raise TypeError("cases object is missing")
+        return {
+            **policy,
+            "artifact": str(resolved),
+            "policyArtifactSha256": hashlib.sha256(payload).hexdigest(),
+        }
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ConfigurationError(
+            f"stability policy를 읽을 수 없습니다: {resolved}: {exc}"
+        ) from exc
+
+
+def _load_ratchet_baseline(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    try:
+        payload = resolved.read_bytes()
+        document = json.loads(payload)
+        summary = document["summary"]
+        records = document["cases"]
+        if not isinstance(summary, dict) or not isinstance(records, list):
+            raise TypeError("summary/cases 형식이 잘못됐습니다")
+        records_by_case: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            if isinstance(record, dict) and isinstance(record.get("caseId"), str):
+                records_by_case.setdefault(record["caseId"], []).append(record)
+        pass_case_ids = sorted(
+            case_id
+            for case_id, case_records in records_by_case.items()
+            if case_records
+            and all(record.get("queryPipelinePass") is True for record in case_records)
+        )
+        return {
+            "artifact": str(resolved),
+            "artifactSha256": hashlib.sha256(payload).hexdigest(),
+            "workingTreeDirty": summary.get("workingTreeDirty"),
+            "model": summary.get("model"),
+            "reasoningEffort": summary.get("reasoningEffort"),
+            "snapshotSha256": summary.get("snapshot", {}).get("sha256"),
+            "executionMode": summary.get("metrics", {}).get("executionMode"),
+            "caseIds": summary.get("evaluationSet", {}).get("caseIds"),
+            "passCaseIds": pass_case_ids,
+        }
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ConfigurationError(
+            f"ratchet baseline artifact를 읽을 수 없습니다: {resolved}: {exc}"
         ) from exc
 
 
@@ -221,6 +282,16 @@ def main(argv: list[str] | None = None) -> int:
             if args.performance_baseline is not None
             else None
         )
+        stability_policy = (
+            _load_stability_policy(args.stability_policy)
+            if args.stability_policy is not None
+            else None
+        )
+        ratchet_baseline = (
+            _load_ratchet_baseline(args.ratchet_baseline)
+            if args.ratchet_baseline is not None
+            else None
+        )
         cases = _select_cases(
             manifest.cases,
             manifest.contracts,
@@ -313,6 +384,8 @@ def main(argv: list[str] | None = None) -> int:
             working_tree_dirty=working_tree_dirty,
             reasoning_effort=(None if args.validate_gold else args.reasoning_effort),
             performance_baseline=performance_baseline,
+            stability_policy=stability_policy,
+            ratchet_baseline=ratchet_baseline,
         )
         write_artifacts(args.output_dir, summary, result.records)
         print(json.dumps(summary, ensure_ascii=False, indent=2, default=str))

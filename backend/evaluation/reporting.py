@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from evaluation.gates import build_regression_gate
+from evaluation.gates import (
+    build_answer_quality_gate,
+    build_change_regression_gate,
+    build_cost_warnings,
+    build_regression_gate,
+)
 from evaluation.quality import build_quality_scorecard
 from evaluation.runner import EvaluationRun
 
@@ -493,6 +498,8 @@ def build_summary(
     working_tree_dirty: bool | None = None,
     reasoning_effort: str | None = None,
     performance_baseline: dict[str, Any] | None = None,
+    stability_policy: dict[str, Any] | None = None,
+    ratchet_baseline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metrics = calculate_metrics(result.records) if not validate_gold else {}
     summary: dict[str, Any] = {
@@ -543,11 +550,72 @@ def build_summary(
                 "compatibilityErrors": errors,
             }
             summary["performanceBaseline"] = performance_baseline
+        current_cases = summary["evaluationSet"]["caseIds"]
+        if stability_policy is not None:
+            policy_errors: list[str] = []
+            baseline = stability_policy.get("baseline", {})
+            if not isinstance(baseline, dict):
+                baseline = {}
+                policy_errors.append("stability policy baseline is invalid")
+            if working_tree_dirty is not False:
+                policy_errors.append("candidate working tree is not clean")
+            for key, current in (
+                ("model", model),
+                ("reasoningEffort", reasoning_effort),
+                ("snapshotSha256", result.snapshot.get("sha256")),
+            ):
+                if baseline.get(key) != current:
+                    policy_errors.append(f"stability policy {key} mismatch")
+            if baseline.get("executionMode") != metrics.get("executionMode"):
+                policy_errors.append("stability policy execution mode mismatch")
+            if sorted(stability_policy.get("cases", {})) != current_cases:
+                policy_errors.append("stability policy case set mismatch")
+            stability_policy = {
+                **stability_policy,
+                "compatible": not policy_errors,
+                "compatibilityErrors": policy_errors,
+            }
+            summary["stabilityPolicy"] = {
+                "artifact": stability_policy.get("artifact"),
+                "policyArtifactSha256": stability_policy.get("policyArtifactSha256"),
+                "baseline": baseline,
+                "compatible": not policy_errors,
+                "compatibilityErrors": policy_errors,
+            }
+        if ratchet_baseline is not None:
+            ratchet_errors: list[str] = []
+            if ratchet_baseline.get("workingTreeDirty") is not False:
+                ratchet_errors.append("ratchet baseline working tree is not clean")
+            if ratchet_baseline.get("executionMode") != "orchestrator":
+                ratchet_errors.append("ratchet baseline is not orchestrator mode")
+            for key, current in (
+                ("model", model),
+                ("reasoningEffort", reasoning_effort),
+                ("snapshotSha256", result.snapshot.get("sha256")),
+                ("caseIds", current_cases),
+            ):
+                if ratchet_baseline.get(key) != current:
+                    ratchet_errors.append(f"ratchet baseline {key} mismatch")
+            ratchet_baseline = {
+                **ratchet_baseline,
+                "compatibilityErrors": ratchet_errors,
+            }
         summary["regressionGate"] = build_regression_gate(
             result.records,
             metrics,
             performance_baseline,
         )
+        summary["changeRegressionGate"] = build_change_regression_gate(
+            result.records,
+            stability_policy,
+            ratchet_baseline,
+        )
+        summary["answerQualityGate"] = build_answer_quality_gate(
+            result.records,
+            metrics,
+            performance_baseline,
+        )
+        summary["costWarnings"] = build_cost_warnings(metrics, performance_baseline)
         summary["qualityScorecard"] = build_quality_scorecard(
             result.records,
             metrics,
@@ -923,6 +991,62 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                     f"상태: {cell(regression_gate.get('status', 'FAIL'))}",
                     "",
                     f"미통과: {cell(', '.join(failed_checks) or '-')}",
+                ]
+            )
+
+        change_gate = summary.get("changeRegressionGate")
+        if isinstance(change_gate, dict):
+            regression_ids = [
+                str(item.get("caseId"))
+                for item in change_gate.get("regressions", [])
+                if isinstance(item, dict)
+            ]
+            lines.extend(
+                [
+                    "",
+                    "## Change regression gate",
+                    "",
+                    f"상태: {cell(change_gate.get('status', 'NOT_EVALUATED'))}",
+                    "",
+                    f"신규 회귀: {cell(', '.join(regression_ids) or '-')}",
+                    "",
+                    "3회 재실행 필요: "
+                    f"{cell(', '.join(change_gate.get('rerunRequired', [])) or '-')}",
+                ]
+            )
+
+        answer_gate = summary.get("answerQualityGate")
+        if isinstance(answer_gate, dict):
+            reason_comparison = {}
+            dependent = answer_gate.get("g0DependentChecks", [])
+            if dependent and isinstance(dependent[0], dict):
+                reason_comparison = dependent[0].get("actual", {})
+            lines.extend(
+                [
+                    "",
+                    "## Answer quality gate",
+                    "",
+                    f"상태: {cell(answer_gate.get('status', 'NOT_EVALUATED'))}",
+                    "",
+                    f"fallback reason 비교: {cell(reason_comparison)}",
+                ]
+            )
+
+        cost_warnings = summary.get("costWarnings")
+        if isinstance(cost_warnings, dict):
+            warnings = [
+                str(item.get("reason"))
+                for item in cost_warnings.get("warnings", [])
+                if isinstance(item, dict)
+            ]
+            lines.extend(
+                [
+                    "",
+                    "## Cost warnings",
+                    "",
+                    f"상태: {cell(cost_warnings.get('status', 'NOT_EVALUATED'))}",
+                    "",
+                    f"경고: {cell(', '.join(warnings) or '-')}",
                 ]
             )
 

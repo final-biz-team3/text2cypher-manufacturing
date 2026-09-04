@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from evaluation.gates import build_regression_gate
+from evaluation.gates import (
+    build_answer_quality_gate,
+    build_change_regression_gate,
+    build_cost_warnings,
+    build_regression_gate,
+)
 from evaluation.reporting import (
     build_summary,
     calculate_metrics,
@@ -384,6 +389,100 @@ def test_performance_gate_compares_compatible_baseline() -> None:
 
     assert check["status"] == "PASS"
     assert check["actual"]["baselineArtifactSha256"] == "abc"
+
+
+def test_change_regression_gate_uses_g0_classification_and_ratchet() -> None:
+    policy = {
+        "cases": {
+            "RQ01": {"outcome": "CONSISTENT_PASS"},
+            "RQ02": {"outcome": "VARIABLE"},
+            "RQ03": {"outcome": "CONSISTENT_FAIL"},
+        },
+        "compatibilityErrors": [],
+    }
+    records = [
+        _record("RQ01", passed=True),
+        _record("RQ02", passed=False),
+        _record("RQ03", passed=False),
+    ]
+
+    gate = build_change_regression_gate(records, policy)
+
+    assert gate["status"] == "RERUN_REQUIRED"
+    assert gate["rerunRequired"] == ["RQ02"]
+    assert gate["regressions"] == []
+
+    records[0] = _record("RQ01", passed=False)
+    gate = build_change_regression_gate(records, policy)
+    assert gate["status"] == "FAIL"
+    assert gate["regressions"] == [
+        {"caseId": "RQ01", "reason": "G0_CONSISTENT_PASS_REGRESSION"}
+    ]
+
+    variable_three_fail = (
+        [_record("RQ01", passed=True, run=run) for run in (1, 2, 3)]
+        + [_record("RQ02", passed=False, run=run) for run in (1, 2, 3)]
+        + [_record("RQ03", passed=False, run=run) for run in (1, 2, 3)]
+    )
+    gate = build_change_regression_gate(variable_three_fail, policy)
+    assert {
+        "caseId": "RQ02",
+        "reason": "G0_VARIABLE_BECAME_CONSISTENT_FAIL",
+    } in gate["regressions"]
+
+    ratchet = {"passCaseIds": ["RQ03"], "compatibilityErrors": []}
+    gate = build_change_regression_gate(records, policy, ratchet)
+    assert {"caseId": "RQ03", "reason": "RATCHET_PASS_REGRESSION"} in gate[
+        "regressions"
+    ]
+
+
+def test_answer_quality_gate_separates_g0_dependent_checks() -> None:
+    record = _record("RQ01", passed=True)
+    record["answerGeneration"] = {
+        "mode": "fallback",
+        "attemptCount": 2,
+        "fallbackReason": "ungrounded_highlighted_value",
+        "validationRejected": True,
+    }
+    metrics = calculate_metrics([record])
+    baseline = {
+        "compatible": True,
+        "answerFallbackRate": 1.0,
+        "answerFallbackReasonCounts": {"finish_reason_length": 1},
+    }
+
+    gate = build_answer_quality_gate([record], metrics, baseline)
+
+    assert gate["status"] == "PASS"
+    assert gate["independentChecks"][0]["status"] == "PASS"
+    assert gate["g0DependentChecks"][0]["status"] == "PASS"
+    assert gate["g0DependentChecks"][0]["actual"]["currentReasons"] == {
+        "ungrounded_highlighted_value": 1
+    }
+
+
+def test_cost_thresholds_warn_without_changing_absolute_gate() -> None:
+    metrics = {
+        "p95LatencyMs": 121.0,
+        "averageModelTokensPerRun": 1_251.0,
+        "averageModelCallCount": 3.25,
+    }
+    baseline = {
+        "compatible": True,
+        "p95LatencyMs": 100.0,
+        "averageModelTokensPerRun": 1_000.0,
+        "averageModelCallCount": 3.0,
+    }
+
+    warnings = build_cost_warnings(metrics, baseline)
+
+    assert warnings["status"] == "WARN"
+    assert {item["metric"] for item in warnings["warnings"]} == {
+        "p95LatencyMs",
+        "averageModelTokensPerRun",
+        "averageModelCallCount",
+    }
 
 
 def test_report_is_compact_and_keeps_query_details_in_evaluation_json(

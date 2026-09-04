@@ -32,7 +32,9 @@ production `/chat`은 `dependsOn`·`inputBindings`에 따라 source를 실행하
 `joinKeys`로 내부 최종 데이터를 조합한다. 정규 평가 모드는 같은 production graph,
 binding, query retry와 composer를 실행한 뒤에만 source/final Gold를 읽어 채점한다.
 `--execution-mode source`는 기존 직접 생성 경로를 진단할 때만 사용한다. 자연어 최종
-답변 생성은 아직 범위 밖이므로 점수는 데이터 결과 정확도다.
+답변은 strict 정확도에는 포함하지 않지만 `answerGeneration` 메타데이터와 fallback·
+validator rejection 비율을 별도 단계로 기록한다. fallback은 질의 계획·실행 실패를
+의미하지 않으므로 `planningError`, `failureReasons`, `failureStage`를 만들지 않는다.
 
 ## 기본 실행
 
@@ -53,6 +55,18 @@ wrapper가 앞에 넣는 기본 옵션은 뒤에 전달한 같은 옵션으로 �
 인자 없이 실행하면 계속 canonical RQ01~RQ20만 1회 실행한다. 전체 90건은 비용과
 의도를 분명히 하기 위해 `--suite all --ids all`로 명시해서 실행한다.
 
+공식 기준선과 승격 평가는 현재 checkout이 아니라 detached clean worktree에서만
+실행한다. 기본 commit은 `HEAD`이며 전체 실행은 세 옵션을 모두 명시한다.
+
+```bash
+./scripts/run-t2q-evaluation-clean-worktree.sh \
+  --commit HEAD --suite all --ids all --runs 3
+```
+
+clean wrapper는 원 저장소의 ignored `.env`와 `backend/venv/bin/python`을 재사용하고,
+artifact와 두 audit 로그는 원 저장소의 절대 `artifacts/t2c-eval` 경로에 남긴다.
+다른 Python이 필요하면 기존 공식 변수 `EVAL_PYTHON`에 절대 실행 경로를 지정한다.
+
 Python은 `EVAL_PYTHON`, `backend/venv/bin/python`,
 `backend/venv/Scripts/python.exe`, 시스템 `python3` 순서로 선택한다. 결과는
 한국 시간과 실행 당시 커밋·작업 상태에 따라 다음 경로에 `report.md`,
@@ -72,7 +86,7 @@ artifacts/t2c-eval/YYYY-MM-DD/HHMMSS-커밋-clean|dirty/
 기존 Python CLI를 사용한다.
 
 ```bash
-PYTHONPATH=backend python -m evaluation \
+PYTHONPATH=backend backend/venv/bin/python -m evaluation \
   --suite canonical \
   --ids RQ01-RQ20 \
   --runs 1 \
@@ -87,6 +101,20 @@ PYTHONPATH=backend python -m evaluation \
 `--reasoning-effort`는 route와 SQL/Cypher 생성에 `medium`(기본값) 또는 `high`를
 적용하고 artifact에도 기록한다. 단순 구조 추출인 entity resolver는 이 옵션과
 무관하게 `none`을 유지한다.
+
+G0 90×3 artifact에서는 `backend/venv/bin/python -m evaluation.stability_policy`로
+`stability_policy.json`을 생성한다. 후보 전체 실행에는 G0 artifact를
+`--performance-baseline`, 정책 파일을 `--stability-policy`, 직전 clean 1×90
+artifact를 `--ratchet-baseline`으로 전달한다. `changeRegressionGate`는 G0의
+`CONSISTENT_PASS` 회귀, `VARIABLE`의 3/3 실패, 직전 회복 case의 재실패를 별도로
+차단한다. 단일 실행에서 실패한 G0 `VARIABLE`은 `RERUN_REQUIRED`로 표시한다.
+
+답변 게이트는 fallback 메타데이터 수집률 100%와 질의 실패 비오염을 독립적으로
+검증하고, G0 비교가 있을 때 candidate fallback rate가 증가하지 않았는지와 reason별
+분포를 비교한다. fallback 10%는 초기 SLO 가설일 뿐 고정 gate가 아니다. 실제 G0
+분모와 reason 분포를 확인한 뒤 목표를 정하며 grounding 검증을 완화해 수치를 맞추지
+않는다. 비용은 p95 지연 +20%, 평균 토큰/건 +25%, 평균 모델 호출 +0.25부터 WARN으로
+기록하고 기존 절대 승격 gate는 그대로 유지한다.
 
 ## 실행 주기와 비용
 

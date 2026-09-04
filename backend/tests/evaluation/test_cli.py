@@ -199,6 +199,8 @@ def test_parser_exposes_complexity_without_changing_defaults() -> None:
     assert parser.parse_args(["--execution-mode", "source"]).execution_mode == "source"
     assert parser.parse_args(["--suite", "complexity"]).suite == "complexity"
     assert parser.parse_args([]).performance_baseline is None
+    assert parser.parse_args([]).stability_policy is None
+    assert parser.parse_args([]).ratchet_baseline is None
 
 
 def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> None:
@@ -217,6 +219,9 @@ def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> N
                         "executionMode": "orchestrator",
                         "averageModelCallCount": 3.0,
                         "p95LatencyMs": 100.0,
+                        "averageModelTokensPerRun": 1_000.0,
+                        "answerFallbackRate": 0.1,
+                        "answerFallbackReasonCounts": {"length": 1},
                     },
                 }
             }
@@ -228,4 +233,46 @@ def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> N
 
     assert baseline["commit"] == "abc"
     assert baseline["averageModelCallCount"] == 3.0
+    assert baseline["averageModelTokensPerRun"] == 1_000.0
+    assert baseline["answerFallbackRate"] == 0.1
     assert len(baseline["artifactSha256"]) == 64
+
+
+def test_load_stability_policy_and_ratchet_baseline(tmp_path: Path) -> None:
+    policy_path = tmp_path / "stability_policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "policyVersion": 1,
+                "baseline": {"model": "test-model"},
+                "cases": {"RQ01": {"outcome": "CONSISTENT_PASS"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = cli._load_stability_policy(policy_path)
+    assert len(policy["policyArtifactSha256"]) == 64
+
+    evaluation_path = tmp_path / "evaluation.json"
+    evaluation_path.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "workingTreeDirty": False,
+                    "model": "test-model",
+                    "reasoningEffort": "medium",
+                    "snapshot": {"sha256": "snapshot"},
+                    "evaluationSet": {"caseIds": ["RQ01", "RQ02"]},
+                    "metrics": {"executionMode": "orchestrator"},
+                },
+                "cases": [
+                    {"caseId": "RQ01", "queryPipelinePass": True},
+                    {"caseId": "RQ02", "queryPipelinePass": False},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ratchet = cli._load_ratchet_baseline(evaluation_path)
+    assert ratchet["passCaseIds"] == ["RQ01"]
+    assert len(ratchet["artifactSha256"]) == 64
