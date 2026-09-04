@@ -288,17 +288,21 @@ async def chat(
             "ERROR"
             if final_status
             in {"repair_exhausted", "internal_failure", "infrastructure_failure"}
-            else "WARNING"
-            if final_status in {"partial_success", "policy_blocked"}
-            else "INFO"
+            else (
+                "WARNING"
+                if final_status in {"partial_success", "policy_blocked"}
+                else "INFO"
+            )
         )
         pipeline_outcome = (
             "blocked"
             if final_status == "policy_blocked"
-            else "failure"
-            if final_status
-            in {"repair_exhausted", "internal_failure", "infrastructure_failure"}
-            else "success"
+            else (
+                "failure"
+                if final_status
+                in {"repair_exhausted", "internal_failure", "infrastructure_failure"}
+                else "success"
+            )
         )
         raw_tool_results = (result.get("sql_result"), result.get("graph_result"))
         pipeline_failure = query_failure or next(

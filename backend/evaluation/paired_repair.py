@@ -256,18 +256,19 @@ def _summary(records: list[dict[str, Any]]) -> dict[str, Any]:
         count = len(selected)
         result["engines"][engine] = {
             "runs": count,
-            "executionSuccessRate": sum(bool(x["executionSuccess"]) for x in selected)
-            / count
-            if count
-            else 0,
-            "semanticPassRate": sum(bool(x["semanticPass"]) for x in selected) / count
-            if count
-            else 0,
-            "averageLatencyMs": round(
-                sum(float(x["latencyMs"]) for x in selected) / count, 3
-            )
-            if count
-            else 0,
+            "executionSuccessRate": (
+                sum(bool(x["executionSuccess"]) for x in selected) / count
+                if count
+                else 0
+            ),
+            "semanticPassRate": (
+                sum(bool(x["semanticPass"]) for x in selected) / count if count else 0
+            ),
+            "averageLatencyMs": (
+                round(sum(float(x["latencyMs"]) for x in selected) / count, 3)
+                if count
+                else 0
+            ),
             "modelCalls": sum(int(x["modelCallCount"]) for x in selected),
             "inputTokens": sum(int(x["inputTokens"]) for x in selected),
             "outputTokens": sum(int(x["outputTokens"]) for x in selected),
