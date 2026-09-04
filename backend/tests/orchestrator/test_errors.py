@@ -6,7 +6,6 @@ from orchestrator.errors import (
     EntityAmbiguousError,
     EntityNotFoundError,
     QueryInfrastructureError,
-    RetryExceededError,
 )
 
 
@@ -27,14 +26,6 @@ def test_entity_ambiguous_error_carries_candidates() -> None:
     assert error.status_code == 200
     assert error.code == "ENTITY_AMBIGUOUS"
     assert error.candidates == ["Product A", "Product B"]
-
-
-def test_retry_exceeded_error_has_422_status() -> None:
-    """재시도 상한 초과는 422다."""
-    error = RetryExceededError()
-
-    assert error.status_code == 422
-    assert error.code == "RETRY_EXCEEDED"
 
 
 def test_answer_generation_error_has_safe_502_contract() -> None:

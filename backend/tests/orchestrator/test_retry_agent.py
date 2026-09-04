@@ -72,6 +72,40 @@ def _make_subgraph(
     )
 
 
+async def test_initial_query_bypasses_only_first_generation_for_paired_evaluation() -> None:
+    generated: list[tuple[str | None, str | None]] = []
+    executed: list[str] = []
+
+    async def generate(state, previous_query, previous_error) -> str:
+        generated.append((previous_query, previous_error))
+        return "SELECT 1"
+
+    async def execute(query: str) -> list[dict]:
+        executed.append(query)
+        if query == "BROKEN QUERY":
+            raise ValueError("retryable")
+        return [{"count": 1}]
+
+    subgraph = make_retry_agent_subgraph(
+        logger=logger,
+        label="sql_agent",
+        generate=generate,
+        execute=execute,
+        connection_exceptions=(),
+        retryable_exceptions=(ValueError,),
+        empty_result_feedback="EMPTY",
+    )
+    state = _initial_state()
+    state["initial_query"] = "BROKEN QUERY"
+
+    result = await subgraph.ainvoke(state)
+
+    assert executed == ["BROKEN QUERY", "SELECT 1"]
+    assert generated == [("BROKEN QUERY", "쿼리를 실행하지 못했습니다.")]
+    assert result["attempt_count"] == 2
+    assert result["result"] == [{"count": 1}]
+
+
 async def test_guard_exception_does_not_propagate_and_is_not_retried() -> None:
     """가드 자체가 예외를 던져도(파싱 버그 등) 그래프 밖으로 raise되지 않고,
     execute도 호출되지 않으며, 재시도 대상으로도 취급되지 않는다."""

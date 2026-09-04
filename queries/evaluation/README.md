@@ -22,6 +22,44 @@ allowlist된 `bom_shortage_v1` 계산으로 경로별 BOM 수량, 재고와 외�
 - `all`: 독립 업무 계약 30개(canonical 20 + complexity 10)와 같은 계약의
   표현 변형 60개를 합한 전체 90 case
 
+### 자가수정 전후 비교 세트
+
+`self_correction_cases.json`은 기존에 Gold 결과가 고정된 계약 중 실패 가능성과
+복구 난도가 높은 24개를 선택한 비교 전용 세트다. SQL 8개, GRAPH 8개,
+HYBRID 8개로 균형을 맞췄으며 HYBRID에는 짧은 표현·구어체·조건 재배치 변형도
+포함한다. 새로운 Gold를 만들거나 운영 결과를 정답으로 사용하지 않고 기존 승인
+계약과 snapshot을 그대로 재사용한다.
+
+수정 전 기준선은 다음과 같이 실행한다. 모델 변동성을 줄이려면 공식 비교에서
+`--runs 3`을 사용한다.
+
+```bash
+PYTHONPATH=backend python -m evaluation \
+  --suite all \
+  --case-file queries/evaluation/self_correction_cases.json \
+  --runs 3 \
+  --output-dir artifacts/self-correction/baseline
+```
+
+자가수정 구현 후에는 동일 모델·reasoning effort·DB snapshot·case·runs를 유지하고
+기준선 artifact를 지정한다.
+
+```bash
+PYTHONPATH=backend python -m evaluation \
+  --suite all \
+  --case-file queries/evaluation/self_correction_cases.json \
+  --runs 3 \
+  --performance-baseline artifacts/self-correction/baseline/evaluation.json \
+  --output-dir artifacts/self-correction/candidate
+```
+
+후보 `report.md`의 `기준선 대비 변화`에는 엄격 파이프라인 정확도, 최종 결과
+정확도, 최초 실행 성공률, retry 복구율, 재시도 발생 수, 평균·p95 지연, 모델
+호출 수, 입력·출력 토큰과 추정 비용의 수정 전·후 값 및 변화량이 표시된다.
+`evaluation.json`에는 동일 비교값과 case별 시도 이력이 기계 판독 가능한 형태로
+남는다. 모델·snapshot·case가 다르거나 기준선이 dirty이면 호환성 FAIL로 표시하므로
+공식 개선 주장에 사용하지 않는다.
+
 robustness case ID의 `S`는 짧은 표현·문장 파편, `C`는 일상 구어체, `R`은
 동의어·조건 재배치를 뜻한다. 예를 들어 `RB01-S`, `RB01-C`, `RB01-R`은 모두
 RQ01 계약과 같은 파라미터·Gold로 채점된다. 단일 턴 평가이므로 RQ17과 RQ19처럼
@@ -149,6 +187,11 @@ CLI 인자로 받지 않으며 `POSTGRES_*`, `NEO4J_*`, `OPENAI_API_KEY` 환경�
 `report.md`, `evaluation.json`으로 남는다.
 
 주요 점수는 서로 대체하지 않는다.
+
+자가수정 V2는 최초 생성 프롬프트를 바꾸지 않고 실패한 요청에만 구조화된 안전 오류
+코드와 도구별 수정 지침을 제공한다. 기본값은 기존 동작인 `v1`이며 비교 평가 시
+`SQL_REPAIR_ENGINE=v2`, `CYPHER_REPAIR_ENGINE=v2`를 각각 또는 함께 설정한다.
+두 도구는 독립적으로 전환하고, 원본 DB 오류는 수정 프롬프트에 포함하지 않는다.
 
 - `queryPipelineAccuracy`: entity, route, HYBRID 전달·결합 계약, 안전한 실행과
   Gold 결과를 모두 통과한 비율. 자연어 최종 답변 E2E 점수는 아니다.

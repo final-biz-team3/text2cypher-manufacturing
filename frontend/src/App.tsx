@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { Dashboard } from '@/screens/Dashboard'
 import { OverviewDashboard } from '@/screens/OverviewDashboard'
+import { QueryFailureAdmin } from '@/screens/QueryFailureAdmin'
 import { LoginPage } from '@/pages/LoginPage'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { useUiStore } from '@/store/useUiStore'
@@ -55,6 +56,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/query-failures"
+          element={
+            <ProtectedRoute>
+              <QueryFailureAdmin />
             </ProtectedRoute>
           }
         />

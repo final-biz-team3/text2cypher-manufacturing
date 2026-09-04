@@ -1,0 +1,89 @@
+{
+  "description": "자가수정 일반화 검증용 홀드아웃 세트. 기존 Gold 데이터 계약은 재사용하지만 질문 문장은 개발·튜닝 세트와 겹치지 않는다.",
+  "cases": [
+    {
+      "caseId": "RB08-C",
+      "contractId": "RQ08",
+      "suite": "robustness",
+      "question": "Paint - Black은 지금 안전재고 기준으로 몇 개 모자라? 기준치와 보유량도 같이 보여줘.",
+      "parameters": {"productName": "Paint - Black"}
+    },
+    {
+      "caseId": "RB09-R",
+      "contractId": "RQ09",
+      "suite": "robustness",
+      "question": "판매 주문 수량을 합쳤을 때 가장 많이 팔린 판매 가능 제품 다섯 개는 뭐야?",
+      "parameters": {}
+    },
+    {
+      "caseId": "RB10-S",
+      "contractId": "RQ10",
+      "suite": "robustness",
+      "question": "납품 반려량 누계가 큰 거래처를 1위부터 5위까지 뽑아줘.",
+      "parameters": {}
+    },
+    {
+      "caseId": "RB11-C",
+      "contractId": "RQ11",
+      "suite": "robustness",
+      "question": "불량 폐기가 많이 난 작업오더 5건을 어떤 제품이고 무슨 사유였는지까지 정리해줘.",
+      "parameters": {}
+    },
+    {
+      "caseId": "RB12-R",
+      "contractId": "RQ12",
+      "suite": "robustness",
+      "question": "Paint - Black이 들어가는 최종 판매 제품을 BOM 네 단계 안에서 경로별로 찾아줘.",
+      "parameters": {"componentName": "Paint - Black", "bomAsOfDate": "2014-08-08", "maxDepth": 4}
+    },
+    {
+      "caseId": "RB14-S",
+      "contractId": "RQ14",
+      "suite": "robustness",
+      "question": "Allenson Cycles 납품 부품이 어느 판매 완제품들에 쓰이는지 BOM 영향 경로를 보여줘.",
+      "parameters": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4}
+    },
+    {
+      "caseId": "RB16-C",
+      "contractId": "RQ16",
+      "suite": "robustness",
+      "question": "HL Road Frame - Black, 58에서 Metal Sheet 5까지 이어지는 유효 BOM 연결선을 전부 추적해줘.",
+      "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "componentName": "Metal Sheet 5", "bomAsOfDate": "2014-08-08", "maxDepth": 4}
+    },
+    {
+      "caseId": "RB17-R",
+      "contractId": "RQ17",
+      "suite": "robustness",
+      "question": "Road-650 Black, 58과 Mountain-100 Black, 38의 BOM을 각각 네 단계 내려가서 공통 자재와 양쪽 최소 깊이를 비교해줘.",
+      "parameters": {"finishedProductNameA": "Road-650 Black, 58", "finishedProductNameB": "Mountain-100 Black, 38", "bomAsOfDate": "2014-08-08", "maxDepth": 4}
+    },
+    {
+      "caseId": "RB18-C",
+      "contractId": "RQ18",
+      "suite": "robustness",
+      "question": "Allenson Cycles 공급이 멈춘다고 가정하고 영향받는 판매 완제품 경로와 공급 부품별 재고 합계를 같이 알려줘.",
+      "parameters": {"supplierName": "Allenson Cycles", "bomAsOfDate": "2014-08-08", "maxDepth": 4}
+    },
+    {
+      "caseId": "RB19-R",
+      "contractId": "RQ19",
+      "suite": "robustness",
+      "question": "HL Road Frame - Black, 58 열 대 생산분을 준비할 때 재고가 모자라는 자재와 부족분, 조달처를 계산해줘.",
+      "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "productionQty": 10, "bomAsOfDate": "2014-08-08", "maxDepth": 4}
+    },
+    {
+      "caseId": "RB20-S",
+      "contractId": "RQ20",
+      "suite": "robustness",
+      "question": "작업오더 17747의 생산품과 폐기 내역을 공정 진행 순서 및 작업 위치와 묶어서 보여줘.",
+      "parameters": {"workOrderId": 17747}
+    },
+    {
+      "caseId": "RB09-C",
+      "contractId": "HQ09",
+      "suite": "robustness",
+      "question": "HL Road Frame - Black, 58의 말단 자재 중 현재 보유량이 안전재고선 아래인 것과 모자란 수량을 찾아줘.",
+      "parameters": {"finishedProductName": "HL Road Frame - Black, 58", "bomAsOfDate": "2014-08-08", "maxDepth": 4}
+    }
+  ]
+}

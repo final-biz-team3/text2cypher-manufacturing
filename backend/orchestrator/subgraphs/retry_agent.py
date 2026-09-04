@@ -6,6 +6,7 @@ sql_agent.py/cypher_agent.py는 완전히 대칭 구조라(생성 함수, 실행
 한 곳에 모아두고 각 모듈은 설정값만 주입한다."""
 
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from typing import Any, NotRequired, TypedDict
 
@@ -13,11 +14,19 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from starlette.concurrency import run_in_threadpool
 
+from core.observability.events import emit_event
+from core.observability.metrics import QUERY_ATTEMPTS, REPAIR_EXHAUSTED, REPAIRS
+from core.observability.privacy import query_hash, redact_query
 from orchestrator.errors import QueryInfrastructureError
 from orchestrator.execution.result import QueryResultBatch
 from orchestrator.guards.audit import log_guard_decision
 from orchestrator.guards.result import GuardResult
 from orchestrator.query_failures import make_query_failure
+from orchestrator.repair import (
+    RepairContext,
+    make_repair_context,
+    render_repair_feedback,
+)
 from orchestrator.state import QueryFailure, ToolName
 
 # 원본 1회 + 재시도 2회 = 총 3회
@@ -47,6 +56,9 @@ INCONCLUSIVE = "INCONCLUSIVE"
 
 class RetryAgentState(TypedDict):
     query: str
+    # 평가에서 V1/V2에 완전히 같은 최초 실패 쿼리를 주입할 때만 사용한다.
+    # 프로덕션 상태에는 이 값이 없으므로 기존 최초 생성 경로는 그대로다.
+    initial_query: NotRequired[str]
     source_scope: NotRequired[str]
     entity: dict | list[dict] | None
     schema: str
@@ -63,6 +75,10 @@ class RetryAgentState(TypedDict):
     input_bindings: NotRequired[dict[str, list[Any]]]
     business_rules: NotRequired[list[str]]
     failure: NotRequired[QueryFailure | None]
+    repair_context: NotRequired[RepairContext | None]
+    repair_issue_codes: NotRequired[list[str]]
+    failed_query: NotRequired[str | None]
+    generated_query: NotRequired[str | None]
 
 
 def _classify_empty_result(prior_attempts: list[dict]) -> str:
@@ -86,6 +102,9 @@ def make_retry_agent_subgraph(
     empty_result_feedback: str,
     guard: Callable[[str], GuardResult] | None = None,
     query_contract_error: Callable[[str, list[str]], str | None] | None = None,
+    classify_execution_error: Callable[[Exception], QueryFailure] | None = None,
+    repair_instructions: dict[str, tuple[str, ...]] | None = None,
+    repair_engine_env: str | None = None,
 ) -> CompiledStateGraph:
     """query/entity/schema를 state에서 읽어 쿼리 문자열을 생성하는 generate와,
     쿼리 문자열을 실행하는 execute를 주입받아 재시도 SubGraph를 만든다.
@@ -99,10 +118,36 @@ def make_retry_agent_subgraph(
     호출하지 않은 채 재시도 대상으로 처리한다(attempt_count에 포함)."""
 
     tool_name: ToolName = "sql" if label.startswith("sql") else "graph"
+    contract_issue_code = (
+        "SQL_OUTPUT_CONTRACT_FAILED"
+        if tool_name == "sql"
+        else "CYPHER_OUTPUT_CONTRACT_FAILED"
+    )
+    instructions_by_code = repair_instructions or {}
 
-    def feedback_text(error: str | None) -> str | None:
+    def repair_engine() -> str:
+        if repair_engine_env is None:
+            return "v1"
+        configured = os.getenv(repair_engine_env, "v1").strip().lower()
+        return configured if configured in {"v1", "v2"} else "v1"
+
+    def _internal_validation_error() -> QueryFailure:
+        return make_query_failure(
+            code="QUERY_VALIDATION_INTERNAL_ERROR",
+            stage="validation",
+            category="INTERNAL_QUERY_FAILURE",
+            kind="internal",
+            retryable=False,
+            user_safe_reason="질의를 검증하는 과정에서 내부 오류가 발생했습니다.",
+            suggested_action="잠시 후 다시 시도해 주세요.",
+            failed_tool=tool_name,
+        )
+
+    def feedback_text(error: str | None, context: RepairContext | None) -> str | None:
         if error is None:
             return None
+        if repair_engine() == "v2" and context is not None:
+            return render_repair_feedback(context)
         if error == EMPTY_RESULT_ERROR:
             return empty_result_feedback
         return error
@@ -110,11 +155,15 @@ def make_retry_agent_subgraph(
     async def agent(state: RetryAgentState) -> dict:
         previous_message = state["messages"][-1] if state["messages"] else None
         try:
-            query_text = await generate(
-                state,
-                previous_message["content"] if previous_message else None,
-                feedback_text(state.get("error")),
-            )
+            initial_query = state.get("initial_query")
+            if state.get("attempt_count", 0) == 0 and initial_query is not None:
+                query_text = initial_query
+            else:
+                query_text = await generate(
+                    state,
+                    previous_message["content"] if previous_message else None,
+                    feedback_text(state.get("error"), state.get("repair_context")),
+                )
         except QueryInfrastructureError:
             raise
         except Exception as exc:
@@ -122,12 +171,30 @@ def make_retry_agent_subgraph(
             # 호출하지 않는다. 공개 503 계약으로 즉시 fail-closed한다.
             logger.error("%s: 쿼리 생성 실패: %s", label, exc, exc_info=True)
             raise QueryInfrastructureError() from exc
+        attempt = state.get("attempt_count", 0) + 1
+        emit_event(
+            "query.generated",
+            "query",
+            tool=tool_name,
+            attempt=attempt,
+            max_attempts=MAX_ATTEMPTS,
+            query_hash=query_hash(query_text),
+            query_length=len(query_text),
+            generated_query=redact_query(query_text),
+        )
+        emit_event(
+            "query.attempt.started",
+            "query",
+            tool=tool_name,
+            attempt=attempt,
+            max_attempts=MAX_ATTEMPTS,
+        )
         return {
             "messages": [
                 *state["messages"],
                 {"role": "assistant", "content": query_text},
             ],
-            "attempt_count": state.get("attempt_count", 0) + 1,
+            "attempt_count": attempt,
             # RetryAgentState.retryable은 필수 필드지만 그래프 진입 시점의
             # 초기 상태(graph.py)에는 없을 수 있다. agent는 tools보다 항상
             # 먼저 실행되므로 여기서 기본값을 채워 should_retry가 첫 턴부터
@@ -142,12 +209,64 @@ def make_retry_agent_subgraph(
         def failure(
             message: str, *, retryable: bool, safe_failure: QueryFailure
         ) -> dict:
+            issue_code = safe_failure.get("code", "INTERNAL_QUERY_FAILURE")
+            failed_query = redact_query(query_text)
+            QUERY_ATTEMPTS.labels(tool_name, issue_code, "failure").inc()
+            emit_event(
+                "query.attempt.completed",
+                "query",
+                level="WARNING",
+                force=True,
+                tool=tool_name,
+                outcome="failure",
+                attempt=state.get("attempt_count", 0),
+                max_attempts=MAX_ATTEMPTS,
+                issue_code=issue_code,
+                failure_reason=safe_failure.get("user_safe_reason"),
+                failure_stage=safe_failure.get("stage"),
+                failure_category=safe_failure.get("category"),
+                retryable=retryable,
+                failed_query=failed_query,
+            )
+            emit_event(
+                "repair.decision.made",
+                "repair",
+                force=True,
+                tool=tool_name,
+                outcome="failure",
+                decision=(
+                    "retry"
+                    if retryable and state.get("attempt_count", 0) < MAX_ATTEMPTS
+                    else "stop"
+                ),
+                issue_code=issue_code,
+                failure_reason=safe_failure.get("user_safe_reason"),
+                failed_query=failed_query,
+                attempt=state.get("attempt_count", 0),
+                repair_engine=repair_engine(),
+            )
+            previous_codes = state.get("repair_issue_codes", [])
+            context = make_repair_context(
+                tool=tool_name,
+                attempt=state.get("attempt_count", 0),
+                failure=safe_failure,
+                exact_failure=message,
+                required_outputs=state.get("required_outputs", []),
+                repair_instructions=instructions_by_code.get(
+                    issue_code,
+                    instructions_by_code.get("default", ()),
+                ),
+                previous_issue_codes=previous_codes,
+            )
             return {
                 "error": message,
                 "result": None,
                 "attempts": [*attempts, {"query": query_text, "error": message}],
                 "retryable": retryable,
                 "failure": safe_failure,
+                "failed_query": failed_query,
+                "repair_context": context,
+                "repair_issue_codes": context["previous_issue_codes"],
             }
 
         if guard is not None:
@@ -166,16 +285,7 @@ def make_retry_agent_subgraph(
                 return failure(
                     "쿼리 검증 중 오류가 발생했습니다.",
                     retryable=False,
-                    safe_failure=make_query_failure(
-                        code="QUERY_VALIDATION_INTERNAL_ERROR",
-                        stage="validation",
-                        category="INTERNAL_QUERY_FAILURE",
-                        kind="internal",
-                        retryable=False,
-                        user_safe_reason="질의를 검증하는 과정에서 내부 오류가 발생했습니다.",
-                        suggested_action="잠시 후 다시 시도해 주세요.",
-                        failed_tool=tool_name,
-                    ),
+                    safe_failure=_internal_validation_error(),
                 )
 
             # 감사 로그 파일 쓰기(동기 I/O)가 이벤트 루프를 막지 않도록 스레드풀로 뺀다.
@@ -229,7 +339,7 @@ def make_retry_agent_subgraph(
                     contract_error,
                     retryable=True,
                     safe_failure=make_query_failure(
-                        code="QUERY_CONTRACT_FAILED",
+                        code=contract_issue_code,
                         stage="validation",
                         category="QUERY_INVALID",
                         kind="user_correctable",
@@ -248,10 +358,10 @@ def make_retry_agent_subgraph(
                 "timeout" in type(exc).__name__.lower()
                 or "canceled" in type(exc).__name__.lower()
             )
-            return failure(
-                str(exc),
-                retryable=True,
-                safe_failure=make_query_failure(
+            safe_failure = (
+                classify_execution_error(exc)
+                if classify_execution_error is not None
+                else make_query_failure(
                     code="QUERY_TIMEOUT" if is_timeout else "QUERY_EXECUTION_FAILED",
                     stage="execution",
                     category="TIMEOUT" if is_timeout else "QUERY_INVALID",
@@ -268,7 +378,12 @@ def make_retry_agent_subgraph(
                         else "조회 대상과 조건을 더 구체적으로 지정해 주세요."
                     ),
                     failed_tool=tool_name,
-                ),
+                )
+            )
+            return failure(
+                "쿼리를 실행하지 못했습니다.",
+                retryable=True,
+                safe_failure=safe_failure,
             )
         except connection_exceptions as exc:
             logger.error(
@@ -297,7 +412,7 @@ def make_retry_agent_subgraph(
                 exc_info=True,
             )
             return failure(
-                str(exc),
+                "질의 실행 중 내부 오류가 발생했습니다.",
                 retryable=False,
                 safe_failure=make_query_failure(
                     code="INTERNAL_QUERY_FAILURE",
@@ -339,6 +454,32 @@ def make_retry_agent_subgraph(
             )
             if can_retry_empty:
                 logger.info("%s: 결과 없음 - 1회 한정 재시도", label)
+                empty_issue_code = (
+                    "SQL_EMPTY_RESULT" if tool_name == "sql" else "CYPHER_EMPTY_RESULT"
+                )
+                empty_failure = make_query_failure(
+                    code=empty_issue_code,
+                    stage="result",
+                    category="EMPTY_RESULT",
+                    kind="user_correctable",
+                    retryable=True,
+                    user_safe_reason="조회가 정상 실행됐지만 결과가 없습니다.",
+                    suggested_action="조회 조건을 확인해 주세요.",
+                    failed_tool=tool_name,
+                )
+                previous_codes = state.get("repair_issue_codes", [])
+                context = make_repair_context(
+                    tool=tool_name,
+                    attempt=state.get("attempt_count", 0),
+                    failure=empty_failure,
+                    exact_failure=empty_result_feedback,
+                    required_outputs=state.get("required_outputs", []),
+                    repair_instructions=instructions_by_code.get(
+                        empty_issue_code,
+                        instructions_by_code.get("default", ()),
+                    ),
+                    previous_issue_codes=previous_codes,
+                )
                 return {
                     "error": EMPTY_RESULT_ERROR,
                     "result": result,
@@ -347,6 +488,8 @@ def make_retry_agent_subgraph(
                     "empty_retried": True,
                     "truncated": truncated,
                     "failure": None,
+                    "repair_context": context,
+                    "repair_issue_codes": context["previous_issue_codes"],
                 }
             reason = _classify_empty_result(attempts)
             logger.info("%s: 결과 없음으로 최종 수용 (%s)", label, reason)
@@ -358,6 +501,7 @@ def make_retry_agent_subgraph(
                 "retryable": False,
                 "truncated": truncated,
                 "failure": None,
+                "generated_query": redact_query(query_text),
             }
 
         required_outputs = state.get("required_outputs", [])
@@ -373,7 +517,7 @@ def make_retry_agent_subgraph(
                     f"결과의 {row_index}번 행에 필수 alias가 없습니다: {aliases}",
                     retryable=True,
                     safe_failure=make_query_failure(
-                        code="QUERY_CONTRACT_FAILED",
+                        code=contract_issue_code,
                         stage="validation",
                         category="QUERY_INVALID",
                         kind="user_correctable",
@@ -384,6 +528,26 @@ def make_retry_agent_subgraph(
                     ),
                 )
 
+        QUERY_ATTEMPTS.labels(tool_name, "none", "success").inc()
+        if state.get("attempt_count", 0) > 1:
+            REPAIRS.labels(tool_name, "none", "success", repair_engine()).inc()
+            emit_event(
+                "repair.completed",
+                "repair",
+                force=True,
+                tool=tool_name,
+                attempt=state.get("attempt_count", 0),
+                repair_engine=repair_engine(),
+            )
+        emit_event(
+            "query.attempt.completed",
+            "query",
+            tool=tool_name,
+            attempt=state.get("attempt_count", 0),
+            max_attempts=MAX_ATTEMPTS,
+            row_count=len(result),
+            generated_query=redact_query(query_text),
+        )
         return {
             "result": result,
             "error": None,
@@ -392,6 +556,7 @@ def make_retry_agent_subgraph(
             "retryable": False,
             "truncated": truncated,
             "failure": None,
+            "generated_query": redact_query(query_text),
         }
 
     def should_retry(state: RetryAgentState) -> str:
@@ -400,6 +565,26 @@ def make_retry_agent_subgraph(
         if not state.get("retryable", False):
             return "done"
         if state["attempt_count"] >= MAX_ATTEMPTS:
+            failure: QueryFailure | dict[str, Any] = state.get("failure") or {}
+            issue_code = failure.get("code", "INTERNAL_QUERY_FAILURE")
+            REPAIR_EXHAUSTED.labels(tool_name, issue_code).inc()
+            REPAIRS.labels(tool_name, issue_code, "failure", repair_engine()).inc()
+            emit_event(
+                "repair.exhausted",
+                "repair",
+                level="ERROR",
+                force=True,
+                tool=tool_name,
+                outcome="failure",
+                issue_code=issue_code,
+                failure_reason=failure.get("user_safe_reason"),
+                failure_stage=failure.get("stage"),
+                failure_category=failure.get("category"),
+                failed_query=state.get("failed_query"),
+                attempt=state["attempt_count"],
+                max_attempts=MAX_ATTEMPTS,
+                repair_engine=repair_engine(),
+            )
             return "done"
         return "retry"
 

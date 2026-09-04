@@ -10,6 +10,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from core.observability.context import get_request_context
+from core.observability.events import emit_event
+
 _LOGGER_NAME = "orchestrator.guard_audit"
 
 _configured_handler: logging.Handler | None = None
@@ -65,11 +68,26 @@ def log_guard_decision(
     reason: str | None,
 ) -> None:
     """쿼리 가드 판정 하나를 JSON Lines 한 줄로 기록한다."""
+    context = get_request_context()
     record: dict[str, Any] = {
+        "event_version": 1,
+        "request_id": context.request_id if context else None,
+        "service_version": os.getenv("SERVICE_VERSION", "dev"),
         "query_type": query_type,
-        "intent": intent,
+        "intent": "[REDACTED]",
         "decision": decision,
         "stage": stage,
         "reason": reason,
     }
     _get_logger().info(json.dumps(record, ensure_ascii=False))
+    emit_event(
+        "audit.guard.decision",
+        "audit",
+        force=True,
+        route=context.route if context else "UNKNOWN",
+        tool="sql" if query_type.startswith("sql") else "graph",
+        outcome="success" if decision == "ALLOW" else "blocked",
+        decision=decision,
+        stage=stage,
+        issue_code=reason,
+    )

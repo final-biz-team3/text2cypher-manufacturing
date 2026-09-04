@@ -32,17 +32,6 @@ class EntityAmbiguousError(AppError):
         self.candidates = candidates
 
 
-# self-correction 재시도 횟수 초과용으로 정의됐으나, 재시도 루프는 소진 시에도
-# raise하지 않고 error 필드를 유지한 채 정상 종료하도록 구현돼 실제로는 쓰이지 않는다
-class RetryExceededError(AppError):
-    def __init__(self) -> None:
-        super().__init__(
-            422,
-            "RETRY_EXCEEDED",
-            "질의를 처리하지 못했습니다. 질문을 더 구체적으로 입력해 주세요.",
-        )
-
-
 class AnswerGenerationError(AppError):
     """조회는 끝났지만 사용자용 자연어 답변을 신뢰할 수 없을 때 사용한다."""
 

@@ -24,6 +24,8 @@ from orchestrator.cypher_contracts import (
     has_relationship_list_used_as_path,
 )
 from orchestrator.guards.cypher_guard import make_cypher_guard
+from orchestrator.query_failures import make_query_failure
+from orchestrator.state import QueryFailure
 from orchestrator.subgraphs.retry_agent import (
     RetryAgentState,
     make_retry_agent_subgraph,
@@ -93,6 +95,52 @@ _EMPTY_RESULT_FEEDBACK = (
     "탐색 조건(관계 방향, 라벨, 필터)이 지나치게 좁게 걸려 있지 않은지 "
     "다시 검토하세요."
 )
+
+_REPAIR_INSTRUCTIONS = {
+    "CYPHER_SYNTAX_ERROR": ("Neo4j 5 문법으로 잘못된 절을 최소 변경하세요.",),
+    "CYPHER_TYPE_ERROR": ("함수와 연산자가 받는 값의 Cypher 타입을 맞추세요.",),
+    "CYPHER_TIMEOUT": (
+        "질문의 필터를 제거하지 말고 탐색 깊이와 중복 경로를 줄이세요.",
+    ),
+    "CYPHER_OUTPUT_CONTRACT_FAILED": (
+        "RETURN 목록 외의 MATCH, OPTIONAL MATCH, WHERE, WITH, 경로 깊이와 관계 방향은 변경하지 마세요.",
+        "누락되거나 잘못된 output alias만 최소 수정하세요.",
+        "required output을 정확한 대소문자의 alias로 모두 RETURN하세요.",
+    ),
+    "CYPHER_EMPTY_RESULT": (
+        "식별자와 질문의 필수 조건은 유지하세요.",
+        "경로 전체를 재작성하지 말고 불필요하게 좁은 조건 하나만 찾아 수정하세요.",
+    ),
+    "default": (
+        "질문의 의미, 관계 방향, input binding과 required output을 보존하세요.",
+        "허용된 label, relationship, property만 사용한 읽기 전용 Cypher를 반환하세요.",
+    ),
+}
+
+
+def _classify_execution_error(exc: Exception) -> QueryFailure:
+    if isinstance(exc, _CypherQueryTimeoutError):
+        code, category = "CYPHER_TIMEOUT", "TIMEOUT"
+        reason = "그래프 조회가 제한 시간 안에 완료되지 않았습니다."
+    elif isinstance(exc, CypherTypeError):
+        code, category = "CYPHER_TYPE_ERROR", "QUERY_INVALID"
+        reason = "생성된 Cypher에서 값과 연산자의 타입이 맞지 않습니다."
+    elif isinstance(exc, ConstraintError):
+        code, category = "CYPHER_CONSTRAINT_ERROR", "QUERY_INVALID"
+        reason = "생성된 Cypher가 그래프 제약 조건을 만족하지 못했습니다."
+    else:
+        code, category = "CYPHER_SYNTAX_ERROR", "QUERY_INVALID"
+        reason = "생성된 Cypher의 Neo4j 문법을 해석하지 못했습니다."
+    return make_query_failure(
+        code=code,
+        stage="execution",
+        category=category,
+        kind="user_correctable",
+        retryable=True,
+        user_safe_reason=reason,
+        suggested_action="조회 대상과 관계 조건을 더 구체적으로 지정해 주세요.",
+        failed_tool="graph",
+    )
 
 
 def _query_contract_error(cypher: str, required_outputs: list[str]) -> str | None:
@@ -178,4 +226,7 @@ def make_cypher_agent_subgraph(
         empty_result_feedback=_EMPTY_RESULT_FEEDBACK,
         guard=make_cypher_guard(graph_schema),
         query_contract_error=_query_contract_error,
+        classify_execution_error=_classify_execution_error,
+        repair_instructions=_REPAIR_INSTRUCTIONS,
+        repair_engine_env="CYPHER_REPAIR_ENGINE",
     )

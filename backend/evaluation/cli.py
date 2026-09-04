@@ -111,7 +111,7 @@ def _load_performance_baseline(path: Path) -> dict[str, Any]:
         document = json.loads(payload)
         summary = document["summary"]
         metrics = summary["metrics"]
-        return {
+        baseline = {
             "artifact": str(resolved),
             "artifactSha256": hashlib.sha256(payload).hexdigest(),
             "commit": summary.get("commit"),
@@ -124,6 +124,28 @@ def _load_performance_baseline(path: Path) -> dict[str, Any]:
             "averageModelCallCount": metrics.get("averageModelCallCount"),
             "p95LatencyMs": metrics.get("p95LatencyMs"),
         }
+        for key in (
+            "queryPipelineAccuracy",
+            "finalResultAccuracy",
+            "firstAttemptExecutionRate",
+            "retryRecoveryRate",
+            "retryPipelineRecoveryRate",
+            "retryRecoveredExecutionRuns",
+            "retryRecoveredPipelineRuns",
+            "retryAttemptedRuns",
+            "averageLatencyMs",
+            "totalInputTokens",
+            "totalOutputTokens",
+            "totalCachedInputTokens",
+            "totalCacheWriteTokens",
+            "totalReasoningTokens",
+            "totalEstimatedCostUsd",
+            "averageInputTokens",
+            "averageOutputTokens",
+            "averageEstimatedCostUsd",
+        ):
+            baseline[key] = metrics.get(key)
+        return baseline
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise ConfigurationError(
             f"performance baseline artifact를 읽을 수 없습니다: {resolved}: {exc}"

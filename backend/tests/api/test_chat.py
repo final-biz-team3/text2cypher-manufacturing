@@ -626,7 +626,7 @@ async def test_chat_keeps_source_results_but_hides_internal_composition_error(
         {
           "id": "graph_followup",
           "tool": "graph",
-          "question": "관련 경로를 조회한다.",
+          "question": "관련 그래프 사실을 조회한다.",
           "dependsOn": [],
           "joinKeys": ["productId"],
           "inputBindings": []

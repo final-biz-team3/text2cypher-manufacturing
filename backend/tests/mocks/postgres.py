@@ -124,6 +124,9 @@ class _MockAsyncWriteCursor:
     async def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
 
+    async def fetchone(self) -> tuple[Any, ...] | None:
+        return self._rows[0] if self._rows else (1,)
+
 
 class _WriteConnectionContext:
     def __init__(self, pool: "MockAsyncWritePool") -> None:

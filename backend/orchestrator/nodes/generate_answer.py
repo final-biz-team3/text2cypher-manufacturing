@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from core.observability.model_calls import observe_model_call
 from orchestrator.errors import AnswerGenerationError, QueryInfrastructureError
 from orchestrator.nodes.answer_limits import build_answer_context
 from orchestrator.numeric_literals import (
@@ -357,10 +358,7 @@ def _build_messages(query: str, context: Mapping[str, Any]) -> list[dict[str, st
         {
             "role": "user",
             "content": (
-                "사용자 질문:\n"
-                f"{query}\n\n"
-                "검증된 답변 데이터(JSON):\n"
-                f"{context_json}"
+                f"사용자 질문:\n{query}\n\n검증된 답변 데이터(JSON):\n{context_json}"
             ),
         },
     ]
@@ -385,10 +383,14 @@ async def _generate_markdown_answer(
         )
         if max_output_tokens <= 0:
             raise ValueError("ANSWER_MAX_OUTPUT_TOKENS must be positive.")
-        response = await openai_client.chat.completions.create(
-            model=model,
-            messages=_build_messages(query, context),
-            max_completion_tokens=max_output_tokens,
+        response = await observe_model_call(
+            "generate_answer",
+            model,
+            openai_client.chat.completions.create(
+                model=model,
+                messages=_build_messages(query, context),
+                max_completion_tokens=max_output_tokens,
+            ),
         )
         if not response.choices:
             logger.warning("답변 생성 실패(LLM 응답에 choices 없음)")
@@ -467,21 +469,25 @@ async def generate_failure_answer(
         )
         if max_output_tokens <= 0:
             raise ValueError("FAILURE_ANSWER_MAX_OUTPUT_TOKENS must be positive.")
-        response = await openai_client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "developer", "content": _FAILURE_ANSWER_INSTRUCTIONS},
-                {
-                    "role": "user",
-                    "content": (
-                        "사용자 질문:\n"
-                        f"{query}\n\n"
-                        "안전 실패 정보(JSON):\n"
-                        f"{context_json}"
-                    ),
-                },
-            ],
-            max_completion_tokens=max_output_tokens,
+        response = await observe_model_call(
+            "generate_answer",
+            model,
+            openai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "developer", "content": _FAILURE_ANSWER_INSTRUCTIONS},
+                    {
+                        "role": "user",
+                        "content": (
+                            "사용자 질문:\n"
+                            f"{query}\n\n"
+                            "안전 실패 정보(JSON):\n"
+                            f"{context_json}"
+                        ),
+                    },
+                ],
+                max_completion_tokens=max_output_tokens,
+            ),
         )
         if not response.choices:
             raise AnswerGenerationError()

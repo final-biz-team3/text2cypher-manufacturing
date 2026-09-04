@@ -30,8 +30,7 @@ def test_sql_guard_allows_read_only_with_cte() -> None:
     guard = make_sql_guard(_SCHEMA)
 
     result = guard(
-        "WITH p AS (SELECT productid FROM production.product) "
-        "SELECT productid FROM p"
+        "WITH p AS (SELECT productid FROM production.product) SELECT productid FROM p"
     )
 
     assert result.allowed is True
@@ -83,9 +82,7 @@ def test_sql_guard_blocks_do_block() -> None:
     WRITE_KEYWORD_DETECTED로 잡혀야 한다."""
     guard = make_sql_guard(_SCHEMA)
 
-    result = guard(
-        "DO $$ BEGIN " "UPDATE production.product SET name = 'x'; " "END $$;"
-    )
+    result = guard("DO $$ BEGIN UPDATE production.product SET name = 'x'; END $$;")
 
     assert result.allowed is False
     assert result.reason_code == "WRITE_KEYWORD_DETECTED"
@@ -260,8 +257,7 @@ def test_sql_guard_allows_with_recursive() -> None:
     guard = make_sql_guard(_SCHEMA)
 
     result = guard(
-        "WITH RECURSIVE x AS (SELECT productid FROM production.product) "
-        "SELECT * FROM x"
+        "WITH RECURSIVE x AS (SELECT productid FROM production.product) SELECT * FROM x"
     )
 
     assert result.allowed is True

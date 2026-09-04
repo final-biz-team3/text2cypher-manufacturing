@@ -5,6 +5,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from core.observability.events import emit_event
+from core.observability.metrics import TOOL_EXECUTIONS, TOOL_SKIPS
 from orchestrator.bindings import collect_input_bindings
 from orchestrator.planning import Subquery
 from orchestrator.query_failures import make_query_failure
@@ -57,6 +59,7 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         "empty_reason": result.get("empty_reason"),
         "truncated": result.get("truncated", False),
         "failure": result.get("failure"),
+        "failed_query": result.get("failed_query"),
     }
 
 
@@ -196,6 +199,18 @@ def make_execute_plan_node(
 
             if failed_dependencies:
                 summary = _dependency_failure(failed_dependencies)
+                TOOL_SKIPS.labels(
+                    "UNKNOWN", subquery["tool"], "DEPENDENCY_FAILED"
+                ).inc()
+                emit_event(
+                    "tool.execution.skipped",
+                    "pipeline",
+                    force=True,
+                    tool=subquery["tool"],
+                    outcome="skipped",
+                    subquery_id=subquery["id"],
+                    skip_reason="DEPENDENCY_FAILED",
+                )
                 return query_field, result_field, None, summary
             if empty_dependencies:
                 summary = _dependency_empty(
@@ -203,6 +218,16 @@ def make_execute_plan_node(
                         outcomes[dependency_id].get("empty_reason")
                         for dependency_id in empty_dependencies
                     ]
+                )
+                TOOL_SKIPS.labels("UNKNOWN", subquery["tool"], "DEPENDENCY_EMPTY").inc()
+                emit_event(
+                    "tool.execution.skipped",
+                    "pipeline",
+                    force=True,
+                    tool=subquery["tool"],
+                    outcome="skipped",
+                    subquery_id=subquery["id"],
+                    skip_reason="DEPENDENCY_EMPTY",
                 )
                 return query_field, result_field, None, summary
 
@@ -215,6 +240,12 @@ def make_execute_plan_node(
                     exc,
                 )
                 return query_field, result_field, None, _input_binding_failure()
+            emit_event(
+                "tool.execution.started",
+                "pipeline",
+                tool=subquery["tool"],
+                subquery_id=subquery["id"],
+            )
             result = await agents[subquery["tool"]].ainvoke(
                 _initial_state(
                     subquery=subquery,
@@ -225,6 +256,26 @@ def make_execute_plan_node(
                 )
             )
             summary = _result_summary(result)
+            outcome = "failure" if summary.get("error") else "success"
+            failure = summary.get("failure") or {}
+            TOOL_EXECUTIONS.labels("UNKNOWN", subquery["tool"], outcome).inc()
+            emit_event(
+                (
+                    "tool.execution.completed"
+                    if outcome == "success"
+                    else "tool.execution.failed"
+                ),
+                "pipeline",
+                force=outcome == "failure",
+                level="ERROR" if outcome == "failure" else "INFO",
+                tool=subquery["tool"],
+                outcome=outcome,
+                subquery_id=subquery["id"],
+                issue_code=failure.get("code"),
+                failure_reason=failure.get("user_safe_reason"),
+                failure_stage=failure.get("stage"),
+                failed_query=summary.get("failed_query"),
+            )
             return query_field, result_field, result["messages"][-1]["content"], summary
 
         pending = list(state.get("subqueries", []))

@@ -60,29 +60,34 @@ services:
     build: ./backend
     container_name: backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8001:8000"
+    # 연결 정보와 비밀값은 현재 프로젝트의 .env를 단일 원본으로 사용한다.
+    # `${VAR}` 보간은 실행 셸 환경변수가 .env보다 우선하므로 여기서는 쓰지 않는다.
+    env_file:
+      - .env
     environment:
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: ${NEO4J_USER}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      NEO4J_READER_USER: ${NEO4J_READER_USER}
-      NEO4J_READER_PASSWORD: ${NEO4J_READER_PASSWORD}
-      NEO4J_QUERY_TIMEOUT_SEC: ${NEO4J_QUERY_TIMEOUT_SEC:-10}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-adventureworks}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       APP_ENV: ${APP_ENV:-development}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       SQL_STATEMENT_TIMEOUT_MS: ${SQL_STATEMENT_TIMEOUT_MS:-5000}
       POSTGRES_POOL_MIN_SIZE: ${POSTGRES_POOL_MIN_SIZE:-1}
       POSTGRES_POOL_MAX_SIZE: ${POSTGRES_POOL_MAX_SIZE:-5}
       POSTGRES_WRITE_POOL_MIN_SIZE: ${POSTGRES_WRITE_POOL_MIN_SIZE:-1}
       POSTGRES_WRITE_POOL_MAX_SIZE: ${POSTGRES_WRITE_POOL_MAX_SIZE:-2}
       SQL_ROW_LIMIT: ${SQL_ROW_LIMIT:-200}
+      OBSERVABILITY_ENABLED: ${OBSERVABILITY_ENABLED:-true}
+      # 실패 로그의 클릭 상세에 값이 마스킹된 SQL/Cypher를 표시한다.
+      # 운영 환경에서는 OBS_LOG_FAILED_QUERY=false로 끌 수 있다.
+      OBS_LOG_FAILED_QUERY: ${OBS_LOG_FAILED_QUERY:-true}
+      OBS_LOG_FAILED_QUERY_MAX_CHARS: ${OBS_LOG_FAILED_QUERY_MAX_CHARS:-4000}
+      # 질문은 이메일·전화번호·토큰·긴 숫자 등을 마스킹한 미리보기만 남긴다.
+      OBS_LOG_QUESTION_PREVIEW: ${OBS_LOG_QUESTION_PREVIEW:-true}
+      DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-dev}
+      SERVICE_VERSION: ${SERVICE_VERSION:-dev}
+      QUESTION_FINGERPRINT_SECRET: ${QUESTION_FINGERPRINT_SECRET:-development-only-question-fingerprint-key}
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-development-only-metrics-token}
       ENTITY_SIMILARITY_THRESHOLD: ${ENTITY_SIMILARITY_THRESHOLD:-0.3}
       ENTITY_CANDIDATE_LIMIT: ${ENTITY_CANDIDATE_LIMIT:-5}
+      SQL_REPAIR_ENGINE: ${SQL_REPAIR_ENGINE:-v1}
+      CYPHER_REPAIR_ENGINE: ${CYPHER_REPAIR_ENGINE:-v1}
     depends_on:
       neo4j:
         condition: service_started
@@ -90,13 +95,50 @@ services:
         condition: service_healthy  # postgres 준비 완료 후 백엔드 시작
     volumes:
       - ./backend:/app
+      - ./queries:/queries:ro
       - ./schema:/schema:ro
       - ./ontology:/ontology:ro
     # 이 컨테이너는 항상 Linux라 --loop none이 필요 없다(그 플래그는
     # Windows 호스트에서 ProactorEventLoop를 우회하기 위한 것 - main.py 참고).
     # 여기서 강제로 걸면 uvicorn의 자동 uvloop 적용만 이유 없이 막힌다.
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+
+  prometheus:
+    image: prom/prometheus:v3.13.0
+    profiles: ["observability"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d", "--storage.tsdb.retention.size=10GB"]
+    environment: {METRICS_SCRAPE_TOKEN: "${METRICS_SCRAPE_TOKEN:-development-only-metrics-token}"}
+    ports: ["127.0.0.1:9090:9090"]
+    volumes: ["./observability/prometheus:/etc/prometheus:ro", "prometheus_data:/prometheus"]
+
+  loki:
+    image: grafana/loki:3.7.6
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/loki.yml"]
+    ports: ["127.0.0.1:3100:3100"]
+    volumes: ["./observability/loki/loki.yml:/etc/loki/loki.yml:ro", "loki_data:/loki"]
+
+  alloy:
+    image: grafana/alloy:v1.19.0
+    profiles: ["observability"]
+    command: ["run", "/etc/alloy/config.alloy", "--server.http.listen-addr=0.0.0.0:12345"]
+    ports: ["127.0.0.1:12345:12345"]
+    volumes: ["./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro", "/var/run/docker.sock:/var/run/docker.sock:ro"]
+    depends_on: [loki]
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    profiles: ["observability"]
+    ports: ["127.0.0.1:3000:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes: ["./observability/grafana/provisioning:/etc/grafana/provisioning:ro", "./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro", "grafana_data:/var/lib/grafana"]
+    depends_on: [prometheus, loki]
 
 volumes:
   neo4j_data:
   postgres_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:

@@ -1,0 +1,20 @@
+groups:
+  - name: itda-observability
+    rules:
+      - alert: ItdaBackendScrapeDown
+        expr: up{job="itda-backend"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "ITDA backend metrics target is down"}
+      - alert: ItdaObservabilityEventsDropped
+        expr: increase(itda_observability_events_dropped_total[5m]) > 0
+        labels: {severity: warning}
+        annotations: {summary: "ITDA observability events were dropped"}
+      - alert: ItdaFailureRatioHigh
+        expr: sum(rate(itda_chat_requests_total{final_status=~"repair_exhausted|internal_failure|infrastructure_failure"}[15m])) / sum(rate(itda_chat_requests_total[15m])) > 0.05 and sum(increase(itda_chat_requests_total[15m])) >= 20
+        labels: {severity: warning}
+        annotations: {summary: "ITDA query final failure ratio exceeds 5%"}
+      - alert: ItdaRepairExhaustedHigh
+        expr: sum(rate(itda_repair_exhausted_total[15m])) / sum(rate(itda_chat_requests_total[15m])) > 0.02 and sum(increase(itda_chat_requests_total[15m])) >= 20
+        labels: {severity: warning}
+        annotations: {summary: "ITDA repair exhaustion ratio exceeds 2%"}
