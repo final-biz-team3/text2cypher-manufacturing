@@ -285,7 +285,15 @@ export function Dashboard() {
           {activeScreen === 'success' && result && (
             <div className="flex flex-col gap-4">
               {queryInputBar}
-              <NaturalLanguageAnswerBox answer={result.answer} />
+              <NaturalLanguageAnswerBox
+                key={`answer-${result.query}`}
+                answer={result.answer}
+                visualization={result.visualization}
+                hasGraphResult={result.hasGraphResult}
+                graphRows={result.graphRows}
+                graphError={result.graphError}
+                graphEmptyReason={result.graphEmptyReason}
+              />
               <ResultEvidencePanel key={result.query} {...result} />
             </div>
           )}
