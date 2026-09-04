@@ -80,7 +80,9 @@ class VisualizationPoint(TypedDict):
 
 
 class VisualizationSpec(TypedDict):
-    type: Literal["kpi", "bar", "ranked_progress", "histogram", "scatter"]
+    type: Literal[
+        "kpi", "bar", "comparison_bar", "ranked_progress", "histogram", "scatter"
+    ]
     title: str | None
     items: NotRequired[list[VisualizationKpiItem]]
     categoryLabel: NotRequired[str]

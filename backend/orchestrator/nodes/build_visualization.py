@@ -1,5 +1,5 @@
-"""composed_result 모양만으로 시각화 타입(KPI/막대/순위 진행률/히스토그램/
-산점도)을 결정하는 규칙 엔진.
+"""composed_result 모양만으로 시각화 타입(KPI/막대/비교 막대/순위 진행률/
+히스토그램/산점도)을 결정하는 규칙 엔진.
 
 LLM은 이 판정에 관여하지 않는다 - composed_result는 이미 검증된 구조화
 데이터이므로, 행 수·컬럼 타입만 보고 결정론적으로 차트 타입을 고른다.
@@ -186,6 +186,86 @@ def _build_bar(
     return result
 
 
+# 두 값의 차이를 미리 계산해 붙여 주는 파생 컬럼으로 알려진 필드명.
+# a-b=c가 성립하면 대수적으로 a-c=b도 항상 성립해(우연이 아니라 항등식)
+# 값만 보고는 세 컬럼 중 어느 쪽이 "진짜 차액 컬럼"인지 가릴 수 없다 -
+# _SHORTAGE_QTY_FIELD와 같은 방식으로 필드명 자체를 명시적으로 알고 있어야
+# 한다.
+_KNOWN_GAP_FIELDS: set[str] = {"priceCostGap"}
+
+
+def _find_redundant_gap_column(
+    rows: list[dict[str, Any]], numeric_columns: list[str]
+) -> str | None:
+    """숫자 컬럼 3개 중 알려진 파생 차액 컬럼(_KNOWN_GAP_FIELDS)이 정확히
+    하나 있고, 실제로 나머지 두 값의 차(절대값)와 일치하면 그 컬럼명을
+    반환한다(예: priceCostGap = listPrice - standardCost). comparison_bar는
+    두 막대 길이 차이로 이미 차이를 보여주므로 이런 파생 컬럼은 제외하고
+    비교 대상 두 컬럼만 남긴다."""
+    if len(numeric_columns) != 3:
+        return None
+    gap_candidates = [key for key in numeric_columns if key in _KNOWN_GAP_FIELDS]
+    if len(gap_candidates) != 1:
+        return None
+    candidate = gap_candidates[0]
+    base_a, base_b = (key for key in numeric_columns if key != candidate)
+    checked = 0
+    matches = 0
+    for row in rows:
+        candidate_value = row.get(candidate)
+        a_value = row.get(base_a)
+        b_value = row.get(base_b)
+        if candidate_value is None or a_value is None or b_value is None:
+            continue
+        checked += 1
+        expected = abs(_to_number(a_value) - _to_number(b_value))
+        if abs(_to_number(candidate_value) - expected) < 1e-6:
+            matches += 1
+    if checked > 0 and matches == checked:
+        return candidate
+    return None
+
+
+def _build_comparison_bar(
+    rows: list[dict[str, Any]], category_key: str, numeric_columns: list[str]
+) -> VisualizationSpec | None:
+    """카테고리별 두 숫자 값을 겹쳐서 비교하는 바-인-바(bar-in-bar) 차트를
+    만든다. 이름 있는 항목 몇 개끼리 두 값을 비교할 때(예: 제품별 판매가
+    vs 원가) 산점도보다 한눈에 들어온다."""
+    key_a, key_b = numeric_columns[0], numeric_columns[1]
+    data = [
+        cast(
+            dict[str, Any],
+            {
+                "category": str(row[category_key]),
+                key_a: _to_number(row[key_a]),
+                key_b: _to_number(row[key_b]),
+            },
+        )
+        for row in rows
+        if row.get(category_key) is not None
+        and row.get(key_a) is not None
+        and row.get(key_b) is not None
+    ]
+    if len(data) < _MIN_BAR_ROWS:
+        return None
+    series: list[VisualizationSeries] = []
+    for key in (key_a, key_b):
+        series_item: VisualizationSeries = {"key": key, "label": _label_for(key)}
+        unit = _unit_for(key)
+        if unit is not None:
+            series_item["unit"] = unit
+        series.append(series_item)
+    result: VisualizationSpec = {
+        "type": "comparison_bar",
+        "title": None,
+        "categoryLabel": _label_for(category_key),
+        "series": series,
+        "data": data,
+    }
+    return result
+
+
 def _find_shortage_pair(numeric_columns: list[str]) -> tuple[str, str] | None:
     """숫자 컬럼이 알려진 (실제값, 필요/기준값) 페어 + 선택적 shortageQty로만
     이루어져 있으면 그 페어를 반환한다. 관계없는 숫자 컬럼이 섞여 있으면
@@ -353,8 +433,8 @@ def _build_scatter(
 def build_visualization_spec(
     composed_result: ComposedResult,
 ) -> VisualizationSpec | None:
-    """composed_result 모양을 보고 KPI/막대/순위 진행률/히스토그램/산점도
-    시각화 스펙을 만들거나, 적합하지 않으면 None을 반환한다(이 경우
+    """composed_result 모양을 보고 KPI/막대/비교 막대/순위 진행률/히스토그램/
+    산점도 시각화 스펙을 만들거나, 적합하지 않으면 None을 반환한다(이 경우
     지금처럼 텍스트/표로만 보여준다)."""
     if composed_result["mode"] == "separate":
         return None
@@ -373,6 +453,18 @@ def build_visualization_spec(
         bar = _build_bar(rows, text_columns, numeric_columns)
         if bar is not None:
             return bar
+        comparison_numeric_columns = numeric_columns
+        gap_column = _find_redundant_gap_column(rows, numeric_columns)
+        if gap_column is not None:
+            comparison_numeric_columns = [
+                key for key in numeric_columns if key != gap_column
+            ]
+        if len(text_columns) == 1 and len(comparison_numeric_columns) == 2:
+            comparison = _build_comparison_bar(
+                rows, text_columns[0], comparison_numeric_columns
+            )
+            if comparison is not None:
+                return comparison
     if len(numeric_columns) == 1:
         return _build_histogram(rows, numeric_columns[0])
     if len(numeric_columns) == 2:

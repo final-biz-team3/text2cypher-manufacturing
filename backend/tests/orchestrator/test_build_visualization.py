@@ -134,7 +134,9 @@ def test_bar_rows_with_two_text_columns_has_no_visualization() -> None:
     assert build_visualization_spec(_composed_result(rows)) is None
 
 
-def test_bar_rows_with_two_numeric_columns_has_no_visualization() -> None:
+def test_bar_rows_with_two_numeric_columns_becomes_comparison_bar() -> None:
+    # 텍스트 1개 + 숫자 2개는 bar 규칙(숫자 1개 전용)에는 안 맞지만
+    # comparison_bar 규칙에는 맞는다.
     rows = [
         {
             "categoryId": 1,
@@ -150,7 +152,21 @@ def test_bar_rows_with_two_numeric_columns_has_no_visualization() -> None:
         },
     ]
 
-    assert build_visualization_spec(_composed_result(rows)) is None
+    spec = build_visualization_spec(_composed_result(rows))
+
+    assert spec == {
+        "type": "comparison_bar",
+        "title": None,
+        "categoryLabel": "분류명",
+        "series": [
+            {"key": "productCount", "label": "제품 수", "unit": "개"},
+            {"key": "averageListPrice", "label": "평균 정가", "unit": "원"},
+        ],
+        "data": [
+            {"category": "Components", "productCount": 12, "averageListPrice": 45.5},
+            {"category": "Bikes", "productCount": 8, "averageListPrice": 1200.0},
+        ],
+    }
 
 
 def test_more_than_twenty_rows_becomes_histogram() -> None:
@@ -357,7 +373,7 @@ def test_histogram_with_constant_values_has_no_visualization() -> None:
     assert build_visualization_spec(_composed_result(rows)) is None
 
 
-def test_two_unrelated_numeric_columns_becomes_scatter() -> None:
+def test_named_rows_with_two_numeric_columns_becomes_comparison_bar() -> None:
     rows = [
         {
             "productId": 1,
@@ -382,14 +398,118 @@ def test_two_unrelated_numeric_columns_becomes_scatter() -> None:
     spec = build_visualization_spec(_composed_result(rows))
 
     assert spec == {
+        "type": "comparison_bar",
+        "title": None,
+        "categoryLabel": "제품명",
+        "series": [
+            {"key": "listPrice", "label": "정가", "unit": "원"},
+            {"key": "standardCost", "label": "표준원가", "unit": "원"},
+        ],
+        "data": [
+            {"category": "Product A", "listPrice": 1200.0, "standardCost": 800.0},
+            {"category": "Product B", "listPrice": 900.0, "standardCost": 650.0},
+            {"category": "Product C", "listPrice": 1500.0, "standardCost": 1100.0},
+        ],
+    }
+
+
+def test_comparison_bar_drops_redundant_gap_column() -> None:
+    # 가격 비교 질의처럼 listPrice/standardCost 외에 둘의 차액 컬럼이
+    # 자동으로 붙는 경우, 차액은 막대 길이 차이로 이미 드러나므로 제외하고
+    # 나머지 두 컬럼만으로 비교 막대를 만든다.
+    rows = [
+        {
+            "productId": 1,
+            "productName": "Product A",
+            "listPrice": 1200.0,
+            "standardCost": 800.0,
+            "priceCostGap": 400.0,
+        },
+        {
+            "productId": 2,
+            "productName": "Product B",
+            "listPrice": 900.0,
+            "standardCost": 650.0,
+            "priceCostGap": 250.0,
+        },
+    ]
+
+    spec = build_visualization_spec(_composed_result(rows))
+
+    assert spec is not None
+    assert spec["type"] == "comparison_bar"
+    assert spec["series"] == [
+        {"key": "listPrice", "label": "정가", "unit": "원"},
+        {"key": "standardCost", "label": "표준원가", "unit": "원"},
+    ]
+    assert spec["data"] == [
+        {"category": "Product A", "listPrice": 1200.0, "standardCost": 800.0},
+        {"category": "Product B", "listPrice": 900.0, "standardCost": 650.0},
+    ]
+
+
+def test_three_unrelated_numeric_columns_has_no_visualization() -> None:
+    # 3개 숫자 컬럼 중 어느 것도 나머지 둘의 차액이 아니면(진짜 서로 다른
+    # 지표 3개) comparison_bar도 scatter(2개 전용)도 적용되지 않는다.
+    rows = [
+        {
+            "productId": 1,
+            "productName": "Product A",
+            "listPrice": 1200.0,
+            "standardCost": 800.0,
+            "totalOrderQty": 5,
+        },
+        {
+            "productId": 2,
+            "productName": "Product B",
+            "listPrice": 900.0,
+            "standardCost": 650.0,
+            "totalOrderQty": 9,
+        },
+    ]
+
+    assert build_visualization_spec(_composed_result(rows)) is None
+
+
+def test_comparison_bar_row_bound_defers_large_result_to_scatter() -> None:
+    # comparison_bar는 bar와 같은 2~20행 범위에서만 적용된다 - 그보다
+    # 많으면(상관관계를 보는 게 목적) 기존 산점도로 넘긴다.
+    rows = [
+        {
+            "productId": i,
+            "productName": f"Product {i}",
+            "listPrice": float(1000 + i),
+            "standardCost": float(700 + i),
+        }
+        for i in range(21)
+    ]
+
+    spec = build_visualization_spec(_composed_result(rows))
+
+    assert spec is not None
+    assert spec["type"] == "scatter"
+
+
+def test_two_unrelated_numeric_columns_without_text_column_becomes_scatter() -> None:
+    # 텍스트(카테고리) 컬럼이 없으면 comparison_bar 조건(len(text_columns)==1)에
+    # 안 걸려 기존 산점도로 넘어간다.
+    rows = [
+        {"productId": 1, "listPrice": 1200.0, "standardCost": 800.0},
+        {"productId": 2, "listPrice": 900.0, "standardCost": 650.0},
+        {"productId": 3, "listPrice": 1500.0, "standardCost": 1100.0},
+    ]
+
+    spec = build_visualization_spec(_composed_result(rows))
+
+    assert spec == {
         "type": "scatter",
         "title": None,
         "xLabel": "정가",
         "yLabel": "표준원가",
         "points": [
-            {"x": 1200.0, "y": 800.0, "label": "Product A"},
-            {"x": 900.0, "y": 650.0, "label": "Product B"},
-            {"x": 1500.0, "y": 1100.0, "label": "Product C"},
+            {"x": 1200.0, "y": 800.0},
+            {"x": 900.0, "y": 650.0},
+            {"x": 1500.0, "y": 1100.0},
         ],
         "xUnit": "원",
         "yUnit": "원",
@@ -398,18 +518,8 @@ def test_two_unrelated_numeric_columns_becomes_scatter() -> None:
 
 def test_scatter_requires_minimum_points() -> None:
     rows = [
-        {
-            "productId": 1,
-            "productName": "Product A",
-            "listPrice": 1200.0,
-            "standardCost": 800.0,
-        },
-        {
-            "productId": 2,
-            "productName": "Product B",
-            "listPrice": 900.0,
-            "standardCost": 650.0,
-        },
+        {"productId": 1, "listPrice": 1200.0, "standardCost": 800.0},
+        {"productId": 2, "listPrice": 900.0, "standardCost": 650.0},
     ]
 
     assert build_visualization_spec(_composed_result(rows)) is None

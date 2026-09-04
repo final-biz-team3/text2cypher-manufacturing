@@ -129,7 +129,9 @@ NodeLabel = Literal[
 
 
 class VisualizationSpec(BaseModel):
-    type: Literal["kpi", "bar", "ranked_progress", "histogram", "scatter"]
+    type: Literal[
+        "kpi", "bar", "comparison_bar", "ranked_progress", "histogram", "scatter"
+    ]
     title: str | None = None
     items: list[VisualizationKpiItem] | None = None
     categoryLabel: str | None = None  # noqa: N815 (프론트 계약과 동일한 camelCase 유지)
