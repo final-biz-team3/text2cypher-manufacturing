@@ -33,7 +33,16 @@ from tests.mocks.openai import (
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
 
-_ANSWER = "정가는 **2,384.07**입니다."
+_ANSWER = "요청하신 집계 결과를 확인했습니다.\n\n정가는 약 $2,384입니다."
+_ANSWER_RESPONSE_JSON = json.dumps(
+    {
+        "highlighted": [
+            {"title": None, "metrics": [{"label": "정가", "value": 2384.07}]}
+        ],
+        "sections": [],
+    },
+    ensure_ascii=False,
+)
 _SQL_ROUTE = json.dumps(
     {
         "subqueries": [
@@ -55,7 +64,9 @@ _SQL_ROUTE = json.dumps(
 def _answering_client(*responses: MockChatCompletion) -> MockOpenAIClient:
     """classify_topic이 항상 첫 호출을 소비하므로 ON_TOPIC 응답을 자동으로 붙인다."""
     return MockOpenAIClient(
-        make_content_response("ON_TOPIC"), *responses, make_content_response(_ANSWER)
+        make_content_response("ON_TOPIC"),
+        *responses,
+        make_content_response(_ANSWER_RESPONSE_JSON),
     )
 
 
