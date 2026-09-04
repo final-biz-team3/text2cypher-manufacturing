@@ -217,6 +217,9 @@ def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> N
                         "executionMode": "orchestrator",
                         "averageModelCallCount": 3.0,
                         "p95LatencyMs": 100.0,
+                        "queryPipelineAccuracy": 0.75,
+                        "retryRecoveryRate": 0.5,
+                        "totalEstimatedCostUsd": 0.12,
                     },
                 }
             }
@@ -228,4 +231,7 @@ def test_load_performance_baseline_records_hash_and_metrics(tmp_path: Path) -> N
 
     assert baseline["commit"] == "abc"
     assert baseline["averageModelCallCount"] == 3.0
+    assert baseline["queryPipelineAccuracy"] == 0.75
+    assert baseline["retryRecoveryRate"] == 0.5
+    assert baseline["totalEstimatedCostUsd"] == 0.12
     assert len(baseline["artifactSha256"]) == 64

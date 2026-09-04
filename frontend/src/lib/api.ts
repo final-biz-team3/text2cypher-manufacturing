@@ -51,3 +51,36 @@ export async function fetchMe(): Promise<CurrentUser> {
   const res = await api.get('/auth/me')
   return CurrentUserSchema.parse(res.data)
 }
+
+export interface FailureReview {
+  review_id: number
+  request_id: string
+  question_fingerprint: string
+  route: string
+  failed_stage: string
+  failed_tool: string | null
+  issue_code: string
+  status: string
+  classification: string | null
+  assignee: string | null
+  version: number
+  created_at: string
+  query?: string
+  sql_query?: string | null
+  cypher_query?: string | null
+  notes?: string | null
+}
+export async function fetchFailureReviews(
+  params: Record<string, string> = {},
+): Promise<{ items: FailureReview[]; total: number }> {
+  return (await api.get('/admin/query-failures', { params })).data
+}
+export async function fetchFailureReview(id: number): Promise<FailureReview> {
+  return (await api.get(`/admin/query-failures/${id}`)).data
+}
+export async function updateFailureReview(
+  id: number,
+  payload: Partial<FailureReview> & { version: number },
+): Promise<FailureReview> {
+  return (await api.patch(`/admin/query-failures/${id}`, payload)).data
+}

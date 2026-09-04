@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Any, NoReturn
 
+from core.observability.model_calls import observe_model_call
 from orchestrator.errors import AnswerGenerationError, QueryInfrastructureError
 from orchestrator.field_labels import FIELD_LABELS
 from orchestrator.guards.audit import log_answer_validation
@@ -570,14 +571,17 @@ async def _generate_llm_answer(
         )
         if max_output_tokens <= 0:
             raise ValueError("ANSWER_MAX_OUTPUT_TOKENS must be positive.")
-
         messages = _build_messages(query, context)
         for attempt in range(_MAX_ANSWER_ATTEMPTS):
-            response = await openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_completion_tokens=max_output_tokens,
-                response_format=_ANSWER_RESPONSE_FORMAT,
+            response = await observe_model_call(
+                "generate_answer",
+                model,
+                openai_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_completion_tokens=max_output_tokens,
+                    response_format=_ANSWER_RESPONSE_FORMAT,
+                ),
             )
             if not response.choices:
                 logger.warning("답변 생성 실패(LLM 응답에 choices 없음)")

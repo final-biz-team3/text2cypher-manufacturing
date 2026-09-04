@@ -30,9 +30,11 @@ ormsgpack==1.12.2
 psycopg==3.3.4
 psycopg-binary==3.3.4
 psycopg-pool==3.3.1
+prometheus-client==0.26.0
 pydantic==2.13.4
 pydantic_core==2.46.4
 python-dotenv==1.2.2
+python-json-logger==4.2.0
 PyJWT==2.10.1
 pytz==2026.3.post1
 PyYAML==6.0.3

@@ -8,8 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.auth import CurrentUser, get_current_user
 from core.history import save_conversation
+from core.observability.context import get_request_context
+from core.observability.events import emit_event
+from core.observability.metrics import CHAT_REQUESTS, PLANNED_TOOLS, TOOL_EXECUTIONS
+from core.observability.privacy import question_fingerprint, redact_question
 from core.openai_client import get_openai_client
 from core.postgres import get_pool, get_write_pool
+from core.query_failure_reviews import create_failure_review
 from orchestrator.errors import EntityNotFoundError
 from orchestrator.graph import build_orchestrator_graph
 from orchestrator.nodes.generate_answer import generate_failure_answer
@@ -112,6 +117,10 @@ async def chat(
     request: Request,
     user: CurrentUser = Depends(get_current_user),  # noqa: B008
 ):
+    obs_context = get_request_context()
+    if obs_context:
+        obs_context.question_fingerprint = question_fingerprint(chat_request.query)
+        obs_context.question_redacted = redact_question(chat_request.query)
     # main.py의 lifespan()이 시작 시 한 번 빌드해 app.state.graph에 캐싱해둔
     # 그래프를 재사용한다 - 요청마다 스키마 YAML을 다시 파싱하고
     # StateGraph를 재컴파일하는 건 이 경로에 남은 유일한 동기 블로킹
@@ -196,8 +205,9 @@ async def chat(
         # 실제 반환 타입(AsyncConnectionPool)이 core.history.Pool Protocol과
         # mypy 구조적 검사에서만 어긋나는 이유는 core/history.py의 Pool
         # 주석 참고(실측 확인된 mypy 한계).
-        await save_conversation(
-            get_write_pool(),  # type: ignore[arg-type]
+        pool = get_write_pool()
+        conversation_id = await save_conversation(
+            pool,  # type: ignore[arg-type]
             user.username,
             response.query,
             response.final_answer,
@@ -206,6 +216,168 @@ async def chat(
             response.sql_result.model_dump() if response.sql_result else None,
             response.graph_result.model_dump() if response.graph_result else None,
         )
+        tool_plan = [str(tool).lower() for tool in (response.tool_plan or [])]
+        route = (
+            "HYBRID"
+            if len(set(tool_plan)) > 1
+            else (
+                {"sql": "SQL", "graph": "GRAPH"}.get(tool_plan[0], "UNKNOWN")
+                if tool_plan
+                else "UNKNOWN"
+            )
+        )
+        tool_results = {
+            "sql": response.sql_result.model_dump() if response.sql_result else None,
+            "graph": (
+                response.graph_result.model_dump() if response.graph_result else None
+            ),
+        }
+        executed = [tool for tool, value in tool_results.items() if value is not None]
+        failed = [
+            tool
+            for tool, value in tool_results.items()
+            if value is not None and value.get("error")
+        ]
+        successful = [tool for tool in executed if tool not in failed]
+        skipped = [tool for tool in tool_plan if tool not in executed]
+        attempt_counts = {
+            tool: len((value or {}).get("attempts", []))
+            for tool, value in tool_results.items()
+        }
+        if query_failure is not None and not executed:
+            failure_kind = query_failure.get("kind")
+            final_status = (
+                "infrastructure_failure"
+                if failure_kind == "infrastructure"
+                else (
+                    "policy_blocked"
+                    if query_failure.get("category") == "POLICY_BLOCKED"
+                    else "internal_failure"
+                )
+            )
+        else:
+            final_status = (
+                "partial_success"
+                if failed and successful
+                else (
+                    "repair_exhausted"
+                    if failed
+                    else (
+                        "recovered"
+                        if any(count > 1 for count in attempt_counts.values())
+                        else "first_attempt_success"
+                    )
+                )
+            )
+        if obs_context:
+            obs_context.route = route
+            obs_context.planned_tools, obs_context.executed_tools = tool_plan, executed
+            (
+                obs_context.successful_tools,
+                obs_context.failed_tools,
+                obs_context.skipped_tools,
+            ) = (successful, failed, skipped)
+        for tool in tool_plan:
+            PLANNED_TOOLS.labels(route, tool).inc()
+        for tool in executed:
+            TOOL_EXECUTIONS.labels(
+                route, tool, "failure" if tool in failed else "success"
+            ).inc()
+        CHAT_REQUESTS.labels(route, final_status).inc()
+        pipeline_level = (
+            "ERROR"
+            if final_status
+            in {"repair_exhausted", "internal_failure", "infrastructure_failure"}
+            else (
+                "WARNING"
+                if final_status in {"partial_success", "policy_blocked"}
+                else "INFO"
+            )
+        )
+        pipeline_outcome = (
+            "blocked"
+            if final_status == "policy_blocked"
+            else (
+                "failure"
+                if final_status
+                in {"repair_exhausted", "internal_failure", "infrastructure_failure"}
+                else "success"
+            )
+        )
+        raw_tool_results = (result.get("sql_result"), result.get("graph_result"))
+        pipeline_failure = query_failure or next(
+            (
+                value.get("failure")
+                for value in raw_tool_results
+                if isinstance(value, dict) and value.get("failure")
+            ),
+            None,
+        )
+        # HTTP 응답에서는 실패 쿼리를 숨기지만, 운영 로그에는 retry_agent가
+        # 값 리터럴을 마스킹한 failed_query를 보존해 원인 분석에 사용한다.
+        failed_query = next(
+            (
+                value.get("failed_query")
+                for value in raw_tool_results
+                if isinstance(value, dict) and value.get("failed_query")
+            ),
+            None,
+        )
+        generated_queries = {
+            tool: value.get("generated_query")
+            for tool, value in zip(("sql", "graph"), raw_tool_results, strict=True)
+            if isinstance(value, dict) and value.get("generated_query")
+        }
+        emit_event(
+            "query.pipeline.completed",
+            "pipeline",
+            force=True,
+            level=pipeline_level,
+            route=route,
+            outcome=pipeline_outcome,
+            final_status=final_status,
+            planned_tools=tool_plan,
+            executed_tools=executed,
+            successful_tools=successful,
+            failed_tools=failed,
+            skipped_tools=skipped,
+            sql_attempt_count=attempt_counts["sql"],
+            graph_attempt_count=attempt_counts["graph"],
+            issue_code=(pipeline_failure or {}).get("code"),
+            failure_reason=(pipeline_failure or {}).get("user_safe_reason"),
+            failed_query=failed_query,
+            generated_query=(
+                next(iter(generated_queries.values()))
+                if len(generated_queries) == 1
+                else None
+            ),
+            generated_queries=generated_queries or None,
+        )
+        if query_failure is not None and final_status in {
+            "repair_exhausted",
+            "partial_success",
+            "internal_failure",
+            "infrastructure_failure",
+            "policy_blocked",
+        }:
+            async with pool.connection() as conn:
+                await create_failure_review(
+                    conn,
+                    conversation_id=conversation_id,
+                    request_id=obs_context.request_id if obs_context else "untracked",
+                    question_fingerprint=(
+                        obs_context.question_fingerprint
+                        if obs_context and obs_context.question_fingerprint
+                        else question_fingerprint(chat_request.query)
+                    ),
+                    route=route,
+                    failed_stage=str(query_failure.get("stage", "execution")),
+                    failed_tool=query_failure.get("failed_tool"),
+                    issue_code=str(query_failure.get("code", "INTERNAL_QUERY_FAILURE")),
+                    sql_attempt_count=min(attempt_counts["sql"], 3),
+                    graph_attempt_count=min(attempt_counts["graph"], 3),
+                )
+                await conn.commit()
     except Exception:
         # write pool 고갈(PoolTimeout 등)로 실패했는지 구분할 수 있도록 그
         # 순간의 풀 상태를 같이 남긴다 - POSTGRES_WRITE_POOL_MAX_SIZE를

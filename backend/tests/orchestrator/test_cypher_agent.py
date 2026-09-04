@@ -92,7 +92,7 @@ async def test_cypher_agent_returns_error_when_execution_fails() -> None:
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "unknown property"
+    assert result["error"] == "질의 실행 중 내부 오류가 발생했습니다."
     assert len(openai_client.calls) == 1
 
 
@@ -123,6 +123,36 @@ async def test_cypher_agent_retries_after_retryable_error_then_succeeds() -> Non
     assert result["error"] is None
     assert len(openai_client.calls) == 2
     assert len(result["attempts"]) == 2
+
+
+async def test_cypher_repair_v2_uses_structured_safe_feedback(monkeypatch) -> None:
+    monkeypatch.setenv("CYPHER_REPAIR_ENGINE", "v2")
+    openai_client = MockOpenAIClient(
+        make_content_response("MATCH (n:Product) WHERE n.bad RETURN n"),
+        make_content_response("MATCH (n:Product) RETURN n"),
+    )
+    calls = 0
+
+    async def execute_cypher(cypher: str) -> list[dict]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise CypherSyntaxError("raw-secret-cypher-message")
+        return [{"n": "x"}]
+
+    result = await make_cypher_agent_subgraph(
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
+    ).ainvoke(_initial_state())
+
+    retry_prompt = openai_client.calls[1]["messages"][0]["content"]
+    assert result["result"] == [{"n": "x"}]
+    assert "Structured repair context" in retry_prompt
+    assert "CYPHER_SYNTAX_ERROR" in retry_prompt
+    assert "Neo4j 5 문법" in retry_prompt
+    assert "raw-secret-cypher-message" not in retry_prompt
 
 
 async def test_cypher_agent_does_not_retry_on_connection_error() -> None:
@@ -169,7 +199,7 @@ async def test_cypher_agent_stops_after_max_attempts_exceeded() -> None:
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "invalid syntax"
+    assert result["error"] == "쿼리를 실행하지 못했습니다."
     assert result["attempt_count"] == 3
     assert len(openai_client.calls) == 3
     assert len(result["attempts"]) == 3

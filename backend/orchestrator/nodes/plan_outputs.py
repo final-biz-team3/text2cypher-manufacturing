@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from agents.generator import DEFAULT_REASONING_EFFORT, ReasoningEffort
+from core.observability.events import emit_event
+from core.observability.model_calls import observe_model_call
 from orchestrator.output_catalog import OutputCatalog
 from orchestrator.planning import (
     RouteSubquery,
@@ -342,11 +344,16 @@ async def _select_output_plan(
     }
     last_content = ""
     for attempt in range(2):
-        response = await openai_client.chat.completions.create(
-            model=os.environ["OPENAI_MODEL"],
-            messages=messages,
-            response_format=response_format,
-            reasoning_effort=reasoning_effort,
+        model = os.environ["OPENAI_MODEL"]
+        response = await observe_model_call(
+            "plan_outputs",
+            model,
+            openai_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format=response_format,
+                reasoning_effort=reasoning_effort,
+            ),
         )
         content = response.choices[0].message.content
         last_content = content if isinstance(content, str) else ""
@@ -481,6 +488,13 @@ def make_plan_outputs_node(
             "plan_outputs: subqueries=%s outputs=%s",
             [item["id"] for item in validated],
             [item["requiredOutputs"] for item in validated],
+        )
+        emit_event(
+            "planning.completed",
+            "pipeline",
+            planned_tools=[item["tool"] for item in validated],
+            subquery_count=len(validated),
+            schema_version=os.getenv("SCHEMA_CONTEXT_VERSION", "v1"),
         )
         return {
             "subqueries": validated,

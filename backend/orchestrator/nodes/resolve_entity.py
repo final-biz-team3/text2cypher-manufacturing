@@ -15,6 +15,7 @@ import psycopg
 from psycopg_pool import AsyncConnectionPool
 
 from agents.cypher.schema.models import GraphSchema
+from core.observability.model_calls import observe_model_call
 from orchestrator.entity_types import NamedEntityType, list_resolvable_entity_types
 from orchestrator.errors import EntityAmbiguousError, EntityNotFoundError
 from orchestrator.state import OrchestratorState
@@ -126,14 +127,19 @@ async def _extract_entities(
     extract_tool: dict[str, Any],
     allowed_types: frozenset[str],
 ) -> list[tuple[str, str]]:
-    response = await openai_client.chat.completions.create(
-        model=os.environ["OPENAI_MODEL"],
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": query},
-        ],
-        tools=[extract_tool],
-        reasoning_effort="none",
+    model = os.environ["OPENAI_MODEL"]
+    response = await observe_model_call(
+        "resolve_entity",
+        model,
+        openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": query},
+            ],
+            tools=[extract_tool],
+            reasoning_effort="none",
+        ),
     )
     tool_calls = response.choices[0].message.tool_calls
     if not tool_calls:

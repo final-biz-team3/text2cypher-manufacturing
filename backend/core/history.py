@@ -11,6 +11,7 @@ class Cursor(Protocol):
     rowcount: int
 
     async def fetchall(self) -> list[tuple[Any, ...]]: ...
+    async def fetchone(self) -> tuple[Any, ...] | None: ...
 
 
 class Connection(Protocol):
@@ -55,12 +56,12 @@ async def save_conversation(
     cypher_query: str | None,
     sql_result: dict | None,
     graph_result: dict | None,
-) -> None:
+) -> int:
     async with pool.connection() as conn:
-        await conn.execute(
+        cursor = await conn.execute(
             "INSERT INTO app.conversation_history "
             "(username, query, final_answer, sql_query, cypher_query, sql_result, graph_result) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 username,
                 query,
@@ -71,7 +72,11 @@ async def save_conversation(
                 json.dumps(graph_result) if graph_result is not None else None,
             ),
         )
+        row = await cursor.fetchone()
         await conn.commit()
+        if row is None:
+            raise RuntimeError("conversation insert did not return an id")
+        return int(row[0])
 
 
 async def delete_conversation(pool: Pool, user: CurrentUser, history_id: int) -> bool:
