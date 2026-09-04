@@ -9,7 +9,10 @@ scrape_configs:
         # Local observability profile token. Production injects a secret-backed file.
         values: ["development-only-metrics-token"]
     static_configs:
-      - targets: ["backend:8000"]
+      # 애플리케이션 스택과 Compose 프로젝트가 분리되어 있으므로 호스트에
+      # 공개된 backend 포트로 접근한다. Linux에서는 compose의 host-gateway가
+      # host.docker.internal을 제공한다.
+      - targets: ["host.docker.internal:8001"]
   - job_name: prometheus
     scrape_interval: 30s
     static_configs: [{targets: ["localhost:9090"]}]
