@@ -90,7 +90,12 @@ async def test_generate_answer_uses_only_query_and_composed_result(
     )
 
     assert result == {
-        "final_answer": "요청하신 집계 결과를 확인했습니다.\n\n재고는 10입니다."
+        "final_answer": "요청하신 집계 결과를 확인했습니다.\n\n재고는 10입니다.",
+        "visualization": {
+            "type": "kpi",
+            "title": None,
+            "items": [{"label": "stock", "value": 10}],
+        },
     }
     assert len(client.calls) == 1
     call = client.calls[0]
@@ -385,6 +390,134 @@ async def test_generate_answer_renders_multiple_items_as_bullet_list_of_sentence
     )
 
 
+async def test_generate_answer_hoists_shared_metric_and_renders_table() -> None:
+    """모든 항목에 값이 똑같은 메트릭(완제품명)은 목록 위에 한 줄로 빼내고,
+    항목마다 실제로 다른 값(부품명·공급업체)만 표로 렌더링한다 - 같은 값을
+    항목마다 반복하면 가독성이 떨어진다."""
+    client = MockOpenAIClient(
+        _answer_response(
+            highlighted=[
+                {
+                    "title": "프레임",
+                    "metrics": [
+                        {"label": "완제품명", "value": "HL Road Frame"},
+                        {"label": "공급업체명", "value": "Acme"},
+                    ],
+                },
+                {
+                    "title": "체인",
+                    "metrics": [
+                        {"label": "완제품명", "value": "HL Road Frame"},
+                        {"label": "공급업체명", "value": "Globex"},
+                    ],
+                },
+            ],
+        )
+    )
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "부품과 공급업체를 알려줘",
+            "composed_result": _composed_result(
+                rows=[
+                    {
+                        "componentName": "프레임",
+                        "finishedProductName": "HL Road Frame",
+                        "supplierName": "Acme",
+                    },
+                    {
+                        "componentName": "체인",
+                        "finishedProductName": "HL Road Frame",
+                        "supplierName": "Globex",
+                    },
+                ]
+            ),
+        }
+    )
+
+    assert result["final_answer"] == (
+        "요청하신 조건에 맞는 항목을 확인했습니다.\n\n"
+        "**완제품명**: HL Road Frame\n\n"
+        "| 항목 | 공급업체명 |\n"
+        "| --- | --- |\n"
+        "| 프레임 | Acme |\n"
+        "| 체인 | Globex |"
+    )
+
+
+async def test_generate_answer_renders_table_without_shared_metric_when_shape_matches() -> (
+    None
+):
+    """공통 값이 없어도, 항목마다 메트릭 모양(라벨 구성)이 똑같으면 표로
+    렌더링한다."""
+    client = MockOpenAIClient(
+        _answer_response(
+            highlighted=[
+                {"title": "프레임", "metrics": [{"label": "재고", "value": 0}]},
+                {"title": "체인", "metrics": [{"label": "재고", "value": 2}]},
+            ],
+        )
+    )
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "재고를 알려줘",
+            "composed_result": _composed_result(
+                rows=[
+                    {"productName": "프레임", "stock": 0},
+                    {"productName": "체인", "stock": 2},
+                ]
+            ),
+        }
+    )
+
+    assert result["final_answer"] == (
+        "요청하신 조건에 맞는 항목을 확인했습니다.\n\n"
+        "| 항목 | 재고 |\n"
+        "| --- | --- |\n"
+        "| 프레임 | 0 |\n"
+        "| 체인 | 2 |"
+    )
+
+
+async def test_generate_answer_lists_titles_only_when_every_metric_is_shared() -> None:
+    """항목의 메트릭이 전부 공통 값으로 빠지고 남는 게 없으면(표로 그릴 열이
+    없으면), 표 대신 제목만 나열한 목록으로 대체한다."""
+    client = MockOpenAIClient(
+        _answer_response(
+            highlighted=[
+                {
+                    "title": "프레임",
+                    "metrics": [{"label": "완제품명", "value": "HL Road Frame"}],
+                },
+                {
+                    "title": "체인",
+                    "metrics": [{"label": "완제품명", "value": "HL Road Frame"}],
+                },
+            ],
+        )
+    )
+
+    result = await make_generate_answer_node(client)(
+        {
+            "query": "부품을 알려줘",
+            "composed_result": _composed_result(
+                rows=[
+                    {"componentName": "프레임", "finishedProductName": "HL Road Frame"},
+                    {"componentName": "체인", "finishedProductName": "HL Road Frame"},
+                ]
+            ),
+        }
+    )
+
+    assert result["final_answer"] == (
+        "요청하신 조건에 맞는 항목을 확인했습니다.\n\n"
+        "**완제품명**: HL Road Frame\n\n"
+        "- 프레임\n"
+        "- 체인"
+    )
+
+
 async def test_generate_answer_falls_back_when_highlighted_title_not_in_rows() -> None:
     """rows에 없는 title(예: 만들어낸 제품명)은 재시도까지 실패하면 502로
     새지 않고, rows 값 그대로인 대체 답변으로 감춰진다."""
@@ -673,7 +806,9 @@ async def test_generate_answer_fallback_notes_truncation_when_more_than_ten_rows
     None
 ):
     """폴백은 최대 10건만 보여주므로, 원본 자체는 안 잘렸어도(truncated=False)
-    표시 개수가 10건을 넘으면 안내 문구를 붙여야 한다."""
+    표시 개수가 10건을 넘으면 안내 문구를 붙여야 한다. 항목마다 메트릭 모양이
+    똑같아(stock 하나뿐) 표로 렌더링된다 - 표의 데이터 행 개수로 10건 제한을
+    확인한다."""
     client = MockOpenAIClient(make_content_response("", finish_reason="length"))
     rows = [{"productName": f"제품{i}", "stock": i} for i in range(12)]
 
@@ -684,7 +819,7 @@ async def test_generate_answer_fallback_notes_truncation_when_more_than_ten_rows
         }
     )
 
-    assert result["final_answer"].count("- 제품") == 10
+    assert result["final_answer"].count("| 제품") == 10
     assert result["final_answer"].endswith("*일부 결과만 바탕으로 한 답변입니다.*")
 
 
