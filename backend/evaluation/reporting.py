@@ -344,6 +344,33 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             _non_negative_int(usage.get("totalTokens")) for usage in token_usage_records
         ),
     }
+    answer_metadata = [
+        metadata
+        for record in non_error
+        if isinstance((metadata := record.get("answerGeneration")), dict)
+    ]
+    fallback_metadata = [
+        metadata for metadata in answer_metadata if metadata.get("mode") == "fallback"
+    ]
+    validation_rejected = [
+        metadata
+        for metadata in answer_metadata
+        if metadata.get("validationRejected") is True
+    ]
+    fallback_reason_counts: dict[str, int] = defaultdict(int)
+    for metadata in fallback_metadata:
+        reason = metadata.get("fallbackReason")
+        if isinstance(reason, str):
+            fallback_reason_counts[reason] += 1
+    repair_fields = (
+        "routeRepairCount",
+        "outputPlanRepairCount",
+        "resultInvariantRetryCount",
+    )
+    repair_counts = {
+        field: sum(_non_negative_int(record.get(field)) for record in non_error)
+        for field in repair_fields
+    }
 
     metrics: dict[str, Any] = {
         "executionMode": "source" if source_only else "orchestrator",
@@ -400,6 +427,16 @@ def calculate_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         "averageModelCallCount": _average(model_calls),
         "maxModelCallCount": max(model_calls, default=0),
         "modelTokenUsage": model_token_usage,
+        "averageModelTokensPerRun": _ratio(
+            _non_negative_int(model_token_usage["totalTokens"]), len(non_error)
+        ),
+        "answerMetadataCoverage": _ratio(len(answer_metadata), len(non_error)),
+        "answerFallbackRate": _ratio(len(fallback_metadata), len(answer_metadata)),
+        "answerValidationRejectionRate": _ratio(
+            len(validation_rejected), len(answer_metadata)
+        ),
+        "answerFallbackReasonCounts": dict(sorted(fallback_reason_counts.items())),
+        **repair_counts,
         "requiredOutputsContractRate": _check_accuracy(records, "requiredOutputs"),
         "requiredOutputsExactRate": _check_accuracy(records, "requiredOutputsExact"),
         "bindingContractRate": _check_accuracy(records, "binding"),
@@ -755,6 +792,10 @@ def _report_markdown(summary: dict[str, Any], records: list[dict[str, Any]]) -> 
                 f"| 입력 토큰 (캐시 hit / 캐시 write) | {_non_negative_int(model_token_usage.get('promptTokens')):,} ({_non_negative_int(model_token_usage.get('cachedPromptTokens')):,} / {_non_negative_int(model_token_usage.get('cacheWritePromptTokens')):,}) |",
                 f"| 출력 토큰 (추론 포함) | {_non_negative_int(model_token_usage.get('completionTokens')):,} ({_non_negative_int(model_token_usage.get('reasoningTokens')):,}) |",
                 f"| 총 토큰 | {_non_negative_int(model_token_usage.get('totalTokens')):,} |",
+                f"| 평균 토큰/건 | {metrics.get('averageModelTokensPerRun', 0):.1f} |",
+                f"| 답변 메타데이터 수집률 | {metric_percentage(metrics.get('answerMetadataCoverage'))} |",
+                f"| 답변 fallback / validator rejection | {metric_percentage(metrics.get('answerFallbackRate'))} / {metric_percentage(metrics.get('answerValidationRejectionRate'))} |",
+                f"| route / output plan / result invariant 복구 | {_non_negative_int(metrics.get('routeRepairCount'))} / {_non_negative_int(metrics.get('outputPlanRepairCount'))} / {_non_negative_int(metrics.get('resultInvariantRetryCount'))} |",
                 f"| required output coverage / exact | {metric_percentage(metrics.get('requiredOutputsContractRate'))} / {metric_percentage(metrics.get('requiredOutputsExactRate'))} |",
                 "",
                 "| 최초 실패 단계 | 건수 |",

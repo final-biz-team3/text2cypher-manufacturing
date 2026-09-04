@@ -174,6 +174,7 @@ def make_execute_plan_node(
             "cypher_query": None,
             "graph_result": None,
             "query_failure": None,
+            "resultInvariantRetryCount": 0,
         }
         outcomes: dict[str, dict[str, Any]] = {}
 

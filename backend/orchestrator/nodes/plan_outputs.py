@@ -314,7 +314,7 @@ async def _select_output_plan(
     entity: object | None,
     catalog: OutputCatalog,
     reasoning_effort: ReasoningEffort,
-) -> SemanticOutputPlan:
+) -> tuple[SemanticOutputPlan, int]:
     tool = route_subquery["tool"]
     user_content = f"source: {tool}\noriginal question: {original_question}\n"
     if planning_context is not None:
@@ -353,7 +353,7 @@ async def _select_output_plan(
         try:
             if not isinstance(content, str):
                 raise ValueError("output planner returned an empty response")
-            return _parse_output_plan(content, tool=tool, catalog=catalog)
+            return _parse_output_plan(content, tool=tool, catalog=catalog), attempt
         except (json.JSONDecodeError, ValueError) as exc:
             if attempt == 1:
                 raise OutputPlanningError(str(exc), last_content) from exc
@@ -403,7 +403,7 @@ def make_plan_outputs_node(
         outgoing = _outgoing_binding_outputs(route_subqueries)
         transform = state.get("resultTransform")
 
-        async def plan_one(route_subquery: RouteSubquery) -> Subquery:
+        async def plan_one(route_subquery: RouteSubquery) -> tuple[Subquery, int]:
             tool = cast(ToolName, route_subquery["tool"])
             planning_context: tuple[str, str] | None
             if len(route_subqueries) > 1:
@@ -425,8 +425,9 @@ def make_plan_outputs_node(
                 spec = catalog.transform(transform_type)
                 selected = list(spec.required_outputs[tool])
                 generator_rules = list(spec.generator_rules[tool])
+                repair_count = 0
             else:
-                semantic_plan = await _select_output_plan(
+                semantic_plan, repair_count = await _select_output_plan(
                     openai_client=openai_client,
                     route_subquery=route_subquery,
                     original_question=state["query"],
@@ -456,20 +457,27 @@ def make_plan_outputs_node(
                 catalog,
                 tool=tool,
             )
-            return _with_required_outputs(
-                route_subquery,
-                outputs,
-                generator_rules,
+            return (
+                _with_required_outputs(
+                    route_subquery,
+                    outputs,
+                    generator_rules,
+                ),
+                repair_count,
             )
 
         if len(route_subqueries) > 1 and all(
             not subquery.get("dependsOn") for subquery in route_subqueries
         ):
-            planned = list(
+            planned_with_counts = list(
                 await asyncio.gather(*(plan_one(s) for s in route_subqueries))
             )
         else:
-            planned = [await plan_one(subquery) for subquery in route_subqueries]
+            planned_with_counts = [
+                await plan_one(subquery) for subquery in route_subqueries
+            ]
+        planned = [item for item, _ in planned_with_counts]
+        repair_count = sum(count for _, count in planned_with_counts)
 
         validated = validate_subqueries(planned)
         validated_transform = validate_result_transform(
@@ -485,6 +493,7 @@ def make_plan_outputs_node(
         return {
             "subqueries": validated,
             "resultTransform": validated_transform,
+            "outputPlanRepairCount": repair_count,
         }
 
     return plan_outputs

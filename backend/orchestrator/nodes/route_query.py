@@ -179,6 +179,7 @@ def make_route_query_node(
             "tool_plan": plan["tool_plan"],
             "routeDraft": dict(plan),
             "resultTransform": plan.get("resultTransform"),
+            "routeRepairCount": attempt,
         }
         if raw_route_draft is not None:
             result["rawRouteDraft"] = raw_route_draft

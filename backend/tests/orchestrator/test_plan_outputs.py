@@ -266,6 +266,7 @@ async def test_sql_display_only_plan_is_retried_as_incomplete() -> None:
     result = await make_plan_outputs_node(client, _catalog())(_state([subquery]))
 
     assert len(client.calls) == 2
+    assert result["outputPlanRepairCount"] == 1
     assert result["subqueries"][0]["requiredOutputs"] == [
         "productId",
         "productName",

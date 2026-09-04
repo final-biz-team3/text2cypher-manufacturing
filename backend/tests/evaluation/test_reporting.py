@@ -117,6 +117,7 @@ def test_metrics_aggregate_model_token_usage(tmp_path: Path) -> None:
         "reasoningTokens": 240,
         "totalTokens": 3_600,
     }
+    assert metrics["averageModelTokensPerRun"] == 1_800
 
     summary = build_summary(
         EvaluationRun([first, second], {"sha256": "snapshot"}, False),
@@ -132,6 +133,49 @@ def test_metrics_aggregate_model_token_usage(tmp_path: Path) -> None:
     assert "| 입력 토큰 (캐시 hit / 캐시 write) | 3,000 (1,800 / 300) |" in report
     assert "| 출력 토큰 (추론 포함) | 600 (240) |" in report
     assert "| 총 토큰 | 3,600 |" in report
+    assert "| 평균 토큰/건 | 1800.0 |" in report
+
+
+def test_metrics_keep_answer_fallback_separate_from_pipeline_failures() -> None:
+    structured = _record("RQ01", passed=True)
+    structured.update(
+        {
+            "answerGeneration": {
+                "mode": "structured",
+                "attemptCount": 2,
+                "fallbackReason": None,
+                "validationRejected": True,
+            },
+            "routeRepairCount": 1,
+            "outputPlanRepairCount": 0,
+            "resultInvariantRetryCount": 0,
+        }
+    )
+    fallback = _record("RQ02", passed=True)
+    fallback.update(
+        {
+            "answerGeneration": {
+                "mode": "fallback",
+                "attemptCount": 2,
+                "fallbackReason": "ungrounded_highlighted_value",
+                "validationRejected": True,
+            },
+            "routeRepairCount": 0,
+            "outputPlanRepairCount": 1,
+            "resultInvariantRetryCount": 1,
+        }
+    )
+
+    metrics = calculate_metrics([structured, fallback])
+
+    assert metrics["queryPipelineAccuracy"] == 1.0
+    assert metrics["answerMetadataCoverage"] == 1.0
+    assert metrics["answerFallbackRate"] == 0.5
+    assert metrics["answerValidationRejectionRate"] == 1.0
+    assert metrics["answerFallbackReasonCounts"] == {"ungrounded_highlighted_value": 1}
+    assert metrics["routeRepairCount"] == 1
+    assert metrics["outputPlanRepairCount"] == 1
+    assert metrics["resultInvariantRetryCount"] == 1
 
 
 def test_report_summarizes_repeated_trial_outcomes(tmp_path: Path) -> None:

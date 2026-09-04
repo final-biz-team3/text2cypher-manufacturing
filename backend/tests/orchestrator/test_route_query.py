@@ -61,6 +61,7 @@ async def test_route_query_derives_single_source_plan() -> None:
     )
 
     assert result["tool_plan"] == ["sql"]
+    assert result["routeRepairCount"] == 0
     assert result["routeDraft"]["tool_plan"] == ["sql"]
     assert result["rawRouteDraft"] == json.loads(raw)
     assert "tool_plan" not in result["rawRouteDraft"]
@@ -161,6 +162,7 @@ async def test_route_query_retries_once_with_structural_feedback() -> None:
 
     assert result["tool_plan"] == ["sql"]
     assert len(client.calls) == 2
+    assert result["routeRepairCount"] == 1
     retry_messages = client.calls[1]["messages"]
     assert retry_messages[-2] == {"role": "assistant", "content": invalid}
     assert "structural validation" in retry_messages[-1]["content"]

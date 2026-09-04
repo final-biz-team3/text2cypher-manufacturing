@@ -48,7 +48,28 @@ else
   worktree_state="dirty"
 fi
 
-output_dir="${project_root}/artifacts/t2c-eval/${run_date}/${run_time}-${commit}-${worktree_state}"
+if [[ -n "${EVAL_OUTPUT_ROOT:-}" ]]; then
+  case "${EVAL_OUTPUT_ROOT}" in
+    /*) output_root="${EVAL_OUTPUT_ROOT%/}" ;;
+    *)
+      echo "EVAL_OUTPUT_ROOT는 절대경로여야 합니다: ${EVAL_OUTPUT_ROOT}" >&2
+      exit 2
+      ;;
+  esac
+else
+  output_root="${project_root}/artifacts/t2c-eval"
+fi
+
+output_dir="${output_root}/${run_date}/${run_time}-${commit}-${worktree_state}"
+mkdir -p "${output_dir}"
+if [[ -z "${GUARD_AUDIT_LOG_PATH+x}" ]]; then
+  export GUARD_AUDIT_LOG_PATH="${output_dir}/query_guard_audit.jsonl"
+  touch "${GUARD_AUDIT_LOG_PATH}"
+fi
+if [[ -z "${ANSWER_AUDIT_LOG_PATH+x}" ]]; then
+  export ANSWER_AUDIT_LOG_PATH="${output_dir}/answer_validation_audit.jsonl"
+  touch "${ANSWER_AUDIT_LOG_PATH}"
+fi
 
 set +e
 PYTHONPATH="${project_root}/backend${PYTHONPATH:+:${PYTHONPATH}}" \
@@ -146,5 +167,6 @@ if [[ -f "${output_dir}/report.md" ]]; then
 else
   echo "report.md가 생성되지 않았습니다: ${output_dir}/report.md" >&2
 fi
+echo "artifact directory: ${output_dir}"
 
 exit "${evaluation_exit_code}"

@@ -90,7 +90,13 @@ async def test_generate_answer_uses_only_query_and_composed_result(
     )
 
     assert result == {
-        "final_answer": "요청하신 집계 결과를 확인했습니다.\n\n재고는 10입니다."
+        "final_answer": "요청하신 집계 결과를 확인했습니다.\n\n재고는 10입니다.",
+        "answer_metadata": {
+            "mode": "structured",
+            "attemptCount": 1,
+            "fallbackReason": None,
+            "validationRejected": False,
+        },
     }
     assert len(client.calls) == 1
     call = client.calls[0]
@@ -303,7 +309,13 @@ async def test_generate_answer_node_naturalizes_user_correctable_failure() -> No
     assert result == {
         "final_answer": (
             "생성된 조회를 정상적으로 실행하지 못했습니다. 조회 조건을 더 구체적으로 지정해 주세요."
-        )
+        ),
+        "answer_metadata": {
+            "mode": "fixed",
+            "attemptCount": 0,
+            "fallbackReason": None,
+            "validationRejected": False,
+        },
     }
     assert len(client.calls) == 0
 
@@ -592,6 +604,12 @@ async def test_generate_answer_falls_back_when_value_ungrounded_even_with_null_t
     assert result["final_answer"] == (
         "요청하신 조회 결과입니다.\n\n활성 공급업체 수는 12곳입니다."
     )
+    assert result["answer_metadata"] == {
+        "mode": "fallback",
+        "attemptCount": 2,
+        "fallbackReason": "ungrounded_highlighted_value",
+        "validationRejected": True,
+    }
 
 
 async def test_generate_answer_retries_once_after_grounding_rejection() -> None:
@@ -616,6 +634,12 @@ async def test_generate_answer_retries_once_after_grounding_rejection() -> None:
         == "요청하신 집계 결과를 확인했습니다.\n\n재고는 10입니다."
     )
     assert len(client.calls) == 2
+    assert result["answer_metadata"] == {
+        "mode": "structured",
+        "attemptCount": 2,
+        "fallbackReason": None,
+        "validationRejected": True,
+    }
     retry_messages = client.calls[1]["messages"]
     assert retry_messages[0]["role"] == "developer"
     assert retry_messages[1]["role"] == "user"
@@ -646,6 +670,12 @@ async def test_generate_answer_falls_back_after_one_retry_still_fails() -> None:
     assert "888" not in result["final_answer"]
     assert result["final_answer"] == "요청하신 조회 결과입니다.\n\nstock는 10입니다."
     assert len(client.calls) == 2
+    assert result["answer_metadata"] == {
+        "mode": "fallback",
+        "attemptCount": 2,
+        "fallbackReason": "ungrounded_highlighted_value",
+        "validationRejected": True,
+    }
 
 
 async def test_generate_answer_adds_caveat_when_source_truncated() -> None:
