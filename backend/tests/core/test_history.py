@@ -91,7 +91,18 @@ async def test_save_conversation_inserts_and_commits() -> None:
 async def test_list_history_scopes_to_own_rows_for_non_admin() -> None:
     pool = _FakePool(
         rows=[
-            (1, "kim.quality", "q", "a", None, None, None, None, datetime(2026, 1, 1))
+            (
+                1,
+                "kim.quality",
+                "q",
+                "a",
+                None,
+                None,
+                None,
+                None,
+                None,
+                datetime(2026, 1, 1),
+            )
         ]
     )
 
@@ -110,6 +121,7 @@ async def test_list_history_scopes_to_own_rows_for_non_admin() -> None:
             "cypher_query": None,
             "sql_result": None,
             "graph_result": None,
+            "visualization": None,
             "created_at": "2026-01-01T00:00:00",
         }
     ]

@@ -50,7 +50,9 @@ class _FakePool:
 
 
 async def test_get_history_returns_own_rows_for_user(monkeypatch: Any) -> None:
-    rows = [(1, "kim.quality", "q", "a", None, None, None, None, datetime(2026, 1, 1))]
+    rows = [
+        (1, "kim.quality", "q", "a", None, None, None, None, None, datetime(2026, 1, 1))
+    ]
     monkeypatch.setattr(history_module, "get_pool", lambda: _FakePool(rows))
 
     result = await get_history(user=CurrentUser(username="kim.quality", role="user"))
