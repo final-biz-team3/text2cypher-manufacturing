@@ -12,6 +12,7 @@ from agents.cypher.schema.loader import load_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from orchestrator.nodes.plan_outputs import (
     SemanticOutputPlan,
+    compile_entity_role_generator_rules,
     compile_graph_generator_rules,
     compile_semantic_output_plan,
     finalize_required_outputs,
@@ -353,6 +354,54 @@ def test_graph_role_without_path_adds_no_generator_rule() -> None:
     selected = compile_semantic_output_plan(plan, _catalog(), tool="graph")
 
     assert compile_graph_generator_rules(plan, _catalog(), selected) == []
+
+
+def test_finished_product_predicate_becomes_a_source_specific_generator_rule() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("totalOrderQty",),
+        display_entities=("finishedProduct",),
+    )
+
+    rules = compile_entity_role_generator_rules(plan, _catalog(), tool="sql")
+
+    assert rules == [
+        "entity role finishedProduct은(는) sellableFinishedGood equals True "
+        "predicate를 반드시 적용한다."
+    ]
+
+
+async def test_finished_product_sql_plan_preserves_projection_and_predicate_rule() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=["totalOrderQty"],
+            display_entities=["finishedProduct"],
+        )
+    )
+    question = "판매량이 가장 많은 완제품 상위 5개"
+    subquery: RouteSubquery = {
+        "id": "sql_finished_sales",
+        "tool": "sql",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=question)
+    )
+    planned = result["subqueries"][0]
+
+    assert planned["requiredOutputs"] == [
+        "totalOrderQty",
+        "productId",
+        "productName",
+    ]
+    assert planned["generatorRules"] == [
+        "entity role finishedProduct은(는) sellableFinishedGood equals True "
+        "predicate를 반드시 적용한다."
+    ]
 
 
 def test_non_path_graph_plan_adds_no_generator_rule() -> None:

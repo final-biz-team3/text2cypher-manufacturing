@@ -126,12 +126,15 @@ class EntityRoleDefinition(_SemanticModel):
     identity_projection: dict[ToolName, IdentityProjectionDefinition] = Field(
         alias="identityProjection"
     )
+    predicates: dict[ToolName, list[TypedPredicate]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_definition(self) -> Self:
         _validate_local_terms(self.canonical, self.terms, self.role_id)
         if not self.identity_projection:
             raise ValueError("entity role must define at least one source projection")
+        if not set(self.predicates) <= set(self.identity_projection):
+            raise ValueError("entity role predicates require a source projection")
         return self
 
 
@@ -351,6 +354,7 @@ class EntityRoleSpec:
     canonical: str
     terms: tuple[str, ...]
     projections: Mapping[ToolName, IdentityProjection]
+    predicates: Mapping[ToolName, tuple[TypedPredicate, ...]]
 
 
 @dataclass(frozen=True)
@@ -447,10 +451,19 @@ class QuerySemanticCatalog:
             role = self.entity_roles[role_id]
             projection = role.projections[source]
             labels = ", ".join(projection.labels) if projection.labels else "none"
+            predicates = role.predicates.get(source, ())
+            predicate_text = (
+                ", ".join(
+                    f"{item.field} {item.operator} {item.value!r}"
+                    for item in predicates
+                )
+                if predicates
+                else "none"
+            )
             lines.append(
                 f"- {role_id}: meaning={role.canonical}; "
                 f"terms={', '.join(role.terms)}; keys={', '.join(projection.keys)}; "
-                f"labels={labels}"
+                f"labels={labels}; predicates={predicate_text}"
             )
         return "\n".join(lines)
 
@@ -496,6 +509,38 @@ class QuerySemanticCatalog:
                 return MappingProxyType({})
             selected[source] = best[0]
         return MappingProxyType(selected)
+
+    def infer_required_sources(
+        self, query: str, entity: object | None
+    ) -> frozenset[ToolName] | None:
+        """고유한 shape/concept 의미 증거로 필요한 source 집합만 보수적으로 정한다."""
+        comparable = _shape_comparison_text(query, entity)
+        inferred = set(self.match_result_shape_sources(query, entity))
+        concept_evidence: dict[str, set[frozenset[ToolName]]] = {}
+        seen_aliases: set[str] = set()
+        for specs in self.by_tool.values():
+            for alias, spec in specs.items():
+                if alias in seen_aliases or spec.kind not in {
+                    "aggregate",
+                    "derived",
+                    "path",
+                }:
+                    continue
+                seen_aliases.add(alias)
+                matching_terms = [
+                    _normalized_term(term)
+                    for term in spec.terms
+                    if _normalized_term(term) in comparable
+                ]
+                if not matching_terms:
+                    continue
+                longest = max(matching_terms, key=len)
+                concept_evidence.setdefault(longest, set()).add(spec.sources)
+        for source_sets in concept_evidence.values():
+            if len(source_sets) != 1:
+                return None
+            inferred.update(next(iter(source_sets)))
+        return frozenset(inferred) if inferred else None
 
 
 # 이전 import 이름과의 호환성을 위한 별칭이다. 구현과 기준 정보는 semantic이다.
@@ -689,6 +734,20 @@ def build_query_semantic_catalog(
                 keys=tuple(definition.keys),
                 labels=tuple(definition.labels),
             )
+        predicates: dict[ToolName, tuple[TypedPredicate, ...]] = {}
+        for source, definitions in entity_role.predicates.items():
+            unknown_predicates = {
+                predicate.field
+                for predicate in definitions
+                if predicate.field not in by_tool[source]
+            }
+            if unknown_predicates:
+                raise ValueError(
+                    f"entity role {entity_role.role_id!r} predicates reference aliases "
+                    f"unavailable from {source}: "
+                    + ", ".join(sorted(unknown_predicates))
+                )
+            predicates[source] = tuple(definitions)
         entity_roles[entity_role.role_id] = EntityRoleSpec(
             role_id=entity_role.role_id,
             canonical=entity_role.canonical,
@@ -698,6 +757,7 @@ def build_query_semantic_catalog(
                 *sorted(entity_role.terms, key=_normalized_term),
             ),
             projections=MappingProxyType(projections),
+            predicates=MappingProxyType(predicates),
         )
     for source in ("sql", "graph"):
         if not any(source in role.projections for role in entity_roles.values()):
@@ -815,6 +875,21 @@ def build_query_semantic_catalog(
                         "labels": projection.labels,
                     }
                     for source, projection in sorted(role.projections.items())
+                },
+                "predicates": {
+                    source: sorted(
+                        (
+                            item.field,
+                            item.operator,
+                            json.dumps(
+                                item.value,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                        )
+                        for item in predicates
+                    )
+                    for source, predicates in sorted(role.predicates.items())
                 },
             }
             for role_id, role in sorted(entity_roles.items())

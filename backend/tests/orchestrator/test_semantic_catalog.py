@@ -280,16 +280,28 @@ def test_entity_role_projection_is_source_scoped_and_described() -> None:
     assert "keys=productId" in catalog.describe_entity_roles("sql")
 
 
-def test_relationship_product_roles_are_graph_scoped() -> None:
+def test_finished_product_role_uses_source_specific_projection_and_predicate() -> None:
     catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
 
     assert "product" in catalog.allowed_entity_roles("sql")
-    assert "finishedProduct" not in catalog.allowed_entity_roles("sql")
+    assert "finishedProduct" in catalog.allowed_entity_roles("sql")
     assert "rootProduct" not in catalog.allowed_entity_roles("sql")
     assert "finishedProductId" not in catalog.allowed_aliases("sql")
     assert "rootProductId" not in catalog.allowed_aliases("sql")
     assert "finishedProduct" in catalog.allowed_entity_roles("graph")
     assert "rootProduct" in catalog.allowed_entity_roles("graph")
+    assert catalog.identity_projection("finishedProduct", "sql").display_aliases == (
+        "productId",
+        "productName",
+    )
+    assert catalog.identity_projection("finishedProduct", "graph").display_aliases == (
+        "finishedProductId",
+        "finishedProductName",
+    )
+    assert catalog.entity_roles["finishedProduct"].predicates["sql"][0].field == (
+        "sellableFinishedGood"
+    )
+    assert "sellableFinishedGood equals True" in catalog.describe_entity_roles("sql")
 
 
 def test_root_product_means_hierarchy_root_not_every_traversal_start() -> None:
@@ -318,23 +330,29 @@ def test_graph_traversal_recipes_are_not_part_of_the_ontology_contract() -> None
         ManufacturingOntology.model_validate(data)
 
 
-def test_entity_role_ontology_rejects_implicit_predicates() -> None:
+def test_entity_role_predicates_require_available_source_fields() -> None:
     data = _ontology_data()
     finished_product = next(
         item for item in data["entityRoles"] if item["roleId"] == "finishedProduct"
     )
-    finished_product["predicates"] = {
-        "graph": [
-            {
-                "field": "sellableFinishedGood",
-                "operator": "equals",
-                "value": True,
-            }
-        ]
-    }
+    finished_product["predicates"]["graph"][0]["field"] = "notAnAlias"
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        ManufacturingOntology.model_validate(data)
+    with pytest.raises(ValueError, match="unavailable from graph"):
+        _compile(data)
+
+
+def test_semantic_source_inference_combines_compatible_evidence_and_fails_open() -> (
+    None
+):
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    assert catalog.infer_required_sources(
+        "판매량이 가장 많은 완제품 상위 5개", None
+    ) == frozenset({"sql"})
+    assert catalog.infer_required_sources(
+        "공급업체가 공급을 중단하면 영향 받는 부품과 완제품, 현재 재고", None
+    ) == frozenset({"sql", "graph"})
+    assert catalog.infer_required_sources("제품을 알려줘", None) is None
 
 
 def test_alternative_term_order_does_not_change_compiled_semantics() -> None:

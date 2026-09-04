@@ -113,7 +113,13 @@ entityRoles:
     canonical: BOM 사용처·영향·생산 또는 지정된 두 끝점 경로에서 완제품 쪽을 나타내는 제품 결과 엔티티
     terms: [완제품, finished product]
     identityProjection:
+      sql: {keys: [productId], labels: [productName]}
       graph: {keys: [finishedProductId], labels: [finishedProductName]}
+    predicates:
+      sql:
+        - {field: sellableFinishedGood, operator: equals, value: true}
+      graph:
+        - {field: sellableFinishedGood, operator: equals, value: true}
   - roleId: rootProduct
     canonical: BOM 계층이나 부품 트리 자체를 펼치는 결과에서만 그 계층의 기준이 되는 제품 결과 엔티티
     terms: [루트 제품, root product]
@@ -254,7 +260,7 @@ businessConcepts:
   - conceptId: sales.total-order-quantity
     alias: totalOrderQty
     canonical: 판매 주문 수량 합계
-    terms: [총 주문 수량]
+    terms: [총 주문 수량, 주문 수량 합계, 판매량, 팔린]
     kind: aggregate
     sources: [sql]
     grain: [productId]

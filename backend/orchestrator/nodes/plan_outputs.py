@@ -288,6 +288,23 @@ def compile_graph_generator_rules(
     ]
 
 
+def compile_entity_role_generator_rules(
+    plan: SemanticOutputPlan,
+    catalog: OutputCatalog,
+    *,
+    tool: str,
+) -> list[str]:
+    rules: list[str] = []
+    for role_id in plan.display_entities:
+        role = catalog.entity_roles[role_id]
+        for predicate in role.predicates.get(cast(ToolName, tool), ()):
+            rules.append(
+                f"entity role {role_id}은(는) {predicate.field} "
+                f"{predicate.operator} {predicate.value!r} predicate를 반드시 적용한다."
+            )
+    return rules
+
+
 def finalize_required_outputs(
     selected_outputs: list[str],
     join_keys: list[str],
@@ -504,15 +521,19 @@ def make_plan_outputs_node(
                     catalog,
                     tool=tool,
                 )
-                generator_rules = (
-                    compile_graph_generator_rules(
-                        semantic_plan,
-                        catalog,
-                        selected,
-                    )
-                    if tool == "graph"
-                    else []
+                generator_rules = compile_entity_role_generator_rules(
+                    semantic_plan,
+                    catalog,
+                    tool=tool,
                 )
+                if tool == "graph":
+                    generator_rules.extend(
+                        compile_graph_generator_rules(
+                            semantic_plan,
+                            catalog,
+                            selected,
+                        )
+                    )
             outputs = finalize_required_outputs(
                 selected,
                 route_subquery["joinKeys"],
@@ -566,6 +587,7 @@ __all__ = [
     "OutputPlanningError",
     "SemanticOutputPlan",
     "compile_graph_generator_rules",
+    "compile_entity_role_generator_rules",
     "compile_semantic_output_plan",
     "conform_output_plan_to_shape",
     "finalize_required_outputs",

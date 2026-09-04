@@ -6,6 +6,7 @@ tables:
       name: [productName]
       productnumber: [productNumber]
       makeflag: [makeFlag]
+      finishedgoodsflag: [sellableFinishedGood]
       color: [color]
       safetystocklevel: [safetyStockLevel]
       standardcost: [standardCost]
