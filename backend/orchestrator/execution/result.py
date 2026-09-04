@@ -1,4 +1,4 @@
-"""Result contract shared by production SQL and Cypher executors."""
+"""운영 SQL 및 Cypher 실행기가 공유하는 결과 계약을 정의한다."""
 
 from collections.abc import Callable, Sequence
 from typing import Any, TypedDict

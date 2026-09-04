@@ -1,4 +1,4 @@
-"""Promotion gates derived from completed evaluation records."""
+"""완료된 평가 기록을 바탕으로 승격 gate를 계산한다."""
 
 from typing import Any
 

@@ -27,9 +27,6 @@ outputRoles:
     terms: [완제품 ID, finished product ID]
     valueType: identity
     mappings:
-      sql:
-        - production.product.productid
-        - production.billofmaterials.productassemblyid
       graph: [Product.productId]
   - roleId: product.finished-name
     alias: finishedProductName
@@ -37,25 +34,20 @@ outputRoles:
     terms: [완제품명, finished product name]
     valueType: name
     mappings:
-      sql: [production.product.name]
       graph: [Product.name]
   - roleId: product.root-id
     alias: rootProductId
-    canonical: BOM 탐색 시작 제품 식별자
+    canonical: BOM 계층 루트 제품 식별자
     terms: [루트 제품 ID, root product ID]
     valueType: identity
     mappings:
-      sql:
-        - production.product.productid
-        - production.billofmaterials.productassemblyid
       graph: [Product.productId]
   - roleId: product.root-name
     alias: rootProductName
-    canonical: BOM 탐색 시작 제품 이름
+    canonical: BOM 계층 루트 제품 이름
     terms: [루트 제품명, root product name]
     valueType: name
     mappings:
-      sql: [production.product.name]
       graph: [Product.name]
   - roleId: product.finished-a-id
     alias: finishedProductIdA
@@ -63,7 +55,6 @@ outputRoles:
     terms: [첫 번째 완제품 ID]
     valueType: identity
     mappings:
-      sql: [production.product.productid]
       graph: [Product.productId]
   - roleId: product.finished-b-id
     alias: finishedProductIdB
@@ -71,7 +62,6 @@ outputRoles:
     terms: [두 번째 완제품 ID]
     valueType: identity
     mappings:
-      sql: [production.product.productid]
       graph: [Product.productId]
   - roleId: supplier.a-id
     alias: supplierIdA
@@ -120,28 +110,24 @@ entityRoles:
       sql: {keys: [componentId], labels: [componentName]}
       graph: {keys: [componentId], labels: [componentName]}
   - roleId: finishedProduct
-    canonical: 완제품 결과 엔티티
+    canonical: BOM 사용처·영향·생산 또는 지정된 두 끝점 경로에서 완제품 쪽을 나타내는 제품 결과 엔티티
     terms: [완제품, finished product]
     identityProjection:
-      sql: {keys: [finishedProductId], labels: [finishedProductName]}
       graph: {keys: [finishedProductId], labels: [finishedProductName]}
   - roleId: rootProduct
-    canonical: BOM 탐색 시작 제품 결과 엔티티
+    canonical: BOM 계층이나 부품 트리 자체를 펼치는 결과에서만 그 계층의 기준이 되는 제품 결과 엔티티
     terms: [루트 제품, root product]
     identityProjection:
-      sql: {keys: [rootProductId], labels: [rootProductName]}
       graph: {keys: [rootProductId], labels: [rootProductName]}
   - roleId: finishedProductA
     canonical: 비교 또는 교집합의 첫 번째 완제품 기준점
     terms: [첫 번째 완제품]
     identityProjection:
-      sql: {keys: [finishedProductIdA], labels: []}
       graph: {keys: [finishedProductIdA], labels: []}
   - roleId: finishedProductB
     canonical: 비교 또는 교집합의 두 번째 완제품 기준점
     terms: [두 번째 완제품]
     identityProjection:
-      sql: {keys: [finishedProductIdB], labels: []}
       graph: {keys: [finishedProductIdB], labels: []}
   - roleId: supplier
     canonical: 공급업체 결과 엔티티

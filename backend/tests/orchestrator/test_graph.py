@@ -1,4 +1,4 @@
-"""Production graph integration without evaluation-family fixtures."""
+"""평가 유형 fixture 없이 운영 graph 통합 동작을 테스트한다."""
 
 import json
 import os

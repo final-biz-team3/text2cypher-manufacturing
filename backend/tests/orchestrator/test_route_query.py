@@ -1,4 +1,4 @@
-"""Route node boundary tests independent of evaluation question families."""
+"""평가 질의 유형과 독립적인 route node 경계를 테스트한다."""
 
 import json
 from functools import lru_cache

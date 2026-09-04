@@ -1,4 +1,4 @@
-"""Shared route and execution-plan structural contracts."""
+"""라우팅과 execution plan이 공유하는 구조 계약을 정의한다."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def route_draft_json_schema(
     *,
     catalog: QuerySemanticCatalog | None = None,
 ) -> dict[str, Any]:
-    """Build the LLM boundary schema; tool_plan is deliberately derived later."""
+    """LLM 경계 schema를 구성한다. tool_plan은 의도적으로 이후에 파생한다."""
     join_aliases = sorted(shared_join_aliases)
     if not join_aliases:
         raise ValueError("route draft join alias enum must not be empty")
@@ -261,7 +261,7 @@ def _korean_counter_quantity(value: str) -> int | None:
 
 
 def explicit_production_quantity(query: str) -> int | float | None:
-    """Read only a quantity attached to the formal transform's production unit."""
+    """formal transform의 생산 단위에 연결된 수량만 읽는다."""
     quantities: list[int | float] = []
     for match in _PRODUCTION_COUNTER.finditer(query):
         raw = match.group("quantity")
@@ -350,7 +350,7 @@ def validate_route_subqueries(
     shared_join_aliases: set[str] | frozenset[str] = DEFAULT_SHARED_JOIN_ALIASES,
     catalog: QuerySemanticCatalog | None = None,
 ) -> list[RouteSubquery]:
-    """Validate and compile the model route boundary into executor bindings."""
+    """모델 라우팅 경계를 검증하고 executor binding으로 컴파일한다."""
     if not isinstance(subqueries, list) or not subqueries:
         raise ValueError("subqueries must be a non-empty array")
     if len(subqueries) > MAX_SUBQUERIES:
@@ -460,7 +460,7 @@ def parse_route_draft(
     shared_join_aliases: set[str] | frozenset[str] = DEFAULT_SHARED_JOIN_ALIASES,
     catalog: QuerySemanticCatalog | None = None,
 ) -> RouteDraft:
-    """Parse one strict route object and derive execution order from its DAG."""
+    """엄격한 route 객체 하나를 파싱하고 DAG에서 실행 순서를 파생한다."""
     raw = json.loads(content)
     if not isinstance(raw, dict) or set(raw) != {"subqueries", "resultTransform"}:
         raise ValueError(
@@ -506,7 +506,7 @@ def validate_subqueries(
     *,
     allow_empty_required_outputs: bool = False,
 ) -> list[Subquery]:
-    """Validate the compiled execution contract without reinterpreting meaning."""
+    """의미를 다시 해석하지 않고 컴파일된 실행 계약을 검증한다."""
     if not isinstance(subqueries, list) or not subqueries:
         raise ValueError("subqueries must be a non-empty array")
     if len(subqueries) > MAX_SUBQUERIES:
@@ -633,7 +633,7 @@ def validate_result_transform(
     *,
     catalog: QuerySemanticCatalog | None = None,
 ) -> BomShortageTransform | None:
-    """Validate an allowlisted formal transform and its structural source contract."""
+    """허용 목록의 formal transform과 구조적 source 계약을 검증한다."""
     transform = _validate_transform_shape(raw_transform)
     if transform is None:
         return None

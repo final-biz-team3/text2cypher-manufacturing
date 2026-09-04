@@ -1,4 +1,4 @@
-"""Declarative manufacturing ontology and compiled catalog contracts."""
+"""선언형 제조 ontology와 컴파일된 catalog 계약을 테스트한다."""
 
 from copy import deepcopy
 from pathlib import Path
@@ -145,6 +145,36 @@ def test_invalid_operation_is_rejected_by_the_strict_model() -> None:
         ManufacturingOntology.model_validate(data)
 
 
+@pytest.mark.parametrize(
+    ("alias", "inputs"),
+    [
+        ("priceCostGap", []),
+        ("priceCostGap", ["listPrice"]),
+        ("priceCostGap", ["listPrice", "standardCost", "productId"]),
+        ("actualStock", []),
+        ("depth", ["productId"]),
+    ],
+)
+def test_operation_input_arity_is_validated(alias: str, inputs: list[str]) -> None:
+    data = _ontology_data()
+    concept = next(item for item in data["businessConcepts"] if item["alias"] == alias)
+    concept["inputs"] = inputs
+
+    with pytest.raises(ValidationError, match=r"requires .* input"):
+        ManufacturingOntology.model_validate(data)
+
+
+def test_concept_kind_and_operation_must_agree() -> None:
+    data = _ontology_data()
+    concept = next(
+        item for item in data["businessConcepts"] if item["alias"] == "priceCostGap"
+    )
+    concept["kind"] = "aggregate"
+
+    with pytest.raises(ValidationError, match="cannot use operation"):
+        ManufacturingOntology.model_validate(data)
+
+
 def test_unknown_role_mapping_path_is_rejected() -> None:
     data = _ontology_data()
     data["outputRoles"][0]["mappings"]["sql"] = ["production.product.not_a_column"]
@@ -189,6 +219,63 @@ def test_entity_role_projection_is_source_scoped_and_described() -> None:
     assert "category" in catalog.allowed_entity_roles("sql")
     assert "category" not in catalog.allowed_entity_roles("graph")
     assert "keys=productId" in catalog.describe_entity_roles("sql")
+
+
+def test_relationship_product_roles_are_graph_scoped() -> None:
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    assert "product" in catalog.allowed_entity_roles("sql")
+    assert "finishedProduct" not in catalog.allowed_entity_roles("sql")
+    assert "rootProduct" not in catalog.allowed_entity_roles("sql")
+    assert "finishedProductId" not in catalog.allowed_aliases("sql")
+    assert "rootProductId" not in catalog.allowed_aliases("sql")
+    assert "finishedProduct" in catalog.allowed_entity_roles("graph")
+    assert "rootProduct" in catalog.allowed_entity_roles("graph")
+
+
+def test_root_product_means_hierarchy_root_not_every_traversal_start() -> None:
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    assert catalog.by_tool["graph"]["rootProductId"].canonical == (
+        "BOM 계층 루트 제품 식별자"
+    )
+    assert "탐색 시작" not in catalog.by_tool["graph"]["rootProductId"].canonical
+    assert "계층이나 부품 트리 자체" in catalog.entity_roles["rootProduct"].canonical
+    assert "지정된 두 끝점 경로" in (catalog.entity_roles["finishedProduct"].canonical)
+
+
+def test_graph_traversal_recipes_are_not_part_of_the_ontology_contract() -> None:
+    data = _ontology_data()
+    data["graphTraversals"] = [
+        {
+            "relationship": "REQUIRES_COMPONENT",
+            "roles": ["finishedProductA", "component"],
+            "direction": "forward",
+            "evidenceByMode": {"aggregate": ["minDepthA"]},
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ManufacturingOntology.model_validate(data)
+
+
+def test_entity_role_ontology_rejects_implicit_predicates() -> None:
+    data = _ontology_data()
+    finished_product = next(
+        item for item in data["entityRoles"] if item["roleId"] == "finishedProduct"
+    )
+    finished_product["predicates"] = {
+        "graph": [
+            {
+                "field": "sellableFinishedGood",
+                "operator": "equals",
+                "value": True,
+            }
+        ]
+    }
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ManufacturingOntology.model_validate(data)
 
 
 def test_alternative_term_order_does_not_change_compiled_semantics() -> None:
