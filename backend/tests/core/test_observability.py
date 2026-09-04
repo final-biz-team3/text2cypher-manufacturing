@@ -80,8 +80,7 @@ def test_failure_summary_explains_the_situation_in_korean() -> None:
     )
 
     assert summary == (
-        "GRAPH 쿼리 실행에 실패했습니다 (2/3회) — "
-        "스키마에 없는 속성을 참조했습니다."
+        "GRAPH 쿼리 실행에 실패했습니다 (2/3회) — 스키마에 없는 속성을 참조했습니다."
     )
 
 

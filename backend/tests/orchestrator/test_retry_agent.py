@@ -72,7 +72,9 @@ def _make_subgraph(
     )
 
 
-async def test_initial_query_bypasses_only_first_generation_for_paired_evaluation() -> None:
+async def test_initial_query_bypasses_only_first_generation_for_paired_evaluation() -> (
+    None
+):
     generated: list[tuple[str | None, str | None]] = []
     executed: list[str] = []
 

@@ -123,7 +123,9 @@ def _force_empty(query: str, tool: str) -> str | None:
     return query[: match.start()] + "WITH * WHERE false\nRETURN" + query[match.end() :]
 
 
-def _normalize(rows: list[dict[str, Any]], expected: ExpectedSubquery) -> list[dict[str, Any]]:
+def _normalize(
+    rows: list[dict[str, Any]], expected: ExpectedSubquery
+) -> list[dict[str, Any]]:
     return normalize_rows(
         rows,
         required_outputs=expected.required_outputs,
@@ -212,9 +214,9 @@ async def _run_fixture(
         rows = state.get("result")
         semantic_pass = False
         if isinstance(rows, list) and state.get("error") is None:
-            semantic_pass = normalized_sha256(_normalize(rows, expected)) == normalized_sha256(
-                _normalize(gold_rows, expected)
-            )
+            semantic_pass = normalized_sha256(
+                _normalize(rows, expected)
+            ) == normalized_sha256(_normalize(gold_rows, expected))
     except Exception as exc:  # 결과 파일에는 비밀이 없는 예외 타입만 남긴다.
         state = {}
         rows = None
@@ -254,13 +256,24 @@ def _summary(records: list[dict[str, Any]]) -> dict[str, Any]:
         count = len(selected)
         result["engines"][engine] = {
             "runs": count,
-            "executionSuccessRate": sum(bool(x["executionSuccess"]) for x in selected) / count if count else 0,
-            "semanticPassRate": sum(bool(x["semanticPass"]) for x in selected) / count if count else 0,
-            "averageLatencyMs": round(sum(float(x["latencyMs"]) for x in selected) / count, 3) if count else 0,
+            "executionSuccessRate": sum(bool(x["executionSuccess"]) for x in selected)
+            / count
+            if count
+            else 0,
+            "semanticPassRate": sum(bool(x["semanticPass"]) for x in selected) / count
+            if count
+            else 0,
+            "averageLatencyMs": round(
+                sum(float(x["latencyMs"]) for x in selected) / count, 3
+            )
+            if count
+            else 0,
             "modelCalls": sum(int(x["modelCallCount"]) for x in selected),
             "inputTokens": sum(int(x["inputTokens"]) for x in selected),
             "outputTokens": sum(int(x["outputTokens"]) for x in selected),
-            "estimatedCostUsd": round(sum(float(x["estimatedCostUsd"]) for x in selected), 10),
+            "estimatedCostUsd": round(
+                sum(float(x["estimatedCostUsd"]) for x in selected), 10
+            ),
         }
     return result
 
@@ -307,7 +320,10 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         graph_schema,
                         serialize_sql_schema(sql_schema),
                         serialize_graph_schema(graph_schema),
-                        {"sql": catalog.describe("sql"), "graph": catalog.describe("graph")},
+                        {
+                            "sql": catalog.describe("sql"),
+                            "graph": catalog.describe("graph"),
+                        },
                     )
                 )
                 print(
@@ -320,7 +336,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         await raw_client.close()
     output = {"model": model, "summary": _summary(records), "records": records}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    args.output.write_text(
+        json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return output
 
 

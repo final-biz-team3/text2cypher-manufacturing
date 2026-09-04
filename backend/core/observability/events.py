@@ -84,32 +84,52 @@ def _event_summary(event_name: str, record: dict[str, Any]) -> str:
     attempt = _attempt_ko(record)
 
     if event_name == "http.request.started":
-        return f"{record.get('method', 'HTTP')} {record.get('path', '')} 요청을 시작했습니다".replace("  ", " ")
+        return f"{record.get('method', 'HTTP')} {record.get('path', '')} 요청을 시작했습니다".replace(
+            "  ", " "
+        )
     if event_name == "http.request.completed":
         status = record.get("status_code", "-")
         suffix = f" ({duration})" if duration else ""
-        return f"{record.get('method', 'HTTP')} {record.get('path', '')} 요청이 HTTP {status} 상태로 완료됐습니다{suffix}".replace("  ", " ")
+        return f"{record.get('method', 'HTTP')} {record.get('path', '')} 요청이 HTTP {status} 상태로 완료됐습니다{suffix}".replace(
+            "  ", " "
+        )
     if event_name == "http.request.failed":
-        return f"{record.get('method', 'HTTP')} {record.get('path', '')} 요청 처리에 실패했습니다".replace("  ", " ")
+        return f"{record.get('method', 'HTTP')} {record.get('path', '')} 요청 처리에 실패했습니다".replace(
+            "  ", " "
+        )
     if event_name == "routing.completed":
         return f"질문을 {route} 경로로 분류했습니다"
     if event_name == "planning.completed":
         count = record.get("subquery_count")
-        return f"{route} 실행 계획을 만들었습니다" + (f" (하위 질의 {count}개)" if count is not None else "")
+        return f"{route} 실행 계획을 만들었습니다" + (
+            f" (하위 질의 {count}개)" if count is not None else ""
+        )
     if event_name == "model.call.started":
         return f"{record.get('model_purpose', '응답')} 모델 호출을 시작했습니다"
     if event_name == "model.call.completed":
-        return f"{record.get('model_purpose', '응답')} 모델 호출이 완료됐습니다" + (f" ({duration})" if duration else "")
+        return f"{record.get('model_purpose', '응답')} 모델 호출이 완료됐습니다" + (
+            f" ({duration})" if duration else ""
+        )
     if event_name == "model.call.failed":
         return f"{record.get('model_purpose', '응답')} 모델 호출에 실패했습니다"
     if event_name == "query.generated":
         return f"{target} 쿼리를 생성했습니다" + (f" ({attempt})" if attempt else "")
     if event_name == "query.attempt.started":
-        return f"{target} 쿼리 실행을 시작했습니다" + (f" ({attempt})" if attempt else "")
+        return f"{target} 쿼리 실행을 시작했습니다" + (
+            f" ({attempt})" if attempt else ""
+        )
     if event_name == "query.attempt.completed":
         if outcome == "failure":
-            return f"{target} 쿼리 실행에 실패했습니다" + (f" ({attempt})" if attempt else "") + (f" — {failure}" if failure else "")
-        return f"{target} 쿼리 실행이 완료됐습니다" + (f" ({attempt})" if attempt else "") + (f" · {duration}" if duration else "")
+            return (
+                f"{target} 쿼리 실행에 실패했습니다"
+                + (f" ({attempt})" if attempt else "")
+                + (f" — {failure}" if failure else "")
+            )
+        return (
+            f"{target} 쿼리 실행이 완료됐습니다"
+            + (f" ({attempt})" if attempt else "")
+            + (f" · {duration}" if duration else "")
+        )
     if event_name == "tool.execution.started":
         return f"{target} 조회를 시작했습니다"
     if event_name == "tool.execution.completed":
@@ -120,21 +140,44 @@ def _event_summary(event_name: str, record: dict[str, Any]) -> str:
         skip_reason = record.get("skip_reason", "선행 조건 불충족")
         return f"{target} 조회를 생략했습니다 — {skip_reason}"
     if event_name == "repair.decision.made":
-        action = "쿼리를 수정해 다시 시도합니다" if record.get("decision") == "retry" else "추가 시도를 중단합니다"
-        return f"{target} {action}" + (f" ({attempt})" if attempt else "") + (f" — {failure}" if failure else "")
+        action = (
+            "쿼리를 수정해 다시 시도합니다"
+            if record.get("decision") == "retry"
+            else "추가 시도를 중단합니다"
+        )
+        return (
+            f"{target} {action}"
+            + (f" ({attempt})" if attempt else "")
+            + (f" — {failure}" if failure else "")
+        )
     if event_name == "repair.completed":
-        return f"{target} 쿼리가 자기수정으로 복구됐습니다" + (f" ({attempt})" if attempt else "")
+        return f"{target} 쿼리가 자기수정으로 복구됐습니다" + (
+            f" ({attempt})" if attempt else ""
+        )
     if event_name == "repair.exhausted":
-        return f"{target} 쿼리 자기수정에 실패해 처리를 중단했습니다" + (f" ({attempt})" if attempt else "") + (f" — {failure}" if failure else "")
+        return (
+            f"{target} 쿼리 자기수정에 실패해 처리를 중단했습니다"
+            + (f" ({attempt})" if attempt else "")
+            + (f" — {failure}" if failure else "")
+        )
     if event_name == "query.pipeline.completed":
         final_status = str(record.get("final_status") or "")
-        result = _FINAL_STATUS_KO.get(final_status, "성공적으로 완료했습니다" if outcome == "success" else "실패했습니다")
+        result = _FINAL_STATUS_KO.get(
+            final_status,
+            "성공적으로 완료했습니다" if outcome == "success" else "실패했습니다",
+        )
         return f"{route} 질문 처리를 {result}" + (f" ({duration})" if duration else "")
     if event_name == "audit.guard.decision":
-        decision = "허용했습니다" if record.get("decision") == "ALLOW" else "차단했습니다"
-        return f"{target} 쿼리를 안전성 검사에서 {decision}" + (f" — {issue_code}" if issue_code else "")
+        decision = (
+            "허용했습니다" if record.get("decision") == "ALLOW" else "차단했습니다"
+        )
+        return f"{target} 쿼리를 안전성 검사에서 {decision}" + (
+            f" — {issue_code}" if issue_code else ""
+        )
     if event_name == "failure.review.created":
-        return "운영자 확인이 필요한 실패를 검토 목록에 등록했습니다" + (f" — {issue_code}" if issue_code else "")
+        return "운영자 확인이 필요한 실패를 검토 목록에 등록했습니다" + (
+            f" — {issue_code}" if issue_code else ""
+        )
     return _EVENT_SUMMARIES.get(event_name, event_name)
 
 

@@ -41,7 +41,9 @@ def _check_demo_access(token: str) -> None:
 
 
 @router.post("/internal/demo/metrics", include_in_schema=False)
-async def seed_demo_metrics(x_metrics_token: str = Header(default="")) -> dict[str, int]:
+async def seed_demo_metrics(
+    x_metrics_token: str = Header(default=""),
+) -> dict[str, int]:
     """개발용 Grafana 화면 검증을 위해 실제 메트릭 라벨 조합을 증가시킨다."""
     _check_demo_access(x_metrics_token)
 
@@ -59,7 +61,12 @@ async def seed_demo_metrics(x_metrics_token: str = Header(default="")) -> dict[s
         CHAT_DURATION.labels(route, status).observe(duration)
         ROUTING.labels(route, "success").inc()
 
-    for route, tool in (("SQL", "sql"), ("GRAPH", "graph"), ("HYBRID", "sql"), ("HYBRID", "graph")):
+    for route, tool in (
+        ("SQL", "sql"),
+        ("GRAPH", "graph"),
+        ("HYBRID", "sql"),
+        ("HYBRID", "graph"),
+    ):
         PLANNED_TOOLS.labels(route, tool).inc()
         TOOL_EXECUTIONS.labels(route, tool, "success").inc()
     TOOL_EXECUTIONS.labels("GRAPH", "graph", "failure").inc()
@@ -84,9 +91,20 @@ async def seed_demo_metrics(x_metrics_token: str = Header(default="")) -> dict[s
 
     EMPTY_RESULTS.labels("sql", "NO_DATA").inc()
     EMPTY_RESULTS.labels("graph", "INCONCLUSIVE").inc()
-    for node, duration in (("resolve_entity", 0.12), ("route_query", 0.08), ("plan_outputs", 0.15), ("execute_plan", 0.44), ("generate_answer", 0.62)):
+    for node, duration in (
+        ("resolve_entity", 0.12),
+        ("route_query", 0.08),
+        ("plan_outputs", 0.15),
+        ("execute_plan", 0.44),
+        ("generate_answer", 0.62),
+    ):
         PIPELINE_NODE_DURATION.labels(node).observe(duration)
-    for tool, outcome, duration in (("sql", "success", 0.09), ("sql", "failure", 0.04), ("graph", "success", 0.18), ("graph", "failure", 0.12)):
+    for tool, outcome, duration in (
+        ("sql", "success", 0.09),
+        ("sql", "failure", 0.04),
+        ("graph", "success", 0.18),
+        ("graph", "failure", 0.12),
+    ):
         DB_QUERY_DURATION.labels(tool, outcome).observe(duration)
 
     for purpose, outcome, duration, input_tokens, output_tokens in (
@@ -103,7 +121,9 @@ async def seed_demo_metrics(x_metrics_token: str = Header(default="")) -> dict[s
         MODEL_CACHED_INPUT_TOKENS.labels(purpose).inc(input_tokens // 3)
         MODEL_CACHE_WRITE_TOKENS.labels(purpose).inc(input_tokens // 10)
         MODEL_REASONING_TOKENS.labels(purpose).inc(output_tokens // 4)
-        MODEL_ESTIMATED_COST.labels(purpose).inc((input_tokens + output_tokens) * 0.000001)
+        MODEL_ESTIMATED_COST.labels(purpose).inc(
+            (input_tokens + output_tokens) * 0.000001
+        )
 
     DROPPED_EVENTS.labels("logging", "queue_full").inc()
     return {"seeded_scenarios": len(scenarios)}
