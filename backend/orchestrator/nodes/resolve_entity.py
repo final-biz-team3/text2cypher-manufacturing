@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -200,7 +201,17 @@ def _entity_type_config(
 
 
 def _normalized_label(value: str) -> str:
-    return " ".join(value.casefold().split())
+    return " ".join(unicodedata.normalize("NFC", value).casefold().split())
+
+
+def _normalized_name_comparison(value: str, *, remove_commas: bool) -> str:
+    """이름 span 비교에만 쓰는 제한적인 표기 정규화를 적용한다."""
+    normalized = unicodedata.normalize("NFC", value).casefold()
+    if remove_commas:
+        normalized = normalized.replace(",", " ")
+    else:
+        normalized = re.sub(r"\s*,\s*", ",", normalized)
+    return " ".join(normalized.split())
 
 
 def _literal_name_candidates(query: str) -> tuple[str, ...]:
@@ -221,6 +232,24 @@ def _is_ascii_word_character(value: str) -> bool:
     return value.isascii() and (value.isalnum() or value == "_")
 
 
+def _casefold_with_spans(value: str) -> tuple[str, list[tuple[int, int]]]:
+    """NFC 문자열의 casefold 확장(예: ß → ss)도 원래 문자 좌표로 연결한다."""
+    characters: list[str] = []
+    spans: list[tuple[int, int]] = []
+    for index, character in enumerate(value):
+        folded = character.casefold()
+        characters.extend(folded)
+        spans.extend([(index, index + 1)] * len(folded))
+    return "".join(characters), spans
+
+
+def _whole_character_match(spans: list[tuple[int, int]], start: int, end: int) -> bool:
+    """casefold로 확장된 한 문자의 일부만 이름으로 잡지 않는다."""
+    return (start == 0 or spans[start - 1] != spans[start]) and (
+        end == len(spans) or spans[end - 1] != spans[end]
+    )
+
+
 def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
     """질문에 포함된 DB 이름의 완전한 token 범위를 반환한다.
 
@@ -230,8 +259,8 @@ def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
     """
     if not name:
         return []
-    folded_query = query.casefold()
-    folded_name = name.casefold()
+    folded_query, positions = _casefold_with_spans(unicodedata.normalize("NFC", query))
+    folded_name = unicodedata.normalize("NFC", name).casefold()
     spans: list[tuple[int, int]] = []
     offset = 0
     while True:
@@ -249,9 +278,73 @@ def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
             and _is_ascii_word_character(folded_name[-1])
             and _is_ascii_word_character(folded_query[end])
         )
+        if (
+            not starts_inside_word
+            and not ends_inside_word
+            and _whole_character_match(positions, start, end)
+        ):
+            spans.append((positions[start][0], positions[end - 1][1]))
+        offset = start + 1
+
+
+def _normalized_name_spans(
+    query: str, name: str, *, remove_commas: bool
+) -> list[tuple[int, int]]:
+    """공백·쉼표 표기만 다른 실제 질문 구간을 보수적으로 찾는다.
+
+    질문을 한 번만 정규화하고 원문 index map을 유지한다. 모든 부분 문자열을
+    다시 정규화하지 않는다. 반환 좌표는 literal span과 같은 NFC 질문 기준이다.
+    """
+    normalized_query = unicodedata.normalize("NFC", query)
+    normalized_name = unicodedata.normalize("NFC", name)
+    target = _normalized_name_comparison(normalized_name, remove_commas=remove_commas)
+    if not target:
+        return []
+
+    folded_query, original_positions = _casefold_with_spans(normalized_query)
+    characters: list[str] = []
+    positions: list[tuple[int, int]] = []
+    for character, position in zip(folded_query, original_positions, strict=True):
+        if character.isspace() or (remove_commas and character == ","):
+            if not characters or (not remove_commas and characters[-1] == ","):
+                continue
+            if characters[-1] == " ":
+                positions[-1] = (positions[-1][0], position[1])
+                continue
+            character = " "
+        elif character == "," and characters and characters[-1] == " ":
+            characters.pop()
+            positions.pop()
+        characters.append(character)
+        positions.append(position)
+    if characters and characters[-1] == " ":
+        characters.pop()
+        positions.pop()
+    comparison_query = "".join(characters)
+
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    while True:
+        match_start = comparison_query.find(target, offset)
+        if match_start < 0:
+            return spans
+        match_end = match_start + len(target)
+        offset = match_start + 1
+        if not _whole_character_match(positions, match_start, match_end):
+            continue
+        start, end = positions[match_start][0], positions[match_end - 1][1]
+        starts_inside_word = (
+            start > 0
+            and _is_ascii_word_character(normalized_name[0])
+            and _is_ascii_word_character(normalized_query[start - 1])
+        )
+        ends_inside_word = (
+            end < len(normalized_query)
+            and _is_ascii_word_character(normalized_name[-1])
+            and _is_ascii_word_character(normalized_query[end])
+        )
         if not starts_inside_word and not ends_inside_word:
             spans.append((start, end))
-        offset = start + 1
 
 
 @dataclass(frozen=True)
@@ -310,7 +403,7 @@ def _literal_matches(
 
 def _select_literal_entities(
     matches: list[_LiteralEntityMatch],
-) -> tuple[list[dict[str, Any]], bool]:
+) -> tuple[list[_LiteralEntityMatch], bool]:
     """겹치지 않는 가장 긴 literal 이름을 질문 순서대로 선택한다.
 
     서로 다른 엔티티 타입이 같은 범위를 공유하면 DB 텍스트만으로 의미 역할을
@@ -344,13 +437,57 @@ def _select_literal_entities(
         selected.append(candidates[0])
 
     selected.sort(key=lambda match: match.start)
-    entities: list[dict[str, Any]] = []
-    _append_unique(entities, [match.entity for match in selected])
-    return entities, has_ambiguous_span
+    unique: list[_LiteralEntityMatch] = []
+    for match in selected:
+        if not any(item.entity == match.entity for item in unique):
+            unique.append(match)
+    return unique, has_ambiguous_span
+
+
+def _lookup_is_inside_selected_literal(
+    query: str,
+    entity_type: str,
+    lookup_name: str,
+    selected_literals: list[_LiteralEntityMatch],
+) -> bool:
+    """긴 exact literal 내부에서만 생긴 같은 타입 extraction을 중복 제거한다."""
+    containers = [
+        (match.start, match.end)
+        for match in selected_literals
+        if match.config.entity_type == entity_type
+    ]
+    if not containers:
+        return False
+
+    spans = _literal_name_spans(query, lookup_name)
+    if not spans:
+        spans = _normalized_name_spans(query, lookup_name, remove_commas=False)
+    if not spans:
+        # 쉼표 제거 비교형은 같은 타입의 선택된 exact literal과 중복을 판정하는
+        # 이 경로에서만 허용한다.
+        spans = _normalized_name_spans(query, lookup_name, remove_commas=True)
+    if not spans:
+        return False
+    return all(
+        any(
+            container_start <= start and end <= container_end
+            for container_start, container_end in containers
+        )
+        for start, end in spans
+    )
 
 
 def _is_exact_type_alias(name: str, type_aliases: frozenset[str]) -> bool:
-    return _normalized_label(name) in type_aliases
+    normalized = _normalized_label(name)
+    if normalized in type_aliases:
+        return True
+    if not normalized or any(
+        not (character.isspace() or "가" <= character <= "힣")
+        for character in normalized
+    ):
+        return False
+    compact = normalized.replace(" ", "")
+    return compact in {alias.replace(" ", "") for alias in type_aliases}
 
 
 def _strip_edge_type_alias(name: str, config: NamedEntityType) -> str:
@@ -582,6 +719,13 @@ def make_resolve_entity_node(
             lookup_name = _strip_edge_type_alias(extracted_name, config)
             if not lookup_name or _is_exact_type_alias(lookup_name, type_aliases):
                 continue
+            if lookup_name.isdigit():
+                logger.info(
+                    "resolve_entity: type=%r name=%r -> digits-only lookup ignored",
+                    entity_type,
+                    lookup_name,
+                )
+                continue
             lookups.append((entity_type, lookup_name, config))
 
         literal_names = tuple(
@@ -620,15 +764,31 @@ def make_resolve_entity_node(
                 entities_by_type[config.entity_type],
             )
         ]
-        literal_entities, has_ambiguous_literal = _select_literal_entities(
+        selected_literals, has_ambiguous_literal = _select_literal_entities(
             literal_matches
         )
+        literal_entities = [match.entity for match in selected_literals]
         if has_ambiguous_literal:
             logger.info(
                 "resolve_entity: query=%r -> ambiguous literal span; "
                 "using extracted entity types",
                 state["query"],
             )
+
+        filtered_lookups: list[tuple[str, str, NamedEntityType]] = []
+        for entity_type, lookup_name, config in lookups:
+            if _lookup_is_inside_selected_literal(
+                state["query"], entity_type, lookup_name, selected_literals
+            ):
+                logger.info(
+                    "resolve_entity: type=%r name=%r -> selected exact literal 내부 "
+                    "중복 extraction ignored",
+                    entity_type,
+                    lookup_name,
+                )
+                continue
+            filtered_lookups.append((entity_type, lookup_name, config))
+        lookups = filtered_lookups
 
         if not lookups and not literal_entities:
             result = _collapse_entities([c.entity for c in valid_confirmed])

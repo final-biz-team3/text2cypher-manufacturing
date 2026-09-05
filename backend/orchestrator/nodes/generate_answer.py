@@ -13,7 +13,12 @@ from orchestrator.field_labels import FIELD_LABELS
 from orchestrator.guards.audit import log_answer_validation
 from orchestrator.nodes.answer_limits import build_answer_context
 from orchestrator.numeric_literals import normalize_numeric_literal
-from orchestrator.state import ComposedResult, OrchestratorState, QueryFailure
+from orchestrator.state import (
+    AnswerGenerationMetadata,
+    ComposedResult,
+    OrchestratorState,
+    QueryFailure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -374,12 +379,16 @@ def _caveat_template(context: Mapping[str, Any]) -> str | None:
 _VALIDATION_STAGE = "generate_answer"
 
 
-def _reject(reason: str, detail: list[str]) -> NoReturn:
+def _reject(reason: str, detail: list[str], *, attempt_count: int) -> NoReturn:
     logger.warning("답변 검증 실패(%s): %s", reason, detail)
     log_answer_validation(
         stage=_VALIDATION_STAGE, outcome="rejected", reason=reason, detail=detail
     )
-    raise AnswerGenerationError()
+    raise AnswerGenerationError(
+        reason=reason,
+        attempt_count=attempt_count,
+        validation_rejected=True,
+    )
 
 
 class _SchemaError(Exception):
@@ -542,14 +551,25 @@ async def _generate_markdown_answer(
     *,
     query: str,
     composed_result: ComposedResult,
-) -> str:
+) -> tuple[str, AnswerGenerationMetadata]:
     try:
-        return await _generate_llm_answer(
+        answer, attempt_count, validation_rejected = await _generate_llm_answer(
             openai_client, query=query, composed_result=composed_result
         )
-    except AnswerGenerationError:
+        return answer, {
+            "mode": "structured",
+            "attemptCount": attempt_count,
+            "fallbackReason": None,
+            "validationRejected": validation_rejected,
+        }
+    except AnswerGenerationError as exc:
         logger.warning("자연어 답변 생성 실패 - 결정론적 대체 답변 사용")
-        return _render_fallback_answer(composed_result)
+        return _render_fallback_answer(composed_result), {
+            "mode": "fallback",
+            "attemptCount": exc.attempt_count,
+            "fallbackReason": exc.reason,
+            "validationRejected": exc.validation_rejected,
+        }
 
 
 async def _generate_llm_answer(
@@ -557,14 +577,16 @@ async def _generate_llm_answer(
     *,
     query: str,
     composed_result: ComposedResult,
-) -> str:
+) -> tuple[str, int, bool]:
+    attempt_count = 0
+    validation_rejected = False
     try:
         context = build_answer_context(composed_result)
         if context["included_count"] == 0:
             # 원본 결과는 있지만 단일 행조차 프롬프트 예산 안에 넣지 못했다면
             # 행을 보지 않은 LLM이 값을 추측하게 두지 않고 fail-closed한다.
             logger.warning("답변 생성 실패(포함할 행 없음)")
-            raise AnswerGenerationError()
+            raise AnswerGenerationError(reason="empty_answer_context")
         model = os.getenv("ANSWER_MODEL", "").strip() or os.environ["OPENAI_MODEL"]
         max_output_tokens = int(
             os.getenv("ANSWER_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_OUTPUT_TOKENS))
@@ -573,6 +595,7 @@ async def _generate_llm_answer(
             raise ValueError("ANSWER_MAX_OUTPUT_TOKENS must be positive.")
         messages = _build_messages(query, context)
         for attempt in range(_MAX_ANSWER_ATTEMPTS):
+            attempt_count = attempt + 1
             response = await observe_model_call(
                 "generate_answer",
                 model,
@@ -585,7 +608,9 @@ async def _generate_llm_answer(
             )
             if not response.choices:
                 logger.warning("답변 생성 실패(LLM 응답에 choices 없음)")
-                raise AnswerGenerationError()
+                raise AnswerGenerationError(
+                    reason="missing_choices", attempt_count=attempt_count
+                )
             choice = response.choices[0]
             if choice.finish_reason != "stop":
                 logger.warning(
@@ -593,23 +618,36 @@ async def _generate_llm_answer(
                     choice.finish_reason,
                     response.usage,
                 )
-                raise AnswerGenerationError()
+                raise AnswerGenerationError(
+                    reason="incomplete_response", attempt_count=attempt_count
+                )
             content = choice.message.content
             if not isinstance(content, str) or not content.strip():
                 logger.warning("답변 생성 실패(빈 응답)")
-                raise AnswerGenerationError()
+                raise AnswerGenerationError(
+                    reason="empty_response", attempt_count=attempt_count
+                )
             try:
                 parsed = json.loads(content)
             except json.JSONDecodeError as exc:
                 logger.warning("답변 생성 실패(JSON 파싱 실패)")
-                raise AnswerGenerationError() from exc
+                raise AnswerGenerationError(
+                    reason="invalid_json", attempt_count=attempt_count
+                ) from exc
             if not isinstance(parsed, dict):
                 logger.warning("답변 생성 실패(JSON 최상위가 객체가 아님)")
-                raise AnswerGenerationError()
+                raise AnswerGenerationError(
+                    reason="invalid_json_root", attempt_count=attempt_count
+                )
 
             try:
-                return _render_structured_answer(parsed, context)
+                return (
+                    _render_structured_answer(parsed, context),
+                    attempt_count,
+                    validation_rejected,
+                )
             except (_GroundingError, _SchemaError) as failure:
+                validation_rejected = True
                 if attempt < _MAX_ANSWER_ATTEMPTS - 1:
                     logger.info(
                         "답변 재시도(사유=%s, 상세=%s)", failure.reason, failure.detail
@@ -620,15 +658,25 @@ async def _generate_llm_answer(
                         _retry_feedback_message(failure.reason, failure.detail),
                     ]
                     continue
-                _reject(failure.reason, failure.detail)
+                _reject(
+                    failure.reason,
+                    failure.detail,
+                    attempt_count=attempt_count,
+                )
         # for 루프는 매 반복이 항상 return이나 _reject(NoReturn)로 끝나므로
         # 실제로는 도달하지 않는다 - 정적 분석기를 위한 안전망일 뿐이다.
-        raise AnswerGenerationError()
+        raise AnswerGenerationError(
+            reason="retry_loop_exhausted",
+            attempt_count=attempt_count,
+            validation_rejected=validation_rejected,
+        )
     except AnswerGenerationError:
         raise
     except Exception as exc:
         logger.exception("자연어 답변 LLM 호출 실패")
-        raise AnswerGenerationError() from exc
+        raise AnswerGenerationError(
+            reason="provider_error", attempt_count=attempt_count
+        ) from exc
 
 
 def generate_failure_answer(failure: QueryFailure) -> str:
@@ -648,30 +696,54 @@ def make_generate_answer_node(
 ) -> Callable[[OrchestratorState], Any]:
     """성공한 비어 있지 않은 조합 결과만 LLM으로 자연어화한다."""
 
-    async def generate_answer(state: OrchestratorState) -> dict[str, str]:
+    async def generate_answer(state: OrchestratorState) -> dict[str, Any]:
+        fixed_metadata: AnswerGenerationMetadata = {
+            "mode": "fixed",
+            "attemptCount": 0,
+            "fallbackReason": None,
+            "validationRejected": False,
+        }
         query_failure = state.get("query_failure")
         if query_failure is not None:
             if query_failure["kind"] == "infrastructure":
                 raise QueryInfrastructureError()
             if query_failure["kind"] == "user_correctable":
-                return {"final_answer": generate_failure_answer(query_failure)}
-            return {"final_answer": _INTERNAL_FAILURE_ANSWER}
+                return {
+                    "final_answer": generate_failure_answer(query_failure),
+                    "answer_metadata": fixed_metadata,
+                }
+            return {
+                "final_answer": _INTERNAL_FAILURE_ANSWER,
+                "answer_metadata": fixed_metadata,
+            }
 
         composed_result = state.get("composed_result")
         if composed_result is None or composed_result.get("error") is not None:
-            return {"final_answer": _COMPOSITION_ERROR_ANSWER}
+            return {
+                "final_answer": _COMPOSITION_ERROR_ANSWER,
+                "answer_metadata": fixed_metadata,
+            }
         if not _has_answer_rows(composed_result):
             if composed_result.get("empty_reason") == "INCONCLUSIVE":
-                return {"final_answer": _INCONCLUSIVE_ANSWER}
+                return {
+                    "final_answer": _INCONCLUSIVE_ANSWER,
+                    "answer_metadata": fixed_metadata,
+                }
             if composed_result.get("empty_reason") == "NO_DATA":
-                return {"final_answer": _NO_DATA_ANSWER}
-            return {"final_answer": _COMPOSITION_ERROR_ANSWER}
+                return {
+                    "final_answer": _NO_DATA_ANSWER,
+                    "answer_metadata": fixed_metadata,
+                }
+            return {
+                "final_answer": _COMPOSITION_ERROR_ANSWER,
+                "answer_metadata": fixed_metadata,
+            }
 
-        final_answer = await _generate_markdown_answer(
+        final_answer, metadata = await _generate_markdown_answer(
             openai_client,
             query=state["query"],
             composed_result=composed_result,
         )
-        return {"final_answer": final_answer}
+        return {"final_answer": final_answer, "answer_metadata": metadata}
 
     return generate_answer

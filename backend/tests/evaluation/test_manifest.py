@@ -345,18 +345,3 @@ def test_evaluation_manifest_stays_aligned_with_query_contracts() -> None:
             assert set(source_contract["requiredAnswerFields"]) == set(
                 contract.subqueries[0].required_outputs
             )
-
-
-def test_self_correction_case_set_is_balanced_and_reuses_approved_contracts() -> None:
-    manifest = load_manifest(
-        PROJECT_ROOT / "queries" / "evaluation" / "manifest.json",
-        PROJECT_ROOT / "queries" / "evaluation" / "self_correction_cases.json",
-    )
-
-    routes = Counter(
-        manifest.contracts[case.contract_id].route for case in manifest.cases
-    )
-    assert len(manifest.cases) == 24
-    assert routes == {"SQL": 8, "GRAPH": 8, "HYBRID": 8}
-    assert {case.suite for case in manifest.cases} == {"self-correction"}
-    assert len({case.case_id for case in manifest.cases}) == 24

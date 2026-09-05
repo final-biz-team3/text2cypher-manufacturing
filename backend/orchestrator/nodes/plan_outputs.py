@@ -20,7 +20,7 @@ from orchestrator.planning import (
     validate_result_transform,
     validate_subqueries,
 )
-from orchestrator.semantic_catalog import ToolName
+from orchestrator.semantic_catalog import ResultShapeSourceSpec, ToolName
 from orchestrator.state import OrchestratorState
 
 logger = logging.getLogger(__name__)
@@ -225,6 +225,55 @@ def compile_semantic_output_plan(
     return _ordered_union(plan.required_outputs, identity_outputs)
 
 
+def conform_output_plan_to_shape(
+    plan: SemanticOutputPlan,
+    contract: ResultShapeSourceSpec | None,
+    catalog: OutputCatalog,
+    *,
+    tool: str,
+) -> SemanticOutputPlan:
+    """고유하게 매칭된 shape의 grain-safe 보강 또는 재계획 필요를 판정한다."""
+    if contract is None:
+        return plan
+
+    required_outputs = list(plan.required_outputs)
+    display_entities = list(plan.display_entities)
+    selected_aliases = set(required_outputs)
+
+    for role_id in contract.display_entities:
+        if role_id in display_entities:
+            continue
+        projection = catalog.identity_projection(role_id, tool)
+        if selected_aliases & set(projection.keys):
+            display_entities.append(role_id)
+
+    for group in contract.completion_groups:
+        if selected_aliases & set(group):
+            required_outputs = _ordered_union(required_outputs, group)
+            selected_aliases.update(group)
+
+    missing_roles = [
+        role_id
+        for role_id in contract.display_entities
+        if role_id not in display_entities
+    ]
+    missing_outputs = [
+        alias for alias in contract.required_outputs if alias not in required_outputs
+    ]
+    if missing_roles or missing_outputs:
+        details: list[str] = []
+        if missing_roles:
+            details.append("displayEntities=" + ",".join(missing_roles))
+        if missing_outputs:
+            details.append("requiredOutputs=" + ",".join(missing_outputs))
+        raise ValueError("matched result shape is incomplete: " + "; ".join(details))
+
+    return SemanticOutputPlan(
+        required_outputs=tuple(required_outputs),
+        display_entities=tuple(display_entities),
+    )
+
+
 def compile_graph_generator_rules(
     _plan: SemanticOutputPlan,
     catalog: OutputCatalog,
@@ -239,6 +288,23 @@ def compile_graph_generator_rules(
         "origin 및 destination을 기준으로 결정한다. displayEntities 순서, required "
         "output 순서 및 물리 MATCH 방향은 이 의미 방향을 결정하지 않는다."
     ]
+
+
+def compile_entity_role_generator_rules(
+    plan: SemanticOutputPlan,
+    catalog: OutputCatalog,
+    *,
+    tool: str,
+) -> list[str]:
+    rules: list[str] = []
+    for role_id in plan.display_entities:
+        role = catalog.entity_roles[role_id]
+        for predicate in role.predicates.get(cast(ToolName, tool), ()):
+            rules.append(
+                f"entity role {role_id}은(는) {predicate.field} "
+                f"{predicate.operator} {predicate.value!r} predicate를 반드시 적용한다."
+            )
+    return rules
 
 
 def finalize_required_outputs(
@@ -316,7 +382,8 @@ async def _select_output_plan(
     entity: object | None,
     catalog: OutputCatalog,
     reasoning_effort: ReasoningEffort,
-) -> SemanticOutputPlan:
+    shape_contract: ResultShapeSourceSpec | None = None,
+) -> tuple[SemanticOutputPlan, int]:
     tool = route_subquery["tool"]
     user_content = f"source: {tool}\noriginal question: {original_question}\n"
     if planning_context is not None:
@@ -360,7 +427,16 @@ async def _select_output_plan(
         try:
             if not isinstance(content, str):
                 raise ValueError("output planner returned an empty response")
-            return _parse_output_plan(content, tool=tool, catalog=catalog)
+            parsed = _parse_output_plan(content, tool=tool, catalog=catalog)
+            return (
+                conform_output_plan_to_shape(
+                    parsed,
+                    shape_contract,
+                    catalog,
+                    tool=tool,
+                ),
+                attempt,
+            )
         except (json.JSONDecodeError, ValueError) as exc:
             if attempt == 1:
                 raise OutputPlanningError(str(exc), last_content) from exc
@@ -409,8 +485,11 @@ def make_plan_outputs_node(
                         raw_questions[raw_id] = raw_question
         outgoing = _outgoing_binding_outputs(route_subqueries)
         transform = state.get("resultTransform")
+        shape_sources = catalog.match_result_shape_sources(
+            state["query"], state.get("entity")
+        )
 
-        async def plan_one(route_subquery: RouteSubquery) -> Subquery:
+        async def plan_one(route_subquery: RouteSubquery) -> tuple[Subquery, int]:
             tool = cast(ToolName, route_subquery["tool"])
             planning_context: tuple[str, str] | None
             if len(route_subqueries) > 1:
@@ -432,8 +511,9 @@ def make_plan_outputs_node(
                 spec = catalog.transform(transform_type)
                 selected = list(spec.required_outputs[tool])
                 generator_rules = list(spec.generator_rules[tool])
+                repair_count = 0
             else:
-                semantic_plan = await _select_output_plan(
+                semantic_plan, repair_count = await _select_output_plan(
                     openai_client=openai_client,
                     route_subquery=route_subquery,
                     original_question=state["query"],
@@ -441,21 +521,26 @@ def make_plan_outputs_node(
                     entity=state.get("entity"),
                     catalog=catalog,
                     reasoning_effort=reasoning_effort,
+                    shape_contract=shape_sources.get(tool),
                 )
                 selected = compile_semantic_output_plan(
                     semantic_plan,
                     catalog,
                     tool=tool,
                 )
-                generator_rules = (
-                    compile_graph_generator_rules(
-                        semantic_plan,
-                        catalog,
-                        selected,
-                    )
-                    if tool == "graph"
-                    else []
+                generator_rules = compile_entity_role_generator_rules(
+                    semantic_plan,
+                    catalog,
+                    tool=tool,
                 )
+                if tool == "graph":
+                    generator_rules.extend(
+                        compile_graph_generator_rules(
+                            semantic_plan,
+                            catalog,
+                            selected,
+                        )
+                    )
             outputs = finalize_required_outputs(
                 selected,
                 route_subquery["joinKeys"],
@@ -463,20 +548,27 @@ def make_plan_outputs_node(
                 catalog,
                 tool=tool,
             )
-            return _with_required_outputs(
-                route_subquery,
-                outputs,
-                generator_rules,
+            return (
+                _with_required_outputs(
+                    route_subquery,
+                    outputs,
+                    generator_rules,
+                ),
+                repair_count,
             )
 
         if len(route_subqueries) > 1 and all(
             not subquery.get("dependsOn") for subquery in route_subqueries
         ):
-            planned = list(
+            planned_with_counts = list(
                 await asyncio.gather(*(plan_one(s) for s in route_subqueries))
             )
         else:
-            planned = [await plan_one(subquery) for subquery in route_subqueries]
+            planned_with_counts = [
+                await plan_one(subquery) for subquery in route_subqueries
+            ]
+        planned = [item for item, _ in planned_with_counts]
+        repair_count = sum(count for _, count in planned_with_counts)
 
         validated = validate_subqueries(planned)
         validated_transform = validate_result_transform(
@@ -499,6 +591,7 @@ def make_plan_outputs_node(
         return {
             "subqueries": validated,
             "resultTransform": validated_transform,
+            "outputPlanRepairCount": repair_count,
         }
 
     return plan_outputs
@@ -508,7 +601,9 @@ __all__ = [
     "OutputPlanningError",
     "SemanticOutputPlan",
     "compile_graph_generator_rules",
+    "compile_entity_role_generator_rules",
     "compile_semantic_output_plan",
+    "conform_output_plan_to_shape",
     "finalize_required_outputs",
     "make_plan_outputs_node",
     "output_plan_json_schema",

@@ -48,6 +48,13 @@ class ComposedResult(TypedDict):
     truncated: bool
 
 
+class AnswerGenerationMetadata(TypedDict):
+    mode: Literal["structured", "fallback", "fixed"]
+    attemptCount: int
+    fallbackReason: str | None
+    validationRejected: bool
+
+
 # query만 필수이고 나머지는 그래프 실행 중 노드가 채워나가므로 NotRequired로 선언한다
 # -> graph.invoke({"query": ...})처럼 부분 dict로 시작하거나, 노드 단위 테스트에서
 #    부분 dict를 넘겨도 mypy가 통과한다.
@@ -87,6 +94,12 @@ class OrchestratorState(TypedDict):
 
     # 최종 자연어 응답
     final_answer: NotRequired[str | None]
+    answer_metadata: NotRequired[AnswerGenerationMetadata]
+
+    # 모델 계획과 로컬 결과 검증의 복구 관측값
+    routeRepairCount: NotRequired[int]
+    outputPlanRepairCount: NotRequired[int]
+    resultInvariantRetryCount: NotRequired[int]
 
     # Orchestrator 레벨 에러 메시지
     error: NotRequired[str | None]

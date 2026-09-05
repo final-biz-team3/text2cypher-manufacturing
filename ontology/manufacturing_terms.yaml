@@ -113,7 +113,13 @@ entityRoles:
     canonical: BOM 사용처·영향·생산 또는 지정된 두 끝점 경로에서 완제품 쪽을 나타내는 제품 결과 엔티티
     terms: [완제품, finished product]
     identityProjection:
+      sql: {keys: [productId], labels: [productName]}
       graph: {keys: [finishedProductId], labels: [finishedProductName]}
+    predicates:
+      sql:
+        - {field: sellableFinishedGood, operator: equals, value: true}
+      graph:
+        - {field: sellableFinishedGood, operator: equals, value: true}
   - roleId: rootProduct
     canonical: BOM 계층이나 부품 트리 자체를 펼치는 결과에서만 그 계층의 기준이 되는 제품 결과 엔티티
     terms: [루트 제품, root product]
@@ -254,7 +260,7 @@ businessConcepts:
   - conceptId: sales.total-order-quantity
     alias: totalOrderQty
     canonical: 판매 주문 수량 합계
-    terms: [총 주문 수량]
+    terms: [총 주문 수량, 주문 수량 합계, 판매량, 팔린]
     kind: aggregate
     sources: [sql]
     grain: [productId]
@@ -377,6 +383,137 @@ businessConcepts:
     grain: [supplierIdA, supplierIdB]
     operation: countDistinct
     inputs: [componentId]
+
+resultShapes:
+  - shapeId: bom-component-usage
+    canonical: 지정 부품을 사용하는 완제품별 BOM 경로
+    triggerTermGroups:
+      - [부품, 사용하는 완제품]
+    sources:
+      graph:
+        displayEntities: [component, finishedProduct]
+        requiredOutputs: [depth, pathProductIds, pathProductNames]
+        rowGrain: [pathProductIds]
+        completionGroups:
+          - [depth, pathProductIds, pathProductNames]
+        resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
+  - shapeId: bom-path
+    canonical: BOM 두 끝점 사이의 개별 경로
+    triggerTermGroups:
+      - [BOM, 경로]
+      - [어떻게 연결, 경로]
+    sources:
+      graph:
+        displayEntities: [finishedProduct, component]
+        requiredOutputs: [depth, pathProductIds, pathProductNames]
+        rowGrain: [pathProductIds]
+        completionGroups:
+          - [depth, pathProductIds, pathProductNames]
+        resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
+  - shapeId: bom-hierarchy
+    canonical: BOM 계층 또는 부품 트리
+    triggerTermGroups:
+      - [계층, 부품]
+      - [부품 트리]
+    sources:
+      graph:
+        displayEntities: [rootProduct, component]
+        requiredOutputs: [depth, pathProductIds, pathProductNames]
+        rowGrain: [pathProductIds]
+        completionGroups:
+          - [depth, pathProductIds, pathProductNames]
+        resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
+  - shapeId: bom-leaf-components
+    canonical: BOM 최하위 부품별 최소 깊이
+    triggerTermGroups:
+      - [최하위, 부품]
+    sources:
+      graph:
+        displayEntities: [component]
+        requiredOutputs: [minDepth]
+        rowGrain: [componentId]
+        completionGroups: []
+        resultInvariant: null
+  - shapeId: supplier-bom-impact
+    canonical: 공급 부품에서 영향을 받는 완제품 경로
+    triggerTermGroups:
+      - [공급, 영향, 완제품]
+      - [공급하는 부품, 사용하는 완제품]
+    sources:
+      graph:
+        displayEntities: [component, finishedProduct]
+        requiredOutputs: [depth, pathProductIds]
+        rowGrain: [pathProductIds]
+        completionGroups:
+          - [depth, pathProductIds]
+        resultInvariant: bom_path_v1
+        invariantParameters: {minHops: 1}
+  - shapeId: work-order-scrap-routing
+    canonical: 작업지시의 생산·폐기 사실과 공정·작업장
+    triggerTermGroups:
+      - [작업지시, 폐기, 작업장]
+      - [뭐 만들, 얼마나 버, 어디서 작업]
+    sources:
+      sql:
+        displayEntities: [workOrder, product, scrapReason]
+        requiredOutputs: [scrappedQty]
+        rowGrain: [workOrderId]
+        completionGroups: []
+        resultInvariant: null
+      graph:
+        displayEntities: [workOrder, routingOperation, location]
+        requiredOutputs: [sequence]
+        rowGrain: [routingOperationKey]
+        completionGroups: []
+        resultInvariant: null
+  - shapeId: workplace-products
+    canonical: 작업장을 거친 제품
+    triggerTermGroups:
+      - [작업장, 거친 제품]
+    sources:
+      graph:
+        displayEntities: [location, product]
+        requiredOutputs: []
+        rowGrain: [productId]
+        completionGroups: []
+        resultInvariant: null
+  - shapeId: product-work-order-aggregate
+    canonical: 제품별 작업지시와 폐기 수량 집계
+    triggerTermGroups:
+      - [제품, 작업지시, 폐기 수량]
+      - [제품별, 작업지시 수]
+    sources:
+      sql:
+        displayEntities: [product]
+        requiredOutputs: [workOrderCount, totalScrappedQty]
+        rowGrain: [productId]
+        completionGroups: []
+        resultInvariant: null
+  - shapeId: scrapped-work-orders-by-product
+    canonical: 폐기 사유에 해당하는 제품별 작업지시 수
+    triggerTermGroups:
+      - [폐기, 작업지시, 제품, 작업지시 수]
+    sources:
+      sql:
+        displayEntities: [scrapReason, product]
+        requiredOutputs: [workOrderCount]
+        rowGrain: [productId]
+        completionGroups: []
+        resultInvariant: null
+  - shapeId: work-order-scrap-ranking
+    canonical: 폐기 수량이 큰 작업지시와 폐기 사유
+    triggerTermGroups:
+      - [폐기, 작업지시, 이유]
+    sources:
+      sql:
+        displayEntities: [workOrder, product, scrapReason]
+        requiredOutputs: [scrappedQty]
+        rowGrain: [workOrderId]
+        completionGroups: []
+        resultInvariant: null
 
 transforms:
   - transformId: bom_shortage_v1

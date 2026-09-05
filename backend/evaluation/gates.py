@@ -216,3 +216,199 @@ def build_regression_gate(
         ),
         "checks": checks,
     }
+
+
+def build_change_regression_gate(
+    records: list[dict[str, Any]],
+    stability_policy: dict[str, Any] | None,
+    ratchet_baseline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """G0 고정 분류와 직전 clean 결과를 이용해 신규 회귀만 판정한다."""
+    if stability_policy is None:
+        return {
+            "status": "NOT_EVALUATED",
+            "compatibilityErrors": ["stability policy unavailable"],
+            "regressions": [],
+            "rerunRequired": [],
+        }
+
+    compatibility_errors = list(stability_policy.get("compatibilityErrors", []))
+    policy_cases = stability_policy.get("cases")
+    if not isinstance(policy_cases, dict):
+        compatibility_errors.append("stability policy cases are invalid")
+        policy_cases = {}
+
+    records_by_case: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        case_id = record.get("caseId")
+        if isinstance(case_id, str):
+            records_by_case.setdefault(case_id, []).append(record)
+    if set(records_by_case) != set(policy_cases):
+        compatibility_errors.append("stability policy case set mismatch")
+
+    ratchet_ids: set[str] = set()
+    if ratchet_baseline is not None:
+        compatibility_errors.extend(ratchet_baseline.get("compatibilityErrors", []))
+        raw_ids = ratchet_baseline.get("passCaseIds", [])
+        if isinstance(raw_ids, list):
+            ratchet_ids = {case_id for case_id in raw_ids if isinstance(case_id, str)}
+
+    regressions: list[dict[str, Any]] = []
+    rerun_required: list[str] = []
+    for case_id, case_records in sorted(records_by_case.items()):
+        outcomes = [record.get("queryPipelinePass") for record in case_records]
+        if any(record.get("status") == "ERROR" for record in case_records) or any(
+            not isinstance(outcome, bool) for outcome in outcomes
+        ):
+            regressions.append(
+                {"caseId": case_id, "reason": "INCOMPLETE_OR_INFRASTRUCTURE_ERROR"}
+            )
+            continue
+        failures = sum(outcome is False for outcome in outcomes)
+        policy_item = policy_cases.get(case_id, {})
+        baseline_outcome = (
+            policy_item.get("outcome") if isinstance(policy_item, dict) else None
+        )
+        if baseline_outcome == "CONSISTENT_PASS" and failures:
+            regressions.append(
+                {"caseId": case_id, "reason": "G0_CONSISTENT_PASS_REGRESSION"}
+            )
+        elif baseline_outcome == "VARIABLE" and failures:
+            if len(outcomes) >= 3 and failures == len(outcomes):
+                regressions.append(
+                    {"caseId": case_id, "reason": "G0_VARIABLE_BECAME_CONSISTENT_FAIL"}
+                )
+            elif len(outcomes) < 3:
+                rerun_required.append(case_id)
+        if case_id in ratchet_ids and failures:
+            regressions.append({"caseId": case_id, "reason": "RATCHET_PASS_REGRESSION"})
+
+    unique_regressions = sorted(
+        {(item["caseId"], item["reason"]) for item in regressions}
+    )
+    regression_items = [
+        {"caseId": case_id, "reason": reason} for case_id, reason in unique_regressions
+    ]
+    if compatibility_errors or regression_items:
+        status = "FAIL"
+    elif rerun_required:
+        status = "RERUN_REQUIRED"
+    else:
+        status = "PASS"
+    return {
+        "status": status,
+        "compatibilityErrors": sorted(set(compatibility_errors)),
+        "regressions": regression_items,
+        "rerunRequired": sorted(set(rerun_required)),
+    }
+
+
+def build_answer_quality_gate(
+    records: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    baseline: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """fallback을 질의 실패와 분리한 채 수집률과 기준선 대비 증가를 판정한다."""
+    fallback_pollution = sorted(
+        str(record.get("caseId"))
+        for record in records
+        if isinstance((metadata := record.get("answerGeneration")), dict)
+        and metadata.get("mode") == "fallback"
+        and (
+            record.get("planningError") is not None
+            or bool(record.get("failureReasons"))
+            or record.get("failureStage") is not None
+        )
+        and record.get("queryPipelinePass") is True
+    )
+    independent_checks = [
+        _check(
+            "fallback metadata coverage",
+            metrics.get("answerMetadataCoverage") == 1.0,
+            metrics.get("answerMetadataCoverage"),
+            "100%",
+        ),
+        _check(
+            "fallback does not create planning failures",
+            not fallback_pollution,
+            fallback_pollution,
+            "none",
+        ),
+    ]
+
+    baseline_rate = baseline.get("answerFallbackRate") if baseline else None
+    current_rate = metrics.get("answerFallbackRate")
+    baseline_compatible = baseline is not None and baseline.get("compatible") is True
+    dependent_status = "NOT_EVALUATED"
+    if (
+        baseline_compatible
+        and isinstance(baseline_rate, int | float)
+        and isinstance(current_rate, int | float)
+    ):
+        dependent_status = "PASS" if current_rate <= baseline_rate else "FAIL"
+    dependent_check = {
+        "name": "fallback rate does not increase from G0",
+        "status": dependent_status,
+        "actual": {
+            "currentRate": current_rate,
+            "baselineRate": baseline_rate,
+            "currentReasons": metrics.get("answerFallbackReasonCounts", {}),
+            "baselineReasons": (
+                baseline.get("answerFallbackReasonCounts", {}) if baseline else {}
+            ),
+        },
+        "required": "candidate <= G0",
+    }
+    status = (
+        "FAIL"
+        if any(check["status"] == "FAIL" for check in independent_checks)
+        or dependent_status == "FAIL"
+        else "PASS" if dependent_status == "PASS" else "NOT_EVALUATED"
+    )
+    return {
+        "status": status,
+        "independentChecks": independent_checks,
+        "g0DependentChecks": [dependent_check],
+    }
+
+
+def build_cost_warnings(
+    metrics: dict[str, Any], baseline: dict[str, Any] | None
+) -> dict[str, Any]:
+    """품질 PR의 비용 증가는 승격 실패가 아니라 명시적인 WARN으로 노출한다."""
+    if baseline is None or baseline.get("compatible") is not True:
+        return {"status": "NOT_EVALUATED", "warnings": []}
+
+    comparisons = (
+        ("p95LatencyMs", 1.20, "p95 latency >20%"),
+        ("averageModelTokensPerRun", 1.25, "average tokens/run >25%"),
+    )
+    warnings: list[dict[str, Any]] = []
+    for key, ratio, label in comparisons:
+        current = metrics.get(key)
+        before = baseline.get(key)
+        if (
+            isinstance(current, int | float)
+            and isinstance(before, int | float)
+            and before > 0
+            and current > before * ratio
+        ):
+            warnings.append(
+                {"metric": key, "before": before, "current": current, "reason": label}
+            )
+    current_calls = metrics.get("averageModelCallCount")
+    baseline_calls = baseline.get("averageModelCallCount")
+    if (
+        isinstance(current_calls, int | float)
+        and isinstance(baseline_calls, int | float)
+        and current_calls >= baseline_calls + 0.25
+    ):
+        warnings.append(
+            {
+                "metric": "averageModelCallCount",
+                "before": baseline_calls,
+                "current": current_calls,
+                "reason": "average model calls +0.25 or more",
+            }
+        )
+    return {"status": "WARN" if warnings else "PASS", "warnings": warnings}

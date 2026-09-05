@@ -45,6 +45,105 @@ def test_package_loader_and_explicit_loader_have_the_same_fingerprint() -> None:
     assert production.fingerprint == evaluation.fingerprint
     assert production.ontology_version == "manufacturing-v1"
     assert "sellableFinishedGood" in production.allowed_aliases("graph")
+    assert "bom-component-usage" in production.result_shapes
+
+
+def test_result_shape_matches_narrow_terms_and_excludes_entity_names_and_numbers() -> (
+    None
+):
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    matched = catalog.match_result_shape_sources(
+        "부품 Paint - Black을 사용하는 완제품을 최대 4단계까지 알려줘",
+        {"productId": 680, "productName": "Paint - Black"},
+    )
+    broad = catalog.match_result_shape_sources("제품을 알려줘", None)
+    masked = catalog.match_result_shape_sources(
+        "공급 영향 완제품 123의 color",
+        {"productId": 123, "productName": "공급 영향 완제품 123"},
+    )
+
+    assert set(matched) == {"graph"}
+    assert matched["graph"].row_grain == ("pathProductIds",)
+    assert matched["graph"].result_invariant == "bom_path_v1"
+    assert not broad
+    assert not masked
+
+
+def test_result_shape_ambiguity_fails_open() -> None:
+    data = _ontology_data()
+    existing = next(
+        shape
+        for shape in data["resultShapes"]
+        if shape["shapeId"] == "workplace-products"
+    )
+    duplicate = deepcopy(existing)
+    duplicate["shapeId"] = "ambiguous-workplace-products"
+    duplicate["sources"]["graph"]["rowGrain"] = ["locationId"]
+    data["resultShapes"].append(duplicate)
+
+    matched = _compile(data).match_result_shape_sources(
+        "Frame Forming 작업장을 거친 제품을 알려줘", None
+    )
+
+    assert not matched
+
+
+def test_result_shape_references_are_source_validated_and_fingerprinted() -> None:
+    data = _ontology_data()
+    changed = deepcopy(data)
+    changed["resultShapes"][0]["sources"]["graph"]["requiredOutputs"].append(
+        "quantityPerAssembly"
+    )
+    changed["resultShapes"][0]["sources"]["graph"]["completionGroups"][0].append(
+        "quantityPerAssembly"
+    )
+
+    assert _compile(data).fingerprint != _compile(changed).fingerprint
+
+    changed["resultShapes"][0]["sources"]["graph"]["rowGrain"] = ["notAnAlias"]
+    with pytest.raises(ValueError, match="unavailable from graph"):
+        _compile(changed)
+
+
+def test_result_invariant_is_selected_only_for_a_complete_path_contract() -> None:
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    assert catalog.result_invariant_for_outputs(
+        "graph",
+        [
+            "rootProductId",
+            "rootProductName",
+            "componentId",
+            "componentName",
+            "depth",
+            "pathProductIds",
+            "pathProductNames",
+        ],
+    ) == ("bom_path_v1", 1)
+    assert (
+        catalog.result_invariant_for_outputs(
+            "graph", ["componentId", "componentName", "minDepth"]
+        )
+        is None
+    )
+
+
+def test_result_invariant_parameters_are_required_and_fingerprinted() -> None:
+    data = _ontology_data()
+    changed = deepcopy(data)
+    changed["resultShapes"][0]["sources"]["graph"]["invariantParameters"] = {
+        "minHops": 0
+    }
+
+    assert _compile(data).fingerprint != _compile(changed).fingerprint
+
+    del changed["resultShapes"][0]["sources"]["graph"]["invariantParameters"]
+    with pytest.raises(
+        ValidationError,
+        match="resultInvariant and invariantParameters must be defined together",
+    ):
+        ManufacturingOntology.model_validate(changed)
 
 
 @pytest.mark.parametrize(
@@ -221,16 +320,28 @@ def test_entity_role_projection_is_source_scoped_and_described() -> None:
     assert "keys=productId" in catalog.describe_entity_roles("sql")
 
 
-def test_relationship_product_roles_are_graph_scoped() -> None:
+def test_finished_product_role_uses_source_specific_projection_and_predicate() -> None:
     catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
 
     assert "product" in catalog.allowed_entity_roles("sql")
-    assert "finishedProduct" not in catalog.allowed_entity_roles("sql")
+    assert "finishedProduct" in catalog.allowed_entity_roles("sql")
     assert "rootProduct" not in catalog.allowed_entity_roles("sql")
     assert "finishedProductId" not in catalog.allowed_aliases("sql")
     assert "rootProductId" not in catalog.allowed_aliases("sql")
     assert "finishedProduct" in catalog.allowed_entity_roles("graph")
     assert "rootProduct" in catalog.allowed_entity_roles("graph")
+    assert catalog.identity_projection("finishedProduct", "sql").display_aliases == (
+        "productId",
+        "productName",
+    )
+    assert catalog.identity_projection("finishedProduct", "graph").display_aliases == (
+        "finishedProductId",
+        "finishedProductName",
+    )
+    assert catalog.entity_roles["finishedProduct"].predicates["sql"][0].field == (
+        "sellableFinishedGood"
+    )
+    assert "sellableFinishedGood equals True" in catalog.describe_entity_roles("sql")
 
 
 def test_root_product_means_hierarchy_root_not_every_traversal_start() -> None:
@@ -259,23 +370,29 @@ def test_graph_traversal_recipes_are_not_part_of_the_ontology_contract() -> None
         ManufacturingOntology.model_validate(data)
 
 
-def test_entity_role_ontology_rejects_implicit_predicates() -> None:
+def test_entity_role_predicates_require_available_source_fields() -> None:
     data = _ontology_data()
     finished_product = next(
         item for item in data["entityRoles"] if item["roleId"] == "finishedProduct"
     )
-    finished_product["predicates"] = {
-        "graph": [
-            {
-                "field": "sellableFinishedGood",
-                "operator": "equals",
-                "value": True,
-            }
-        ]
-    }
+    finished_product["predicates"]["graph"][0]["field"] = "notAnAlias"
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        ManufacturingOntology.model_validate(data)
+    with pytest.raises(ValueError, match="unavailable from graph"):
+        _compile(data)
+
+
+def test_semantic_source_inference_combines_compatible_evidence_and_fails_open() -> (
+    None
+):
+    catalog = build_output_catalog(SQL_SCHEMA, GRAPH_SCHEMA)
+
+    assert catalog.infer_required_sources(
+        "판매량이 가장 많은 완제품 상위 5개", None
+    ) == frozenset({"sql"})
+    assert catalog.infer_required_sources(
+        "공급업체가 공급을 중단하면 영향 받는 부품과 완제품, 현재 재고", None
+    ) == frozenset({"sql", "graph"})
+    assert catalog.infer_required_sources("제품을 알려줘", None) is None
 
 
 def test_alternative_term_order_does_not_change_compiled_semantics() -> None:

@@ -1,0 +1,624 @@
+{
+  "policyVersion": 1,
+  "generatedAt": "2026-09-04T05:21:15.376087+00:00",
+  "baseline": {
+    "commit": "16b043879907c2fa55e3088eb5846b4bc25b7309",
+    "artifactSha256": "5e639572dd443d8f2c9aa4fd07cce94f944258bff3d699001c3807e9ff390d01",
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "snapshotSha256": "5873c717035220a0174874a1fe59d5c688c6018f2d6ebd52066b6af578bc8f75",
+    "executionMode": "orchestrator",
+    "workingTreeDirty": false,
+    "caseCount": 90,
+    "runs": 3
+  },
+  "cases": {
+    "HQ01": {
+      "contractId": "HQ01",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "HQ02": {
+      "contractId": "HQ02",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "HQ03": {
+      "contractId": "HQ03",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "HQ04": {
+      "contractId": "HQ04",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "HQ05": {
+      "contractId": "HQ05",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "HQ06": {
+      "contractId": "HQ06",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "HQ07": {
+      "contractId": "HQ07",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "HQ08": {
+      "contractId": "HQ08",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "HQ09": {
+      "contractId": "HQ09",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "HQ10": {
+      "contractId": "HQ10",
+      "suite": "complexity",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "RB01-C": {
+      "contractId": "RQ01",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB01-R": {
+      "contractId": "RQ01",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB01-S": {
+      "contractId": "RQ01",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB02-C": {
+      "contractId": "RQ02",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB02-R": {
+      "contractId": "RQ02",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB02-S": {
+      "contractId": "RQ02",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB03-C": {
+      "contractId": "RQ03",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB03-R": {
+      "contractId": "RQ03",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB03-S": {
+      "contractId": "RQ03",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RB04-C": {
+      "contractId": "RQ04",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB04-R": {
+      "contractId": "RQ04",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB04-S": {
+      "contractId": "RQ04",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB05-C": {
+      "contractId": "RQ05",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB05-R": {
+      "contractId": "RQ05",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB05-S": {
+      "contractId": "RQ05",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB06-C": {
+      "contractId": "RQ06",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB06-R": {
+      "contractId": "RQ06",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB06-S": {
+      "contractId": "RQ06",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB07-C": {
+      "contractId": "RQ07",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB07-R": {
+      "contractId": "RQ07",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB07-S": {
+      "contractId": "RQ07",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB08-C": {
+      "contractId": "RQ08",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB08-R": {
+      "contractId": "RQ08",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB08-S": {
+      "contractId": "RQ08",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "RB09-C": {
+      "contractId": "RQ09",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 1
+    },
+    "RB09-R": {
+      "contractId": "RQ09",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB09-S": {
+      "contractId": "RQ09",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB10-C": {
+      "contractId": "RQ10",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB10-R": {
+      "contractId": "RQ10",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB10-S": {
+      "contractId": "RQ10",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB11-C": {
+      "contractId": "RQ11",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB11-R": {
+      "contractId": "RQ11",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB11-S": {
+      "contractId": "RQ11",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "RB12-C": {
+      "contractId": "RQ12",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB12-R": {
+      "contractId": "RQ12",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 1
+    },
+    "RB12-S": {
+      "contractId": "RQ12",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB13-C": {
+      "contractId": "RQ13",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB13-R": {
+      "contractId": "RQ13",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RB13-S": {
+      "contractId": "RQ13",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB14-C": {
+      "contractId": "RQ14",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB14-R": {
+      "contractId": "RQ14",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RB14-S": {
+      "contractId": "RQ14",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB15-C": {
+      "contractId": "RQ15",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB15-R": {
+      "contractId": "RQ15",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 1
+    },
+    "RB15-S": {
+      "contractId": "RQ15",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB16-C": {
+      "contractId": "RQ16",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RB16-R": {
+      "contractId": "RQ16",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB16-S": {
+      "contractId": "RQ16",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB17-C": {
+      "contractId": "RQ17",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RB17-R": {
+      "contractId": "RQ17",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB17-S": {
+      "contractId": "RQ17",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB18-C": {
+      "contractId": "RQ18",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RB18-R": {
+      "contractId": "RQ18",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB18-S": {
+      "contractId": "RQ18",
+      "suite": "robustness",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RB19-C": {
+      "contractId": "RQ19",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB19-R": {
+      "contractId": "RQ19",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB19-S": {
+      "contractId": "RQ19",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RB20-C": {
+      "contractId": "RQ20",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "RB20-R": {
+      "contractId": "RQ20",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "RB20-S": {
+      "contractId": "RQ20",
+      "suite": "robustness",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "RQ01": {
+      "contractId": "RQ01",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ02": {
+      "contractId": "RQ02",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ03": {
+      "contractId": "RQ03",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ04": {
+      "contractId": "RQ04",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ05": {
+      "contractId": "RQ05",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ06": {
+      "contractId": "RQ06",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ07": {
+      "contractId": "RQ07",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ08": {
+      "contractId": "RQ08",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ09": {
+      "contractId": "RQ09",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ10": {
+      "contractId": "RQ10",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ11": {
+      "contractId": "RQ11",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ12": {
+      "contractId": "RQ12",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    },
+    "RQ13": {
+      "contractId": "RQ13",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ14": {
+      "contractId": "RQ14",
+      "suite": "canonical",
+      "outcome": "VARIABLE",
+      "passCount": 1
+    },
+    "RQ15": {
+      "contractId": "RQ15",
+      "suite": "canonical",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RQ16": {
+      "contractId": "RQ16",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ17": {
+      "contractId": "RQ17",
+      "suite": "canonical",
+      "outcome": "VARIABLE",
+      "passCount": 2
+    },
+    "RQ18": {
+      "contractId": "RQ18",
+      "suite": "canonical",
+      "outcome": "VARIABLE",
+      "passCount": 1
+    },
+    "RQ19": {
+      "contractId": "RQ19",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_PASS",
+      "passCount": 3
+    },
+    "RQ20": {
+      "contractId": "RQ20",
+      "suite": "canonical",
+      "outcome": "CONSISTENT_FAIL",
+      "passCount": 0
+    }
+  },
+  "ratchetPassCaseIds": [
+    "HQ01",
+    "HQ02",
+    "HQ03",
+    "HQ04",
+    "HQ05",
+    "HQ06",
+    "RB01-C",
+    "RB01-R",
+    "RB01-S",
+    "RB02-C",
+    "RB02-R",
+    "RB02-S",
+    "RB03-C",
+    "RB03-R",
+    "RB04-C",
+    "RB04-R",
+    "RB04-S",
+    "RB05-C",
+    "RB05-R",
+    "RB05-S",
+    "RB06-C",
+    "RB06-R",
+    "RB06-S",
+    "RB07-C",
+    "RB07-R",
+    "RB07-S",
+    "RB08-C",
+    "RB08-R",
+    "RB09-R",
+    "RB09-S",
+    "RB10-C",
+    "RB10-R",
+    "RB10-S",
+    "RB11-C",
+    "RB11-R",
+    "RB12-C",
+    "RB12-S",
+    "RB13-C",
+    "RB13-S",
+    "RB14-C",
+    "RB14-S",
+    "RB15-C",
+    "RB15-S",
+    "RB16-R",
+    "RB16-S",
+    "RB17-R",
+    "RB17-S",
+    "RB18-R",
+    "RB19-C",
+    "RB19-R",
+    "RB19-S",
+    "RQ01",
+    "RQ02",
+    "RQ03",
+    "RQ04",
+    "RQ05",
+    "RQ06",
+    "RQ07",
+    "RQ08",
+    "RQ09",
+    "RQ10",
+    "RQ11",
+    "RQ13",
+    "RQ16",
+    "RQ19"
+  ]
+}

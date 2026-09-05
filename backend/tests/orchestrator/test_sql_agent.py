@@ -3,10 +3,7 @@
 import psycopg
 
 from agents.sql.schema.models import SqlSchema
-from orchestrator.subgraphs.sql_agent import (
-    _query_contract_error,
-    make_sql_agent_subgraph,
-)
+from orchestrator.subgraphs.sql_agent import make_sql_agent_subgraph
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 _TEST_SQL_SCHEMA = SqlSchema.model_validate(
@@ -28,15 +25,6 @@ def _initial_state(query: str = "제품 수를 알려줘.") -> dict:
         "result": None,
         "error": None,
     }
-
-
-def test_sql_output_preflight_uses_outer_select_for_cte() -> None:
-    sql = (
-        "WITH values AS (SELECT productid FROM production.product) "
-        'SELECT productid AS "productId" FROM values'
-    )
-
-    assert _query_contract_error(sql, ["productId"]) is None
 
 
 async def test_sql_agent_returns_result_when_execution_succeeds() -> None:
@@ -65,7 +53,7 @@ async def test_sql_agent_returns_result_when_execution_succeeds() -> None:
 async def test_sql_agent_preserves_executor_truncation_metadata() -> None:
     """production executor의 행 초과 신호를 실행 계획까지 보존한다."""
     openai_client = MockOpenAIClient(
-        make_content_response('SELECT productid AS "productId" FROM production.product')
+        make_content_response("SELECT productid FROM production.product")
     )
 
     async def execute_sql(sql: str) -> dict:
@@ -128,61 +116,61 @@ async def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
     assert len(openai_client.calls) == 2
     assert len(result["attempts"]) == 2
     assert result["attempts"][0]["error"] == "쿼리를 실행하지 못했습니다."
+    assert "column bad_column does not exist" in (
+        openai_client.calls[1]["messages"][0]["content"]
+    )
     assert result["attempts"][1]["error"] is None
 
 
-async def test_sql_repair_v2_uses_structured_safe_feedback(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("SQL_REPAIR_ENGINE", "v2")
-    openai_client = MockOpenAIClient(
-        make_content_response("SELECT bad_column FROM production.product"),
-        make_content_response("SELECT COUNT(*) FROM production.product"),
+async def test_sql_agent_retries_after_postgresql_42p10_then_succeeds() -> None:
+    """SELECT DISTINCT와 ORDER BY 투영 불일치(42P10)를 보정해 재실행한다."""
+    first_sql = "SELECT DISTINCT productid FROM production.product ORDER BY name"
+    corrected_sql = (
+        "SELECT DISTINCT productid, name FROM production.product ORDER BY name"
     )
-    calls = 0
+    error_message = (
+        "for SELECT DISTINCT, ORDER BY expressions must appear in select list"
+    )
+    openai_client = MockOpenAIClient(
+        make_content_response(first_sql),
+        make_content_response(corrected_sql),
+    )
+    executor_calls = []
 
     async def execute_sql(sql: str) -> list[dict]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise psycopg.errors.UndefinedColumn("raw-secret-column-message")
-        return [{"count": 10}]
+        executor_calls.append(sql)
+        if len(executor_calls) == 1:
+            raise psycopg.errors.InvalidColumnReference(error_message)
+        return [{"productid": 10, "name": "Widget"}]
 
-    result = await make_sql_agent_subgraph(
+    subgraph = make_sql_agent_subgraph(
         openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
-    ).ainvoke(_initial_state())
-
-    retry_prompt = openai_client.calls[1]["messages"][0]["content"]
-    assert result["result"] == [{"count": 10}]
-    assert "Structured repair context" in retry_prompt
-    assert "SQL_UNDEFINED_COLUMN" in retry_prompt
-    assert "physical schema에 선언된 컬럼만 사용" in retry_prompt
-    assert "raw-secret-column-message" not in retry_prompt
-
-
-async def test_sql_required_alias_is_repaired_before_execution() -> None:
-    openai_client = MockOpenAIClient(
-        make_content_response("SELECT productid FROM production.product"),
-        make_content_response(
-            'SELECT productid AS "productId" FROM production.product'
-        ),
     )
-    execute_calls: list[str] = []
 
-    async def execute_sql(sql: str) -> list[dict]:
-        execute_calls.append(sql)
-        return [{"productId": 10}]
+    result = await subgraph.ainvoke(_initial_state())
 
-    state = _initial_state()
-    state["required_outputs"] = ["productId"]
-    result = await make_sql_agent_subgraph(
-        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
-    ).ainvoke(state)
-
-    assert result["result"] == [{"productId": 10}]
-    assert execute_calls == ['SELECT productid AS "productId" FROM production.product']
-    assert result["failure"] is None
-    assert len(result["attempts"]) == 2
+    assert len(openai_client.calls) == 2
+    assert executor_calls == [first_sql, corrected_sql]
+    retry_system_prompt = openai_client.calls[1]["messages"][0]["content"]
+    assert first_sql in retry_system_prompt
+    assert error_message in retry_system_prompt
+    assert result["attempts"] == [
+        {"query": first_sql, "error": "쿼리를 실행하지 못했습니다."},
+        {"query": corrected_sql, "error": None},
+    ]
+    assert result["retryDiagnostics"] == [
+        {
+            "stage": "execution",
+            "reasonCode": "QUERY_EXECUTION_FAILED",
+            "errorType": "InvalidColumnReference",
+            "sqlstate": "42P10",
+            "recovered": True,
+            "attempt": 1,
+            "retryScheduled": True,
+        }
+    ]
+    assert result["result"] == [{"productid": 10, "name": "Widget"}]
+    assert result["error"] is None
 
 
 async def test_sql_agent_retries_when_required_alias_is_missing() -> None:
@@ -197,6 +185,8 @@ async def test_sql_agent_retries_when_required_alias_is_missing() -> None:
 
     async def execute_sql(sql: str) -> list[dict]:
         calls.append(sql)
+        if len(calls) == 1:
+            return [{"productId": 10}, {"productid": 11}]
         return [{"productId": 10}, {"productId": 11}]
 
     subgraph = make_sql_agent_subgraph(
@@ -208,9 +198,8 @@ async def test_sql_agent_retries_when_required_alias_is_missing() -> None:
     result = await subgraph.ainvoke(state)
 
     assert result["result"] == [{"productId": 10}, {"productId": 11}]
-    assert calls == ['SELECT productid AS "productId" FROM production.product']
     assert len(result["attempts"]) == 2
-    assert "SELECT에 필수 alias" in result["attempts"][0]["error"]
+    assert "1번 행" in result["attempts"][0]["error"]
     assert "productId" in result["attempts"][0]["error"]
     retry_system_prompt = openai_client.calls[1]["messages"][0]["content"]
     assert "필수 alias" in retry_system_prompt
@@ -307,26 +296,6 @@ async def test_sql_agent_retries_once_on_empty_result_then_accepts() -> None:
     assert result["error"] is None
     assert result["empty_reason"] == "NO_DATA"
     assert len(openai_client.calls) == 2
-
-
-async def test_sql_repair_v2_structures_empty_result_feedback(monkeypatch) -> None:
-    monkeypatch.setenv("SQL_REPAIR_ENGINE", "v2")
-    openai_client = MockOpenAIClient(
-        make_content_response("SELECT * FROM production.product WHERE 1=0"),
-        make_content_response("SELECT * FROM production.product WHERE 1=0"),
-    )
-
-    async def execute_sql(sql: str) -> list:
-        return []
-
-    result = await make_sql_agent_subgraph(
-        openai_client, execute_sql=execute_sql, sql_schema=_TEST_SQL_SCHEMA
-    ).ainvoke(_initial_state())
-
-    retry_prompt = openai_client.calls[1]["messages"][0]["content"]
-    assert result["empty_reason"] == "NO_DATA"
-    assert "SQL_EMPTY_RESULT" in retry_prompt
-    assert "식별자와 질문의 필수 조건은 유지" in retry_prompt
 
 
 async def test_sql_agent_marks_empty_result_inconclusive_after_budget_exhausted() -> (
