@@ -103,6 +103,14 @@ services:
     # 여기서 강제로 걸면 uvicorn의 자동 uvloop 적용만 이유 없이 막힌다.
     command: uvicorn main:app --host 0.0.0.0 --port 8000
 
+  web:
+    build: ./frontend
+    container_name: web
+    ports:
+      - "192.168.5.7:52000:8080"
+    depends_on:
+      - backend
+
 volumes:
   neo4j_data:
   postgres_data:

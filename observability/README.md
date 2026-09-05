@@ -21,7 +21,8 @@ docker compose -f docker-compose.observability.yml down
 
 모니터링 스택은 다음 주소를 사용한다.
 
-- Grafana: <http://127.0.0.1:3000>
+- Web: <http://192.168.5.7:52000> (외부: <http://kosa165.iptime.org:52000>)
+- Grafana: <http://192.168.5.7:52004> (외부: <http://kosa165.iptime.org:52004>)
 - Prometheus: <http://127.0.0.1:9090>
 - Loki: <http://127.0.0.1:3100>
 - Alloy: <http://127.0.0.1:12345>
