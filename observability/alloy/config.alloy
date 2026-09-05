@@ -2,8 +2,8 @@ discovery.docker "containers" { host = "unix:///var/run/docker.sock" }
 discovery.relabel "backend" {
   targets = discovery.docker.containers.targets
   rule {
-    source_labels = ["__meta_docker_container_name"]
-    regex         = "/backend"
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "backend"
     action        = "keep"
   }
 }

@@ -9,11 +9,12 @@ services:
       - --storage.tsdb.retention.size=10GB
     ports:
       - "127.0.0.1:9090:9090"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./observability/prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
+    networks:
+      - default
+      - observability
 
   loki:
     image: grafana/loki:3.7.6
@@ -57,3 +58,8 @@ volumes:
   prometheus_data:
   loki_data:
   grafana_data:
+
+networks:
+  observability:
+    name: itda-observability
+    external: true
