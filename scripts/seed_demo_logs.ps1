@@ -1,7 +1,8 @@
 param(
     [string]$LokiUrl = "http://127.0.0.1:3100",
     [DateTimeOffset]$BaseTime = [DateTimeOffset]::UtcNow,
-    [string]$RequestPrefix = "code-demo"
+    [string]$RequestPrefix = "code-demo",
+    [switch]$PassThruCount
 )
 
 $ErrorActionPreference = "Stop"
@@ -116,6 +117,37 @@ Add-DemoEvent 140 $requestBlocked "http.request.completed" "POST /api/chat 요�
 Add-DemoEvent 120 $requestFailed "admin.review.viewed" "관리자 검토 조회" "admin_review" -Route "UNKNOWN" -Details @{ review_id = 1042 }
 Add-DemoEvent 110 $requestFailed "admin.review.updated" "관리자 검토 변경" "admin_review" -Route "UNKNOWN" -Details @{ review_id = 1042; status = "resolved" }
 
+# 요청 6: HYBRID 일부 성공 — SQL 결과는 사용하고 GRAPH 의존 도구는 건너뜀
+$requestHybrid = "$RequestPrefix-hybrid-partial"
+Add-DemoEvent 105 $requestHybrid "http.request.started" "POST /api/chat 요청을 시작했습니다" "http" -Details @{ method = "POST"; path = "/api/chat" }
+Add-DemoEvent 103 $requestHybrid "routing.completed" "질문을 HYBRID 경로로 분류했습니다" "pipeline" -Route "HYBRID" -Details @{ planned_tools = @("sql", "graph") }
+Add-DemoEvent 101 $requestHybrid "planning.completed" "HYBRID 실행 계획을 만들었습니다 (하위 질의 2개)" "pipeline" -Route "HYBRID" -Details @{ subquery_count = 2; planned_tools = @("sql", "graph") }
+Add-DemoEvent 98 $requestHybrid "database.query.completed" "SQL 데이터베이스 조회가 완료됐습니다 (83ms)" "database" -Route "HYBRID" -Tool "sql" -Details @{ duration_ms = 83.4; row_count = 14 }
+Add-DemoEvent 95 $requestHybrid "database.query.failed" "GRAPH 데이터베이스 조회에 실패했습니다 — 연결 시간이 초과됐습니다" "database" -Level "ERROR" -Route "HYBRID" -Tool "graph" -Outcome "failure" -Details @{ duration_ms = 2012.8; issue_code = "NEO4J_TIMEOUT"; failure_reason = "연결 시간이 초과됐습니다" }
+Add-DemoEvent 93 $requestHybrid "tool.execution.skipped" "GRAPH 후속 조회를 의존 도구 실패로 건너뛰었습니다" "pipeline" -Level "WARNING" -Route "HYBRID" -Tool "graph" -Outcome "skipped" -Details @{ reason = "DEPENDENCY_FAILED" }
+Add-DemoEvent 90 $requestHybrid "result.composed" "SQL 결과를 사용해 부분 성공 응답을 구성했습니다" "result" -Route "HYBRID" -Details @{ final_status = "partial_success"; successful_tools = @("sql"); failed_tools = @("graph") }
+Add-DemoEvent 88 $requestHybrid "query.pipeline.completed" "HYBRID 질문 처리를 부분 성공으로 완료했습니다 (3.41초)" "pipeline" -Route "HYBRID" -Details @{ final_status = "partial_success"; duration_ms = 3410.5; successful_tools = @("sql"); failed_tools = @("graph") }
+Add-DemoEvent 87 $requestHybrid "http.request.completed" "POST /api/chat 요청이 HTTP 200 상태로 완료됐습니다 (3.48초)" "http" -Route "HYBRID" -Details @{ method = "POST"; path = "/api/chat"; status_code = 200; duration_ms = 3481.2 }
+
+# 요청 7: 정상적인 빈 결과를 오류와 구분해 수용
+$requestEmpty = "$RequestPrefix-empty-result"
+Add-DemoEvent 80 $requestEmpty "query.attempt.completed" "SQL 쿼리 실행이 완료됐지만 결과가 비어 있습니다" "query" -Route "SQL" -Tool "sql" -Details @{ attempt = 1; max_attempts = 3; row_count = 0; duration_ms = 42.1 }
+Add-DemoEvent 78 $requestEmpty "result.empty.classified" "빈 결과를 조회 조건에 맞는 데이터 없음으로 분류했습니다" "result" -Route "SQL" -Tool "sql" -Details @{ empty_reason = "NO_DATA"; row_count = 0 }
+Add-DemoEvent 76 $requestEmpty "query.pipeline.completed" "SQL 질문 처리를 정상 빈 결과로 완료했습니다" "pipeline" -Route "SQL" -Details @{ final_status = "accepted_empty"; duration_ms = 318.6 }
+
+# 요청 8: 인프라 실패와 내부 실패를 운영 장애 패널에서 구분
+$requestInfra = "$RequestPrefix-infrastructure-failure"
+Add-DemoEvent 68 $requestInfra "database.connection.failed" "PostgreSQL 연결 풀에서 연결을 가져오지 못했습니다" "database" -Level "ERROR" -Route "SQL" -Tool "sql" -Outcome "failure" -Details @{ issue_code = "POSTGRES_UNAVAILABLE"; failure_reason = "연결 풀 대기 시간이 초과됐습니다" }
+Add-DemoEvent 66 $requestInfra "query.pipeline.completed" "SQL 질문 처리를 인프라 오류로 종료했습니다" "pipeline" -Level "ERROR" -Route "SQL" -Outcome "failure" -Details @{ final_status = "infrastructure_failure"; failed_tools = @("sql"); issue_code = "POSTGRES_UNAVAILABLE" }
+Add-DemoEvent 65 $requestInfra "http.request.completed" "POST /api/chat 요청이 HTTP 503 상태로 완료됐습니다" "http" -Level "ERROR" -Route "SQL" -Outcome "failure" -Details @{ method = "POST"; path = "/api/chat"; status_code = 503; duration_ms = 1120.4 }
+
+$requestInternal = "$RequestPrefix-internal-failure"
+Add-DemoEvent 58 $requestInternal "pipeline.node.failed" "답변 생성 단계에서 예상하지 못한 오류가 발생했습니다" "pipeline" -Level "ERROR" -Route "GRAPH" -Outcome "failure" -Details @{ node = "generate_answer"; issue_code = "INTERNAL_ERROR" }
+Add-DemoEvent 56 $requestInternal "query.pipeline.completed" "GRAPH 질문 처리를 내부 오류로 종료했습니다" "pipeline" -Level "ERROR" -Route "GRAPH" -Outcome "failure" -Details @{ final_status = "internal_failure"; issue_code = "INTERNAL_ERROR" }
+
+# 차단뿐 아니라 정상 허용 결정도 감사 대시보드에서 비교할 수 있게 한다.
+Add-DemoEvent 50 $requestGraph "audit.guard.decision" "GRAPH 쿼리를 안전성 검사에서 허용했습니다" "audit" -Route "GRAPH" -Tool "graph" -Details @{ decision = "ALLOW"; stage = "pre_execution"; reason = "읽기 전용 쿼리" }
+
 $streams = $events | Group-Object {
     $record = $_.Record
     "$($record.level)|$($record.route)|$($record.tool)|$($record.event_category)"
@@ -145,5 +177,9 @@ $streams = $events | Group-Object {
 
 $payload = @{ streams = @($streams) } | ConvertTo-Json -Compress -Depth 12
 $payloadBytes = [Text.Encoding]::UTF8.GetBytes($payload)
-Invoke-RestMethod -Method Post -Uri "$LokiUrl/loki/api/v1/push" -ContentType "application/json; charset=utf-8" -Body $payloadBytes
-Write-Output "Seeded $($events.Count) clearly labeled presentation demo log events."
+$null = Invoke-RestMethod -Method Post -Uri "$LokiUrl/loki/api/v1/push" -ContentType "application/json; charset=utf-8" -Body $payloadBytes
+if ($PassThruCount) {
+    Write-Output $events.Count
+} else {
+    Write-Output "Seeded $($events.Count) clearly labeled presentation demo log events."
+}

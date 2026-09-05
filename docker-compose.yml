@@ -1,10 +1,5 @@
 services:
   neo4j:
-    # 패치 버전 고정(PR #16 리뷰 재대응, 2026-08-20) - "latest 추적"이었던 이전 결정을
-    # 뒤집었다: 이 프로젝트는 Gold 결과·ETL 재현성이 중요해서 팀원마다 pull 시점에 따라
-    # 실제 버전이 달라지는 걸 허용할 수 없다는 지적을 받아들였다. 5.26은 Neo4j 5.x의
-    # 마지막 릴리스이자 LTS(2028-06까지 지원)라 고정해도 기능 손해가 없다. 원격 공유
-    # 서버도 같은 태그로 맞춘다.
     image: neo4j:5.26.29-enterprise
     container_name: neo4j
     ports:
@@ -15,30 +10,25 @@ services:
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
     volumes:
       - neo4j_data:/data
-    # execute_cypher 전용 reader 계정은 최초 기동 후 수동으로 생성해야 한다
-    # (Postgres의 init-sql/ 같은 컨테이너 자동 초기화 디렉터리가 Neo4j엔 없음):
-    #   CREATE USER chatbot_reader SET PASSWORD '...' CHANGE NOT REQUIRED;
-    #   GRANT ROLE reader TO chatbot_reader;
-    # 생성한 값은 .env의 NEO4J_READER_USER/NEO4J_READER_PASSWORD와 일치시킨다.
+    healthcheck:
+      test: ["CMD-SHELL", "neo4j status | grep -q running"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   postgres:
-    # 패치 버전 고정(PR #16 리뷰 재대응, 2026-08-20) - Neo4j와 같은 재현성 이유.
-    # PostgreSQL은 메이저 버전마다 출시 후 5년 지원(16은 2029-11까지)이고, 마이너
-    # 버전(16.x)은 기능 추가 없이 보안·버그 수정만 담는다. 팀 원격 공유 서버가
-    # 실제로 16.14를 쓰고 있어(로컬에 새로 pull하면 16.15가 잡힘) 재현성 취지에
-    # 맞춰 이미 검증된 원격 버전에 맞춘다.
     image: postgres:16.14
     container_name: postgres
     ports:
-      - "5432:5432"
+      - "52001:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-adventureworks}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-sql:/docker-entrypoint-initdb.d  # 덤프 파일 자동 실행
-      # pg_trgm 확장 필요 (유사 이름 검색) - 앱 시작 시 backend/main.py의 lifespan이 보장한다
+      - ./init-sql:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-adventureworks}"]
       interval: 10s
@@ -49,7 +39,7 @@ services:
     image: dpage/pgadmin4
     container_name: pgadmin
     ports:
-      - "52001:80"
+      - "127.0.0.1:5050:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
@@ -59,10 +49,9 @@ services:
   backend:
     build: ./backend
     container_name: backend
+    restart: on-failure
     ports:
       - "127.0.0.1:8000:8000"
-    # 연결 정보와 비밀값은 현재 프로젝트의 .env를 단일 원본으로 사용한다.
-    # `${VAR}` 보간은 실행 셸 환경변수가 .env보다 우선하므로 여기서는 쓰지 않는다.
     env_file:
       - .env
     environment:
@@ -74,11 +63,8 @@ services:
       POSTGRES_WRITE_POOL_MAX_SIZE: ${POSTGRES_WRITE_POOL_MAX_SIZE:-2}
       SQL_ROW_LIMIT: ${SQL_ROW_LIMIT:-200}
       OBSERVABILITY_ENABLED: ${OBSERVABILITY_ENABLED:-true}
-      # 실패 로그의 클릭 상세에 값이 마스킹된 SQL/Cypher를 표시한다.
-      # 운영 환경에서는 OBS_LOG_FAILED_QUERY=false로 끌 수 있다.
       OBS_LOG_FAILED_QUERY: ${OBS_LOG_FAILED_QUERY:-true}
       OBS_LOG_FAILED_QUERY_MAX_CHARS: ${OBS_LOG_FAILED_QUERY_MAX_CHARS:-4000}
-      # 질문은 이메일·전화번호·토큰·긴 숫자 등을 마스킹한 미리보기만 남긴다.
       OBS_LOG_QUESTION_PREVIEW: ${OBS_LOG_QUESTION_PREVIEW:-true}
       DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-dev}
       SERVICE_VERSION: ${SERVICE_VERSION:-dev}
@@ -90,18 +76,26 @@ services:
       CYPHER_REPAIR_ENGINE: ${CYPHER_REPAIR_ENGINE:-v1}
     depends_on:
       neo4j:
-        condition: service_started
+        condition: service_healthy
       postgres:
-        condition: service_healthy  # postgres 준비 완료 후 백엔드 시작
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - ./queries:/queries:ro
       - ./schema:/schema:ro
       - ./ontology:/ontology:ro
-    # 이 컨테이너는 항상 Linux라 --loop none이 필요 없다(그 플래그는
-    # Windows 호스트에서 ProactorEventLoop를 우회하기 위한 것 - main.py 참고).
-    # 여기서 강제로 걸면 uvicorn의 자동 uvloop 적용만 이유 없이 막힌다.
     command: uvicorn main:app --host 0.0.0.0 --port 8000
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    environment:
+      VITE_API_BASE_URL: /api
+      VITE_API_PROXY_TARGET: http://backend:8000
+    ports:
+      - "8080:5173"
+    depends_on:
+      - backend
 
 volumes:
   neo4j_data:
