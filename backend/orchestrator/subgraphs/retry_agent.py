@@ -13,6 +13,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from starlette.concurrency import run_in_threadpool
 
+from core.observability.events import emit_event
+from core.observability.metrics import QUERY_ATTEMPTS, REPAIR_EXHAUSTED, REPAIRS
+from core.observability.privacy import query_hash, redact_query
 from orchestrator.errors import QueryInfrastructureError
 from orchestrator.execution.result import QueryResultBatch
 from orchestrator.guards.audit import log_guard_decision
@@ -64,6 +67,10 @@ class RetryAgentState(TypedDict):
     business_rules: NotRequired[list[str]]
     failure: NotRequired[QueryFailure | None]
     retryDiagnostics: NotRequired[list[dict[str, Any]]]
+    # 원본 DB 오류는 다음 생성에만 전달한다. 외부 결과 요약/API에는 포함하지 않는다.
+    retry_feedback: NotRequired[str | None]
+    failed_query: NotRequired[str | None]
+    generated_query: NotRequired[str | None]
 
 
 def _classify_empty_result(prior_attempts: list[dict]) -> str:
@@ -117,7 +124,7 @@ def make_retry_agent_subgraph(
             query_text = await generate(
                 state,
                 previous_message["content"] if previous_message else None,
-                feedback_text(state.get("error")),
+                feedback_text(state.get("retry_feedback", state.get("error"))),
             )
         except QueryInfrastructureError:
             raise
@@ -126,12 +133,32 @@ def make_retry_agent_subgraph(
             # 호출하지 않는다. 공개 503 계약으로 즉시 fail-closed한다.
             logger.error("%s: 쿼리 생성 실패: %s", label, exc, exc_info=True)
             raise QueryInfrastructureError() from exc
+        attempt = state.get("attempt_count", 0) + 1
+        generated_query = redact_query(query_text)
+        emit_event(
+            "query.generated",
+            "query",
+            tool=tool_name,
+            attempt=attempt,
+            max_attempts=MAX_ATTEMPTS,
+            query_hash=query_hash(query_text),
+            query_length=len(query_text),
+            generated_query=generated_query,
+        )
+        emit_event(
+            "query.attempt.started",
+            "query",
+            tool=tool_name,
+            attempt=attempt,
+            max_attempts=MAX_ATTEMPTS,
+        )
         return {
             "messages": [
                 *state["messages"],
                 {"role": "assistant", "content": query_text},
             ],
-            "attempt_count": state.get("attempt_count", 0) + 1,
+            "attempt_count": attempt,
+            "generated_query": generated_query,
             # RetryAgentState.retryable은 필수 필드지만 그래프 진입 시점의
             # 초기 상태(graph.py)에는 없을 수 있다. agent는 tools보다 항상
             # 먼저 실행되므로 여기서 기본값을 채워 should_retry가 첫 턴부터
@@ -144,6 +171,37 @@ def make_retry_agent_subgraph(
         하나라도 실패 dict를 반환하면 그 자리에서 즉시 종료한다."""
         query_text = state["messages"][-1]["content"]
         attempts = state.get("attempts", [])
+        attempt = state["attempt_count"]
+
+        def record_attempt(issue_code: str, outcome: str, **fields: Any) -> None:
+            QUERY_ATTEMPTS.labels(tool_name, issue_code, outcome).inc()
+            emit_event(
+                "query.attempt.completed",
+                "query",
+                level="WARNING" if outcome == "failure" else "INFO",
+                force=outcome == "failure",
+                tool=tool_name,
+                outcome=outcome,
+                attempt=attempt,
+                max_attempts=MAX_ATTEMPTS,
+                issue_code=issue_code,
+                **fields,
+            )
+
+        def record_decision(issue_code: str, retry: bool, **fields: Any) -> None:
+            emit_event(
+                "repair.decision.made",
+                "repair",
+                force=True,
+                tool=tool_name,
+                outcome="success" if issue_code == EMPTY_RESULT_ERROR else "failure",
+                decision="retry" if retry else "stop",
+                issue_code=issue_code,
+                attempt=attempt,
+                # V2는 복원하지 않는다. 기존 단일 재생성 흐름의 metric label이다.
+                repair_engine="v1",
+                **fields,
+            )
 
         def failure(
             message: str,
@@ -153,16 +211,37 @@ def make_retry_agent_subgraph(
             stage: str,
             reason_code: str,
             error: Exception | None = None,
+            feedback: str | None = None,
         ) -> dict:
+            issue_code = safe_failure["code"]
+            failed_query = redact_query(query_text)
+            record_attempt(
+                issue_code,
+                "failure",
+                failure_reason=safe_failure["user_safe_reason"],
+                failure_stage=safe_failure["stage"],
+                failure_category=safe_failure["category"],
+                retryable=retryable,
+                failed_query=failed_query,
+            )
+            record_decision(
+                issue_code,
+                retryable and attempt < MAX_ATTEMPTS,
+                failure_reason=safe_failure["user_safe_reason"],
+                failed_query=failed_query,
+            )
             diagnostic = {
                 "stage": stage,
                 "reasonCode": reason_code,
                 "errorType": type(error).__name__ if error is not None else None,
                 "sqlstate": getattr(error, "sqlstate", None),
                 "recovered": False,
+                "attempt": attempt,
+                "retryScheduled": retryable and attempt < MAX_ATTEMPTS,
             }
             return {
                 "error": message,
+                "retry_feedback": feedback if feedback is not None else message,
                 "result": None,
                 "attempts": [*attempts, {"query": query_text, "error": message}],
                 "retryDiagnostics": [
@@ -171,6 +250,7 @@ def make_retry_agent_subgraph(
                 ],
                 "retryable": retryable,
                 "failure": safe_failure,
+                "failed_query": failed_query,
             }
 
         def internal_validation_failure(exc: Exception, stage_label: str) -> dict:
@@ -294,7 +374,7 @@ def make_retry_agent_subgraph(
                     or "canceled" in type(exc).__name__.lower()
                 )
                 return failure(
-                    str(exc),
+                    "쿼리를 실행하지 못했습니다.",
                     retryable=True,
                     safe_failure=make_query_failure(
                         code=(
@@ -321,6 +401,7 @@ def make_retry_agent_subgraph(
                         "QUERY_TIMEOUT" if is_timeout else "QUERY_EXECUTION_FAILED"
                     ),
                     error=exc,
+                    feedback=str(exc),
                 )
             except connection_exceptions as exc:
                 logger.error(
@@ -352,7 +433,7 @@ def make_retry_agent_subgraph(
                     exc_info=True,
                 )
                 return failure(
-                    str(exc),
+                    "질의 실행 중 내부 오류가 발생했습니다.",
                     retryable=False,
                     safe_failure=make_query_failure(
                         code="INTERNAL_QUERY_FAILURE",
@@ -387,6 +468,9 @@ def make_retry_agent_subgraph(
                 truncated = False
 
             if not result:
+                can_retry_empty = (
+                    not state.get("empty_retried", False) and attempt < MAX_ATTEMPTS
+                )
                 new_attempts = [
                     *attempts,
                     {"query": query_text, "error": EMPTY_RESULT_ERROR},
@@ -399,16 +483,24 @@ def make_retry_agent_subgraph(
                         "errorType": None,
                         "sqlstate": None,
                         "recovered": False,
+                        "attempt": attempt,
+                        "retryScheduled": can_retry_empty,
                     },
                 ]
-                can_retry_empty = (
-                    not state.get("empty_retried", False)
-                    and state.get("attempt_count", 0) < MAX_ATTEMPTS
+                # 빈 결과는 실행 성공이지만 복구 성공의 증거는 아니다.
+                # NO_DATA/INCONCLUSIVE 정책과 복구 성공 분모를 그대로 유지한다.
+                record_attempt(
+                    EMPTY_RESULT_ERROR,
+                    "success",
+                    row_count=0,
+                    generated_query=state.get("generated_query"),
                 )
+                record_decision(EMPTY_RESULT_ERROR, can_retry_empty)
                 if can_retry_empty:
                     logger.info("%s: 결과 없음 - 1회 한정 재시도", label)
                     return {
                         "error": EMPTY_RESULT_ERROR,
+                        "retry_feedback": EMPTY_RESULT_ERROR,
                         "result": result,
                         "attempts": new_attempts,
                         "retryDiagnostics": empty_diagnostics,
@@ -422,6 +514,7 @@ def make_retry_agent_subgraph(
                 return {
                     "result": result,
                     "error": None,
+                    "retry_feedback": None,
                     "empty_reason": reason,
                     "attempts": new_attempts,
                     "retryDiagnostics": empty_diagnostics,
@@ -484,9 +577,26 @@ def make_retry_agent_subgraph(
                         reason_code="RESULT_INVARIANT_VIOLATION",
                     )
 
+            record_attempt(
+                "none",
+                "success",
+                row_count=len(result),
+                generated_query=state.get("generated_query"),
+            )
+            if attempt > 1:
+                REPAIRS.labels(tool_name, "none", "success", "v1").inc()
+                emit_event(
+                    "repair.completed",
+                    "repair",
+                    force=True,
+                    tool=tool_name,
+                    attempt=attempt,
+                    repair_engine="v1",
+                )
             return {
                 "result": result,
                 "error": None,
+                "retry_feedback": None,
                 "empty_reason": None,
                 "attempts": [*attempts, {"query": query_text, "error": None}],
                 "retryDiagnostics": [
@@ -511,6 +621,26 @@ def make_retry_agent_subgraph(
         if not state.get("retryable", False):
             return "done"
         if state["attempt_count"] >= MAX_ATTEMPTS:
+            failure: QueryFailure | dict[str, Any] = state.get("failure") or {}
+            issue_code = failure.get("code", "INTERNAL_QUERY_FAILURE")
+            REPAIR_EXHAUSTED.labels(tool_name, issue_code).inc()
+            REPAIRS.labels(tool_name, issue_code, "failure", "v1").inc()
+            emit_event(
+                "repair.exhausted",
+                "repair",
+                level="ERROR",
+                force=True,
+                tool=tool_name,
+                outcome="failure",
+                issue_code=issue_code,
+                failure_reason=failure.get("user_safe_reason"),
+                failure_stage=failure.get("stage"),
+                failure_category=failure.get("category"),
+                failed_query=state.get("failed_query"),
+                attempt=state["attempt_count"],
+                max_attempts=MAX_ATTEMPTS,
+                repair_engine="v1",
+            )
             return "done"
         return "retry"
 

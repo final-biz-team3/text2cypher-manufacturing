@@ -292,5 +292,7 @@ async def test_result_invariant_failure_retries_locally_and_keeps_attempts() -> 
             "errorType": None,
             "sqlstate": None,
             "recovered": True,
+            "attempt": 1,
+            "retryScheduled": True,
         }
     ]

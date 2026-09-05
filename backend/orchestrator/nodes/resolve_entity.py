@@ -232,6 +232,24 @@ def _is_ascii_word_character(value: str) -> bool:
     return value.isascii() and (value.isalnum() or value == "_")
 
 
+def _casefold_with_spans(value: str) -> tuple[str, list[tuple[int, int]]]:
+    """NFC 문자열의 casefold 확장(예: ß → ss)도 원래 문자 좌표로 연결한다."""
+    characters: list[str] = []
+    spans: list[tuple[int, int]] = []
+    for index, character in enumerate(value):
+        folded = character.casefold()
+        characters.extend(folded)
+        spans.extend([(index, index + 1)] * len(folded))
+    return "".join(characters), spans
+
+
+def _whole_character_match(spans: list[tuple[int, int]], start: int, end: int) -> bool:
+    """casefold로 확장된 한 문자의 일부만 이름으로 잡지 않는다."""
+    return (start == 0 or spans[start - 1] != spans[start]) and (
+        end == len(spans) or spans[end - 1] != spans[end]
+    )
+
+
 def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
     """질문에 포함된 DB 이름의 완전한 token 범위를 반환한다.
 
@@ -241,7 +259,7 @@ def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
     """
     if not name:
         return []
-    folded_query = unicodedata.normalize("NFC", query).casefold()
+    folded_query, positions = _casefold_with_spans(unicodedata.normalize("NFC", query))
     folded_name = unicodedata.normalize("NFC", name).casefold()
     spans: list[tuple[int, int]] = []
     offset = 0
@@ -260,8 +278,12 @@ def _literal_name_spans(query: str, name: str) -> list[tuple[int, int]]:
             and _is_ascii_word_character(folded_name[-1])
             and _is_ascii_word_character(folded_query[end])
         )
-        if not starts_inside_word and not ends_inside_word:
-            spans.append((start, end))
+        if (
+            not starts_inside_word
+            and not ends_inside_word
+            and _whole_character_match(positions, start, end)
+        ):
+            spans.append((positions[start][0], positions[end - 1][1]))
         offset = start + 1
 
 
@@ -270,8 +292,8 @@ def _normalized_name_spans(
 ) -> list[tuple[int, int]]:
     """공백·쉼표 표기만 다른 실제 질문 구간을 보수적으로 찾는다.
 
-    반환 좌표는 NFC 정규화된 질문 기준이다. literal span도 같은 좌표계를 쓰므로
-    포함 관계를 안전하게 비교할 수 있다.
+    질문을 한 번만 정규화하고 원문 index map을 유지한다. 모든 부분 문자열을
+    다시 정규화하지 않는다. 반환 좌표는 literal span과 같은 NFC 질문 기준이다.
     """
     normalized_query = unicodedata.normalize("NFC", query)
     normalized_name = unicodedata.normalize("NFC", name)
@@ -279,32 +301,50 @@ def _normalized_name_spans(
     if not target:
         return []
 
+    folded_query, original_positions = _casefold_with_spans(normalized_query)
+    characters: list[str] = []
+    positions: list[tuple[int, int]] = []
+    for character, position in zip(folded_query, original_positions, strict=True):
+        if character.isspace() or (remove_commas and character == ","):
+            if not characters or (not remove_commas and characters[-1] == ","):
+                continue
+            if characters[-1] == " ":
+                positions[-1] = (positions[-1][0], position[1])
+                continue
+            character = " "
+        elif character == "," and characters and characters[-1] == " ":
+            characters.pop()
+            positions.pop()
+        characters.append(character)
+        positions.append(position)
+    if characters and characters[-1] == " ":
+        characters.pop()
+        positions.pop()
+    comparison_query = "".join(characters)
+
     spans: list[tuple[int, int]] = []
-    for start, first in enumerate(normalized_query):
-        if first.isspace():
+    offset = 0
+    while True:
+        match_start = comparison_query.find(target, offset)
+        if match_start < 0:
+            return spans
+        match_end = match_start + len(target)
+        offset = match_start + 1
+        if not _whole_character_match(positions, match_start, match_end):
             continue
-        for end in range(start + 1, len(normalized_query) + 1):
-            if normalized_query[end - 1].isspace():
-                continue
-            candidate = normalized_query[start:end]
-            if (
-                _normalized_name_comparison(candidate, remove_commas=remove_commas)
-                != target
-            ):
-                continue
-            starts_inside_word = (
-                start > 0
-                and _is_ascii_word_character(normalized_name[0])
-                and _is_ascii_word_character(normalized_query[start - 1])
-            )
-            ends_inside_word = (
-                end < len(normalized_query)
-                and _is_ascii_word_character(normalized_name[-1])
-                and _is_ascii_word_character(normalized_query[end])
-            )
-            if not starts_inside_word and not ends_inside_word:
-                spans.append((start, end))
-    return list(dict.fromkeys(spans))
+        start, end = positions[match_start][0], positions[match_end - 1][1]
+        starts_inside_word = (
+            start > 0
+            and _is_ascii_word_character(normalized_name[0])
+            and _is_ascii_word_character(normalized_query[start - 1])
+        )
+        ends_inside_word = (
+            end < len(normalized_query)
+            and _is_ascii_word_character(normalized_name[-1])
+            and _is_ascii_word_character(normalized_query[end])
+        )
+        if not starts_inside_word and not ends_inside_word:
+            spans.append((start, end))
 
 
 @dataclass(frozen=True)

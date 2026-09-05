@@ -101,7 +101,7 @@ async def test_sql_agent_recovers_from_postgresql_42p10(
     assert str(actual_error) in retry_system_prompt
 
     assert result["attempts"] == [
-        {"query": FIRST_SQL, "error": str(actual_error)},
+        {"query": FIRST_SQL, "error": "쿼리를 실행하지 못했습니다."},
         {"query": CORRECTED_SQL, "error": None},
     ]
     assert result["retryDiagnostics"] == [
@@ -111,6 +111,8 @@ async def test_sql_agent_recovers_from_postgresql_42p10(
             "errorType": "InvalidColumnReference",
             "sqlstate": "42P10",
             "recovered": True,
+            "attempt": 1,
+            "retryScheduled": True,
         }
     ]
     assert result["result"] == [

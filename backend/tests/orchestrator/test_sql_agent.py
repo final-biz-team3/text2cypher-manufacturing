@@ -87,7 +87,7 @@ async def test_sql_agent_returns_error_when_execution_fails() -> None:
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "column bad_column does not exist"
+    assert result["error"] == "질의 실행 중 내부 오류가 발생했습니다."
     assert len(openai_client.calls) == 1
 
 
@@ -115,7 +115,10 @@ async def test_sql_agent_retries_after_retryable_error_then_succeeds() -> None:
     assert result["error"] is None
     assert len(openai_client.calls) == 2
     assert len(result["attempts"]) == 2
-    assert result["attempts"][0]["error"] == "column bad_column does not exist"
+    assert result["attempts"][0]["error"] == "쿼리를 실행하지 못했습니다."
+    assert "column bad_column does not exist" in (
+        openai_client.calls[1]["messages"][0]["content"]
+    )
     assert result["attempts"][1]["error"] is None
 
 
@@ -152,7 +155,7 @@ async def test_sql_agent_retries_after_postgresql_42p10_then_succeeds() -> None:
     assert first_sql in retry_system_prompt
     assert error_message in retry_system_prompt
     assert result["attempts"] == [
-        {"query": first_sql, "error": error_message},
+        {"query": first_sql, "error": "쿼리를 실행하지 못했습니다."},
         {"query": corrected_sql, "error": None},
     ]
     assert result["retryDiagnostics"] == [
@@ -162,6 +165,8 @@ async def test_sql_agent_retries_after_postgresql_42p10_then_succeeds() -> None:
             "errorType": "InvalidColumnReference",
             "sqlstate": "42P10",
             "recovered": True,
+            "attempt": 1,
+            "retryScheduled": True,
         }
     ]
     assert result["result"] == [{"productid": 10, "name": "Widget"}]
@@ -265,7 +270,7 @@ async def test_sql_agent_stops_after_max_attempts_exceeded() -> None:
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "column does not exist"
+    assert result["error"] == "쿼리를 실행하지 못했습니다."
     assert result["attempt_count"] == 3
     assert len(openai_client.calls) == 3
     assert len(result["attempts"]) == 3

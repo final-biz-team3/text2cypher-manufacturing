@@ -61,6 +61,7 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         "failure": result.get("failure"),
         "retryDiagnostics": result.get("retryDiagnostics", []),
         "failed_query": result.get("failed_query"),
+        "generated_query": result.get("generated_query"),
     }
 
 
@@ -315,6 +316,7 @@ def make_execute_plan_node(
                 output[result_field] = summary
                 output["resultInvariantRetryCount"] += sum(
                     diagnostic.get("stage") == "result_invariant"
+                    and diagnostic.get("retryScheduled") is True
                     for diagnostic in summary.get("retryDiagnostics", [])
                     if isinstance(diagnostic, dict)
                 )

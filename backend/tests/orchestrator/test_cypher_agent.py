@@ -106,7 +106,7 @@ async def test_cypher_agent_returns_error_when_execution_fails() -> None:
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "unknown property"
+    assert result["error"] == "질의 실행 중 내부 오류가 발생했습니다."
     assert len(openai_client.calls) == 1
 
 
@@ -183,7 +183,7 @@ async def test_cypher_agent_stops_after_max_attempts_exceeded() -> None:
     result = await subgraph.ainvoke(_initial_state())
 
     assert result["result"] is None
-    assert result["error"] == "invalid syntax"
+    assert result["error"] == "쿼리를 실행하지 못했습니다."
     assert result["attempt_count"] == 3
     assert len(openai_client.calls) == 3
     assert len(result["attempts"]) == 3

@@ -86,8 +86,6 @@ services:
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-development-only-metrics-token}
       ENTITY_SIMILARITY_THRESHOLD: ${ENTITY_SIMILARITY_THRESHOLD:-0.3}
       ENTITY_CANDIDATE_LIMIT: ${ENTITY_CANDIDATE_LIMIT:-5}
-      SQL_REPAIR_ENGINE: ${SQL_REPAIR_ENGINE:-v1}
-      CYPHER_REPAIR_ENGINE: ${CYPHER_REPAIR_ENGINE:-v1}
     depends_on:
       neo4j:
         condition: service_started
