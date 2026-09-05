@@ -1,13 +1,32 @@
 import { Sparkles } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { AnswerVisualization } from './AnswerVisualization'
+import { PathGraphCanvas } from '@/components/graph/PathGraphCanvas'
+import type { VisualizationSpec } from '@/lib/schemas'
 
 interface NaturalLanguageAnswerBoxProps {
   answer: string
+  visualization?: VisualizationSpec | null
+  hasGraphResult?: boolean
+  graphRows?: readonly Record<string, unknown>[]
+  graphError?: string | null
+  graphEmptyReason?: string | null
 }
 
 // LLM이 생성한 Markdown 답변을 raw HTML 실행 없이 표시한다.
-export function NaturalLanguageAnswerBox({ answer }: NaturalLanguageAnswerBoxProps) {
+export function NaturalLanguageAnswerBox({
+  answer,
+  visualization,
+  hasGraphResult,
+  graphRows,
+  graphError,
+  graphEmptyReason,
+}: NaturalLanguageAnswerBoxProps) {
+  // 노드 하나짜리 그래프는 점 하나만 찍혀서 정보가 없다 - 그래프 없이
+  // AI 답변 텍스트만 보여준다.
+  const showGraph = hasGraphResult && (graphRows?.length ?? 0) > 1
+
   return (
     <section
       aria-labelledby="ai-answer-title"
@@ -23,6 +42,7 @@ export function NaturalLanguageAnswerBox({ answer }: NaturalLanguageAnswerBoxPro
         </div>
       </div>
       <div className="p-4">
+        {visualization ? <AnswerVisualization visualization={visualization} /> : null}
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -75,6 +95,15 @@ export function NaturalLanguageAnswerBox({ answer }: NaturalLanguageAnswerBoxPro
         >
           {answer}
         </ReactMarkdown>
+        {showGraph ? (
+          <div className="mt-3">
+            <PathGraphCanvas
+              rows={graphRows ?? []}
+              error={graphError ?? null}
+              emptyReason={graphEmptyReason ?? null}
+            />
+          </div>
+        ) : null}
       </div>
     </section>
   )

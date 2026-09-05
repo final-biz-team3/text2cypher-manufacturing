@@ -48,6 +48,56 @@ class ComposedResult(TypedDict):
     truncated: bool
 
 
+NodeLabel = Literal[
+    "Product", "Supplier", "WorkOrder", "RoutingOperation", "Location", "ScrapReason"
+]
+
+
+class VisualizationKpiItem(TypedDict):
+    label: str
+    value: float | int
+
+
+class VisualizationSeries(TypedDict):
+    key: str
+    label: str
+    unit: NotRequired[str]
+
+
+class VisualizationRankedItem(TypedDict):
+    rank: int
+    title: str
+    actual: float | int
+    required: float | int
+    shortageQty: float | int
+    fulfillmentPct: float
+
+
+class VisualizationPoint(TypedDict):
+    x: float | int
+    y: float | int
+    label: NotRequired[str]
+
+
+class VisualizationSpec(TypedDict):
+    type: Literal[
+        "kpi", "bar", "comparison_bar", "ranked_progress", "histogram", "scatter"
+    ]
+    title: str | None
+    items: NotRequired[list[VisualizationKpiItem]]
+    categoryLabel: NotRequired[str]
+    series: NotRequired[list[VisualizationSeries]]
+    data: NotRequired[list[dict[str, Any]]]
+    rankedItems: NotRequired[list[VisualizationRankedItem]]
+    xLabel: NotRequired[str]
+    yLabel: NotRequired[str]
+    xUnit: NotRequired[str]
+    yUnit: NotRequired[str]
+    points: NotRequired[list[VisualizationPoint]]
+    entityLabel: NotRequired[NodeLabel]
+    unit: NotRequired[str]
+
+
 # query만 필수이고 나머지는 그래프 실행 중 노드가 채워나가므로 NotRequired로 선언한다
 # -> graph.invoke({"query": ...})처럼 부분 dict로 시작하거나, 노드 단위 테스트에서
 #    부분 dict를 넘겨도 mypy가 통과한다.
@@ -87,6 +137,9 @@ class OrchestratorState(TypedDict):
 
     # 최종 자연어 응답
     final_answer: NotRequired[str | None]
+
+    # composed_result에서 규칙 기반으로 도출한 시각화 스펙(없으면 None)
+    visualization: NotRequired[VisualizationSpec | None]
 
     # Orchestrator 레벨 에러 메시지
     error: NotRequired[str | None]

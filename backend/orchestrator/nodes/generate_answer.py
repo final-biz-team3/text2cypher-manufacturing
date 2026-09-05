@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Any, NoReturn
@@ -12,6 +13,7 @@ from orchestrator.errors import AnswerGenerationError, QueryInfrastructureError
 from orchestrator.field_labels import FIELD_LABELS
 from orchestrator.guards.audit import log_answer_validation
 from orchestrator.nodes.answer_limits import build_answer_context
+from orchestrator.nodes.build_visualization import build_visualization_spec
 from orchestrator.numeric_literals import normalize_numeric_literal
 from orchestrator.state import ComposedResult, OrchestratorState, QueryFailure
 
@@ -315,13 +317,111 @@ def _item_sentence(item: dict[str, Any]) -> str:
     return f"{title}의 {body}" if title else body
 
 
+def _shared_metrics(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """모든 항목에 (label, value)가 똑같이 들어있는 메트릭을 찾는다 - "완제품명은
+    HL Road Frame..."처럼 목록 전체에 공통인 값을 항목마다 반복하지 않고
+    한 번만 보여주기 위해서다."""
+    if len(items) < 2:
+        return []
+    first_metrics = items[0]["metrics"]
+    shared = []
+    for metric in first_metrics:
+        label, value = metric["label"], metric["value"]
+        if all(
+            any(m["label"] == label and m["value"] == value for m in item["metrics"])
+            for item in items[1:]
+        ):
+            shared.append(metric)
+    return shared
+
+
+def _strip_metrics(item: dict[str, Any], labels: set[str]) -> dict[str, Any]:
+    return {
+        **item,
+        "metrics": [m for m in item["metrics"] if m["label"] not in labels],
+    }
+
+
+def _shared_context_line(shared_metrics: list[dict[str, Any]]) -> str:
+    parts = [
+        f"**{m['label']}**: {_format_metric_value(str(m['label']), m['value'])}"
+        for m in shared_metrics
+    ]
+    return " · ".join(parts)
+
+
+def _same_metric_shape(items: list[dict[str, Any]]) -> bool:
+    """항목마다 남은 메트릭의 라벨 구성(이름과 순서)이 똑같은지 - 똑같아야
+    표의 열이 항목마다 어긋나지 않는다."""
+    if not items:
+        return False
+    first_labels = tuple(str(m["label"]) for m in items[0]["metrics"])
+    if not first_labels:
+        return False
+    return all(
+        tuple(str(m["label"]) for m in item["metrics"]) == first_labels
+        for item in items[1:]
+    )
+
+
+_TABLE_CELL_PIPE = re.compile(r"\|")
+
+
+def _escape_table_cell(value: str) -> str:
+    return _TABLE_CELL_PIPE.sub("\\|", value)
+
+
+def _render_table(items: list[dict[str, Any]]) -> list[str]:
+    """항목마다 남은 메트릭 모양이 똑같을 때, 글머리표 문장 대신 표로
+    렌더링한다 - 값이 서로 다른 컬럼만 남아 한눈에 비교하기 쉽다."""
+    labels = [str(m["label"]) for m in items[0]["metrics"]]
+    header = "| 항목 | " + " | ".join(labels) + " |"
+    separator = "| --- | " + " | ".join(["---"] * len(labels)) + " |"
+    rows = [header, separator]
+    for item in items:
+        title_cell = (
+            _escape_table_cell(str(item["title"])) if item.get("title") else "-"
+        )
+        value_cells = [
+            _escape_table_cell(_format_metric_value(str(m["label"]), m["value"]))
+            for m in item["metrics"]
+        ]
+        rows.append("| " + title_cell + " | " + " | ".join(value_cells) + " |")
+    return rows
+
+
 def _render_item_lines(items: list[dict[str, Any]]) -> list[str]:
-    """항목이 하나면 글머리표 없이 문장 하나로, 여러 개면 문장마다
-    글머리표를 붙인 목록으로 렌더링한다 - 단일 값 답변이 목록처럼
-    보이지 않게 하기 위해서다."""
+    """항목이 하나면 글머리표 없이 문장 하나로 렌더링한다.
+
+    여러 개면, 모든 항목에 공통인 값(예: 완제품명)이 있으면 목록 위에 한
+    줄로 빼내고, 항목마다 실제로 다른 값만 표로 보여준다(모양이 항목마다
+    똑같을 때) - 없으면 기존처럼 문장마다 글머리표를 붙인 목록으로
+    렌더링한다."""
     if len(items) == 1:
         return [_item_sentence(items[0])]
-    return [f"- {_item_sentence(item)}" for item in items]
+
+    shared = _shared_metrics(items)
+    shared_labels = {m["label"] for m in shared}
+    stripped_items = (
+        [_strip_metrics(item, shared_labels) for item in items]
+        if shared_labels
+        else items
+    )
+
+    lines: list[str] = []
+    if shared:
+        lines.append(_shared_context_line(shared))
+        lines.append("")
+
+    if all(not item["metrics"] for item in stripped_items):
+        lines.extend(
+            f"- {item['title']}" for item in stripped_items if item.get("title")
+        )
+    elif _same_metric_shape(stripped_items):
+        lines.extend(_render_table(stripped_items))
+    else:
+        lines.extend(f"- {_item_sentence(item)}" for item in stripped_items)
+    return lines
 
 
 def _render_answer_markdown(parsed: Mapping[str, Any]) -> str:
@@ -648,7 +748,7 @@ def make_generate_answer_node(
 ) -> Callable[[OrchestratorState], Any]:
     """성공한 비어 있지 않은 조합 결과만 LLM으로 자연어화한다."""
 
-    async def generate_answer(state: OrchestratorState) -> dict[str, str]:
+    async def generate_answer(state: OrchestratorState) -> dict[str, Any]:
         query_failure = state.get("query_failure")
         if query_failure is not None:
             if query_failure["kind"] == "infrastructure":
@@ -667,11 +767,12 @@ def make_generate_answer_node(
                 return {"final_answer": _NO_DATA_ANSWER}
             return {"final_answer": _COMPOSITION_ERROR_ANSWER}
 
+        visualization = build_visualization_spec(composed_result)
         final_answer = await _generate_markdown_answer(
             openai_client,
             query=state["query"],
             composed_result=composed_result,
         )
-        return {"final_answer": final_answer}
+        return {"final_answer": final_answer, "visualization": visualization}
 
     return generate_answer

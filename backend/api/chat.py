@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import neo4j.time
 from fastapi import APIRouter, Depends, Request
@@ -97,6 +97,56 @@ class QueryOutcome(BaseModel):
     empty_reason: str | None = None
 
 
+class VisualizationKpiItem(BaseModel):
+    label: str
+    value: float | int
+
+
+class VisualizationSeries(BaseModel):
+    key: str
+    label: str
+    unit: str | None = None
+
+
+class VisualizationRankedItem(BaseModel):
+    rank: int
+    title: str
+    actual: float | int
+    required: float | int
+    shortageQty: float | int  # noqa: N815 (프론트 계약과 동일한 camelCase 유지)
+    fulfillmentPct: float  # noqa: N815
+
+
+class VisualizationPoint(BaseModel):
+    x: float | int
+    y: float | int
+    label: str | None = None
+
+
+NodeLabel = Literal[
+    "Product", "Supplier", "WorkOrder", "RoutingOperation", "Location", "ScrapReason"
+]
+
+
+class VisualizationSpec(BaseModel):
+    type: Literal[
+        "kpi", "bar", "comparison_bar", "ranked_progress", "histogram", "scatter"
+    ]
+    title: str | None = None
+    items: list[VisualizationKpiItem] | None = None
+    categoryLabel: str | None = None  # noqa: N815 (프론트 계약과 동일한 camelCase 유지)
+    series: list[VisualizationSeries] | None = None
+    data: list[dict[str, Any]] | None = None
+    rankedItems: list[VisualizationRankedItem] | None = None  # noqa: N815
+    xLabel: str | None = None  # noqa: N815
+    yLabel: str | None = None  # noqa: N815
+    xUnit: str | None = None  # noqa: N815
+    yUnit: str | None = None  # noqa: N815
+    points: list[VisualizationPoint] | None = None
+    entityLabel: NodeLabel | None = None  # noqa: N815
+    unit: str | None = None
+
+
 class ChatResponse(BaseModel):
     """POST /chat 응답 계약. 필드 목록이 이 모델 하나로 고정돼, orchestrator
     내부 전용 필드(composed_result 등)가 실수로 새어나가는 걸 막는다."""
@@ -109,6 +159,7 @@ class ChatResponse(BaseModel):
     sql_result: QueryOutcome | None = None
     graph_result: QueryOutcome | None = None
     final_answer: str | None = None
+    visualization: VisualizationSpec | None = None
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -196,6 +247,7 @@ async def chat(
                     else result.get("graph_result")
                 ),
                 "final_answer": result.get("final_answer"),
+                "visualization": result.get("visualization"),
             }
         )
     )
@@ -215,6 +267,7 @@ async def chat(
             response.cypher_query,
             response.sql_result.model_dump() if response.sql_result else None,
             response.graph_result.model_dump() if response.graph_result else None,
+            response.visualization.model_dump() if response.visualization else None,
         )
         tool_plan = [str(tool).lower() for tool in (response.tool_plan or [])]
         route = (

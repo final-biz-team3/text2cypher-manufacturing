@@ -64,4 +64,31 @@ describe('toDisplayResult', () => {
     expect(result.answer).not.toContain(prefix)
     expect(result.answer).toContain('현재 LLM')
   })
+
+  it('passes visualization spec through from a chat response', () => {
+    const result = toDisplayResult({
+      query: '판매량이 가장 많은 완제품 상위 3개를 알려줘.',
+      visualization: {
+        type: 'bar',
+        title: null,
+        categoryLabel: '제품명',
+        series: [{ key: 'value', label: '판매량' }],
+        data: [{ category: 'Product A', value: 8420 }],
+      },
+    })
+
+    expect(result.visualization).toEqual({
+      type: 'bar',
+      title: null,
+      categoryLabel: '제품명',
+      series: [{ key: 'value', label: '판매량' }],
+      data: [{ category: 'Product A', value: 8420 }],
+    })
+  })
+
+  it('defaults visualization to null when the response omits it', () => {
+    const result = toDisplayResult({ query: '단순 질문' })
+
+    expect(result.visualization).toBeNull()
+  })
 })

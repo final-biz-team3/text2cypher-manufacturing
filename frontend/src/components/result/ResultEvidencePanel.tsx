@@ -1,26 +1,17 @@
 import { useState } from 'react'
 import { ChevronDown, Database } from 'lucide-react'
-import { PathGraphCanvas } from '@/components/graph/PathGraphCanvas'
 import { ResultsTable } from '@/components/result/ResultsTable'
 import type { DisplayResult } from '@/types/query'
 
-type ResultEvidencePanelProps = Pick<
-  DisplayResult,
-  'columns' | 'rows' | 'hasGraphResult' | 'graphRows' | 'graphError' | 'graphEmptyReason'
->
+// 관계 그래프는 답변박스(NaturalLanguageAnswerBox)로 옮겼다 - 여기는
+// 원본 표만 보여준다.
+type ResultEvidencePanelProps = Pick<DisplayResult, 'columns' | 'rows'>
 
-export function ResultEvidencePanel({
-  columns,
-  rows,
-  hasGraphResult,
-  graphRows,
-  graphError,
-  graphEmptyReason,
-}: ResultEvidencePanelProps) {
+export function ResultEvidencePanel({ columns, rows }: ResultEvidencePanelProps) {
   const [open, setOpen] = useState(false)
   const hasTable = columns.length > 0
 
-  if (!hasGraphResult && !hasTable) return null
+  if (!hasTable) return null
 
   return (
     <section className="overflow-hidden rounded-md border border-border bg-panel">
@@ -35,7 +26,7 @@ export function ResultEvidencePanel({
           <span>
             <span className="block text-[12.5px] font-semibold text-text">조회 근거 데이터</span>
             <span className="mt-0.5 block text-[10.5px] text-text-muted">
-              AI 정리 답변에 사용된 원본 표와 관계 그래프
+              AI 정리 답변에 사용된 원본 표
             </span>
           </span>
         </span>
@@ -46,10 +37,7 @@ export function ResultEvidencePanel({
       </button>
       {open ? (
         <div className="flex flex-col gap-4 border-t border-border p-4">
-          {hasGraphResult ? (
-            <PathGraphCanvas rows={graphRows} error={graphError} emptyReason={graphEmptyReason} />
-          ) : null}
-          {hasTable ? <ResultsTable columns={columns} rows={rows} /> : null}
+          <ResultsTable columns={columns} rows={rows} />
         </div>
       ) : null}
     </section>
