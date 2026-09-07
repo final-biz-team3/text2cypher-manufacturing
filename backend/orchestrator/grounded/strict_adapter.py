@@ -143,6 +143,7 @@ def adapt_strict_plan(plan: QueryPlan, candidate: dict[str, Any]) -> QueryPlan:
         projections=[
             Projection(output_id=p.output_id, column=mapping[p.column])
             for p in plan.steps[0].projections
+            if p.column in mapping
         ],
     )
     return QueryPlan(

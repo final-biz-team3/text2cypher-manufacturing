@@ -63,6 +63,7 @@ class OrchestratorState(TypedDict):
     # 사용자 자연어 질의 (필수)
     query: str
 
+    request_sketch: NotRequired[dict[str, Any]]
     query_intent: NotRequired[dict[str, Any]]
     query_plan: NotRequired[dict[str, Any]]
     step_results: NotRequired[dict[str, Any]]
@@ -75,7 +76,17 @@ class OrchestratorState(TypedDict):
     execution_evidence: NotRequired[dict[str, Any]]
 
     # 엄격한 질의 경로의 수용 여부. 실패 시 #61 경로는 원질문에서 다시 시작한다.
-    query_strategy: NotRequired[Literal["strict", "pr61"]]
+    query_strategy: NotRequired[
+        Literal[
+            "strict",
+            "pr61",
+            "general_plan",
+            "legacy_sql",
+            "legacy_graph",
+            "structured_plan",
+            "structured_alternative",
+        ]
+    ]
     strict_attempt: NotRequired[dict[str, Any]]
 
     entity: NotRequired[dict | list[dict] | None]

@@ -292,6 +292,8 @@ async def validate_execution(
     plan: QueryPlan,
     results: dict[str, StepResult],
     knowledge: KnowledgeContext,
+    *,
+    resolved_entities: Any = None,
 ) -> dict[str, Any]:
     static = []
     for requirement in meaning.requirements:
@@ -316,6 +318,8 @@ async def validate_execution(
     unresolved = [r for r in static if r["verdict"] != "supported"]
     review_ids = {r["requirement_id"] for r in unresolved}
     review_ids.add("__original_question__")
+    if resolved_entities:
+        review_ids.add("__resolved_entities__")
     if len(plan.steps) > 1 or plan.operations:
         review_ids.add("__composition__")
     executable = {s.id: s.query for s in plan.steps}
@@ -323,6 +327,8 @@ async def validate_execution(
     executable["__plan__"] = plan.model_dump_json(indent=2)
     payload = {
         "question": question,
+        "resolved_entities": resolved_entities,
+        "entity_check_instruction": "For __resolved_entities__, verify actual query literals/parameters preserve the confirmed entity identifiers. Do not infer correctness from result values.",
         "meaning": meaning.model_dump(),
         "plan": plan.model_dump(),
         "static_evidence": static,
@@ -341,10 +347,23 @@ async def validate_execution(
         **capability_payload(knowledge),
     }
     format_issues: list[str] = []
+    review = PlanReview(checks=[], issues=[])
     for _attempt in range(2):
-        review = await typed_call(
-            client, PlanReview, purpose="plan.review", system=REVIEW, payload=payload
-        )
+        try:
+            review = await typed_call(
+                client,
+                PlanReview,
+                purpose="plan.review",
+                system=REVIEW,
+                payload=payload,
+            )
+        except ValueError as exc:
+            format_issues = ["Invalid review structure: " + type(exc).__name__]
+            payload["review_format_repair"] = {
+                "diagnostics": format_issues,
+                "instruction": "Repair review structure only; preserve the actual query and results.",
+            }
+            continue
         check_ids = [c.requirement_id for c in review.checks]
         format_issues = []
         allowed_ids = review_ids | {r.id for r in meaning.requirements}

@@ -22,7 +22,7 @@ from orchestrator.grounded.plan_models import (
 
 
 class PlanError(ValueError):
-    pass
+    rejected_plan: dict[str, Any] | None = None
 
 
 def validate_plan(plan: QueryPlan, meaning: Meaning) -> None:
@@ -49,8 +49,11 @@ def validate_plan(plan: QueryPlan, meaning: Meaning) -> None:
             raise PlanError("Duplicate parameter name")
         if any(b.source_step not in step.depends_on for b in step.bindings):
             raise PlanError("Bindings must name an explicit dependency")
-        if any(p.output_id not in output_ids for p in step.projections):
-            raise PlanError("Unknown output reference")
+        # Source projections are local metadata; internal join/aggregate columns
+        # are not user outputs. Only final sections bind public output IDs.
+        local_ids = [p.output_id for p in step.projections]
+        if len(local_ids) != len(set(local_ids)):
+            raise PlanError("Duplicate source output reference")
     finished: set[str] = set()
     while dependencies:
         ready = {k for k, v in dependencies.items() if v <= finished}

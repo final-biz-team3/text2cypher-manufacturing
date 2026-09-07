@@ -521,3 +521,352 @@ async def test_reviewer_may_include_known_ast_supported_requirement(
         knowledge,
     )
     assert report["accepted"] and report["review_attempts"] == 1
+
+
+def test_local_source_columns_do_not_become_public_outputs(meaning):
+    active = plan()
+    active.steps[0].projections.append(
+        Projection(output_id="internal_join_key", column="id")
+    )
+    validate_plan(active, meaning)
+    public = final_result(active, meaning, {"s": result("s", [{"cost": 6, "id": 42}])})
+    assert public.sections[0].rows == [{"value": 6}]
+    active.sections[0].projections.append(
+        Projection(output_id="internal_join_key", column="id")
+    )
+    with pytest.raises(PlanError, match="requested outputs"):
+        validate_plan(active, meaning)
+
+
+def test_reference_linking_is_unique_and_does_not_guess(meaning, knowledge):
+    from orchestrator.grounded.reference_linking import link_references
+
+    meaning.requirements[0].fields = ["items.COST"]
+    meaning.requirements[0].predicate.field = "SQL:PUBLIC.ITEMS.COST"
+    linked = link_references(meaning, knowledge)
+    validate_meaning(linked, "단가 5 이상", knowledge)
+    assert linked.requirements[0].fields == ["sql:public.items.cost"]
+    assert meaning.requirements[0].fields == ["items.COST"]
+    ambiguous = KnowledgeContext(
+        {}, frozenset({"sql:public.items.cost", "sql:archive.items.cost"}), "test"
+    )
+    assert link_references(meaning, ambiguous).requirements[0].fields == ["items.COST"]
+
+
+@pytest.mark.asyncio
+async def test_interpretation_repair_receives_rejected_structure(
+    monkeypatch, meaning, knowledge
+):
+    from orchestrator.grounded import plan_generation as module
+
+    bad = meaning.model_copy(deep=True)
+    bad.requirements[0].fields = ["sql:public.items.missing"]
+    call = AsyncMock(side_effect=[bad, meaning])
+    monkeypatch.setattr(module, "typed_call", call)
+    actual = await module.interpret_meaning(None, "단가 5 이상", knowledge)
+    assert actual.requirements[0].fields == ["sql:public.items.cost"]
+    repair = call.call_args.kwargs["payload"]["repair"]
+    assert (
+        repair["previous_interpretation"]["requirements"][0]["fields"]
+        == bad.requirements[0].fields
+    )
+    assert "unavailable physical field" in repair["diagnostic"]
+
+
+@pytest.mark.asyncio
+async def test_joint_recovery_still_rejects_invalid_plan(
+    monkeypatch, meaning, knowledge
+):
+    from orchestrator.grounded import plan_generation as module
+
+    active = plan()
+    active.sections[0].projections = []
+    call = AsyncMock(
+        return_value=module.RecoveredCandidate(meaning=meaning, plan=active)
+    )
+    monkeypatch.setattr(module, "typed_call", call)
+    with pytest.raises(PlanError, match="requested outputs"):
+        await module.recover_interpretation(
+            None, "단가 5 이상", knowledge, "invalid field"
+        )
+
+
+@pytest.mark.asyncio
+async def test_rejected_plan_is_available_for_targeted_repair(
+    monkeypatch, meaning, knowledge
+):
+    from orchestrator.grounded import plan_generation as module
+
+    active = plan()
+    active.steps[0].requirement_ids = []
+    monkeypatch.setattr(module, "typed_call", AsyncMock(return_value=active))
+    with pytest.raises(PlanError) as caught:
+        await module.generate_plan(None, "단가 5 이상", meaning, knowledge)
+    assert caught.value.rejected_plan == active.model_dump()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_recovered_candidate_cannot_bypass_common_validation(
+    monkeypatch, meaning, knowledge, accepted
+):
+    from orchestrator.grounded import plan_pipeline as module
+    from orchestrator.grounded.plan_generation import RecoveredCandidate
+
+    monkeypatch.setattr(module, "load_knowledge", lambda: knowledge)
+    monkeypatch.setattr(module, "make_sql_guard", lambda _: None)
+    monkeypatch.setattr(module, "make_cypher_guard", lambda _: None)
+    monkeypatch.setattr(module, "make_step_executor", lambda *args: None)
+    monkeypatch.setattr(
+        module, "interpret_meaning", AsyncMock(side_effect=PlanError("link error"))
+    )
+    monkeypatch.setattr(
+        module,
+        "recover_interpretation",
+        AsyncMock(return_value=RecoveredCandidate(meaning=meaning, plan=plan())),
+    )
+    monkeypatch.setattr(module, "strict_eligible", lambda *args: False)
+    monkeypatch.setattr(module, "generate_plan", AsyncMock(return_value=plan()))
+    monkeypatch.setattr(
+        module,
+        "execute_plan",
+        AsyncMock(return_value={"s": result("s", [{"cost": 6}])}),
+    )
+    review = AsyncMock(
+        return_value={
+            "accepted": accepted,
+            "status": "verified" if accepted else "unverified",
+            "issues": [],
+        }
+    )
+    monkeypatch.setattr(module, "validate_execution", review)
+    node = module.make_plan_node(
+        None, None, sql_schema=None, graph_schema=None, catalog=None
+    )
+    response = await node({"query": "단가 5 이상"})
+    assert response["status"] == ("answered" if accepted else "unverified")
+    assert (response["result"] is not None) == accepted
+    assert review.await_count == (1 if accepted else 2)
+    assert response["validation_report"]["interpretation_recovery"]["attempted"]
+
+
+def adaptive_sketch():
+    from orchestrator.grounded.adaptive_generation import (
+        RequestSketch,
+        SketchRequirement,
+    )
+
+    return RequestSketch(
+        action="read",
+        source="sql",
+        requirements=[
+            SketchRequirement(
+                kind="filter", text="5 이상", description="cost at least 5"
+            ),
+        ],
+        output_labels=["단가"],
+        named_mentions=[],
+        clarification=None,
+    )
+
+
+def test_adaptive_binding_assigns_ids_without_exposing_internal_columns(knowledge):
+    from orchestrator.grounded.adaptive_generation import (
+        BoundOutput,
+        SingleBinding,
+        bind_single,
+    )
+
+    binding = SingleBinding(
+        outputs=[
+            BoundOutput(
+                column="price",
+                source_fields=["sql:public.items.cost"],
+                value_type="number",
+                nullable=True,
+                unit=None,
+                unit_evidence=None,
+            )
+        ]
+    )
+    candidate = bind_single(
+        "단가 5 이상",
+        adaptive_sketch(),
+        "SELECT cost AS price, id FROM public.items WHERE cost >= 5",
+        binding,
+        knowledge,
+    )
+    assert candidate.meaning.outputs[0].id == "o0"
+    assert candidate.meaning.requirements[0].id == "r0"
+    public = final_result(
+        candidate.plan,
+        candidate.meaning,
+        {"source": result("source", [{"price": 6, "id": 42}])},
+    )
+    assert public.sections[0].rows == [{"o0": 6}]
+    binding.outputs[0].source_fields = ["sql:public.items.missing"]
+    with pytest.raises(PlanError, match="physical provenance"):
+        bind_single("단가 5 이상", adaptive_sketch(), "SELECT 6", binding, knowledge)
+
+
+@pytest.mark.asyncio
+async def test_adaptive_sql_calls_existing_generator_and_preserves_query(
+    monkeypatch, knowledge
+):
+    from orchestrator.grounded import adaptive_generation as module
+
+    query = "SELECT cost AS price FROM public.items WHERE cost >= 5"
+    binding = module.SingleBinding(
+        outputs=[
+            module.BoundOutput(
+                column="price",
+                source_fields=["sql:public.items.cost"],
+                value_type="number",
+                nullable=True,
+                unit=None,
+                unit_evidence=None,
+            )
+        ]
+    )
+    generator = AsyncMock(return_value=query)
+    monkeypatch.setattr(module, "generate_sql", generator)
+    monkeypatch.setattr(module, "serialize_sql_schema", lambda _: "schema")
+    monkeypatch.setattr(module, "typed_call", AsyncMock(return_value=binding))
+    candidate, strategy = await module.generate_adaptive_candidate(
+        None, "단가 5 이상", adaptive_sketch(), knowledge, {"id": 42}, None, None, 0
+    )
+    assert strategy == "legacy_sql"
+    assert candidate.plan.steps[0].query == query
+    assert generator.call_args.kwargs["entity"] == {"id": 42}
+
+
+@pytest.mark.asyncio
+async def test_adaptive_resolves_before_any_candidate_and_verifies(
+    monkeypatch, meaning, knowledge
+):
+    from orchestrator.grounded import plan_pipeline as module
+    from orchestrator.grounded.plan_generation import RecoveredCandidate
+
+    monkeypatch.setenv("GROUNDED_PLAN_VERSION", "3")
+    sketch = adaptive_sketch()
+    sketch.named_mentions = ["named"]
+    monkeypatch.setattr(module, "load_knowledge", lambda: knowledge)
+    monkeypatch.setattr(module, "make_sql_guard", lambda _: None)
+    monkeypatch.setattr(module, "make_cypher_guard", lambda _: None)
+    monkeypatch.setattr(module, "make_step_executor", lambda *args: None)
+    monkeypatch.setattr(module, "interpret_request", AsyncMock(return_value=sketch))
+    events = []
+
+    async def resolve(_):
+        events.append("resolve")
+        return {"entity": {"id": 42}}
+
+    monkeypatch.setattr(module, "make_resolve_entity_node", lambda *args: resolve)
+
+    async def generate(*args):
+        assert args[4] == {"id": 42}
+        events.append("generate")
+        return RecoveredCandidate(meaning=meaning, plan=plan()), "legacy_sql"
+
+    monkeypatch.setattr(module, "generate_adaptive_candidate", generate)
+    monkeypatch.setattr(
+        module,
+        "execute_plan",
+        AsyncMock(return_value={"s": result("s", [{"cost": 6}])}),
+    )
+    review = AsyncMock(return_value={"accepted": True, "status": "verified"})
+    monkeypatch.setattr(module, "validate_execution", review)
+    node = module.make_plan_node(
+        None, None, sql_schema=None, graph_schema=None, catalog=None
+    )
+    response = await node({"query": "named 단가 5 이상"})
+    assert events == ["resolve", "generate"]
+    assert response["query_strategy"] == "legacy_sql"
+    assert review.call_args.kwargs["resolved_entities"] == {"id": 42}
+
+
+@pytest.mark.asyncio
+async def test_adaptive_write_never_generates_candidate(monkeypatch, knowledge):
+    from orchestrator.grounded import plan_pipeline as module
+
+    monkeypatch.setenv("GROUNDED_PLAN_VERSION", "3")
+    sketch = adaptive_sketch()
+    sketch.action = "write"
+    monkeypatch.setattr(module, "load_knowledge", lambda: knowledge)
+    monkeypatch.setattr(module, "make_sql_guard", lambda _: None)
+    monkeypatch.setattr(module, "make_cypher_guard", lambda _: None)
+    monkeypatch.setattr(module, "make_step_executor", lambda *args: None)
+    monkeypatch.setattr(module, "interpret_request", AsyncMock(return_value=sketch))
+    generate = AsyncMock()
+    monkeypatch.setattr(module, "generate_adaptive_candidate", generate)
+    node = module.make_plan_node(
+        None, None, sql_schema=None, graph_schema=None, catalog=None
+    )
+    response = await node({"query": "modify database"})
+    assert response["status"] == "blocked"
+    generate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_review_format_failure_is_not_query_failure(
+    monkeypatch, meaning, knowledge
+):
+    from orchestrator.grounded import plan_validation as module
+
+    call = AsyncMock(side_effect=ValueError("invalid JSON"))
+    monkeypatch.setattr(module, "typed_call", call)
+    report = await module.validate_execution(
+        None,
+        "단가 5 이상",
+        meaning,
+        plan(),
+        {"s": result("s", [{"cost": 6}])},
+        knowledge,
+    )
+    assert report["accepted"] is False
+    assert report["status"] == "review_invalid"
+    assert report["review_attempts"] == 2
+    assert call.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_adaptive_graph_uses_actual_cypher_generator(monkeypatch, knowledge):
+    from orchestrator.grounded import adaptive_generation as module
+
+    sketch = adaptive_sketch()
+    sketch.source = "graph"
+    query = "MATCH (n:Item) WHERE n.cost >= 5 RETURN n.cost AS price"
+    graph_knowledge = KnowledgeContext(
+        {"graph:Item.cost": '{"type":"FLOAT"}'},
+        frozenset({"graph:Item.cost"}),
+        "synthetic",
+    )
+    binding = module.SingleBinding(
+        outputs=[
+            module.BoundOutput(
+                column="price",
+                source_fields=["graph:Item.cost"],
+                value_type="number",
+                nullable=True,
+                unit=None,
+                unit_evidence=None,
+            )
+        ]
+    )
+    generate = AsyncMock(return_value=query)
+    monkeypatch.setattr(module, "generate_cypher", generate)
+    monkeypatch.setattr(module, "serialize_graph_schema", lambda _: "schema")
+    monkeypatch.setattr(module, "typed_call", AsyncMock(return_value=binding))
+    candidate, strategy = await module.generate_adaptive_candidate(
+        None,
+        "단가 5 이상",
+        sketch,
+        graph_knowledge,
+        None,
+        None,
+        SimpleNamespace(query_policy="policy"),
+        0,
+    )
+    assert candidate.plan.steps[0].query == query
+    assert strategy == "legacy_graph"
+    assert generate.call_args.kwargs["query_policy"] == "policy"

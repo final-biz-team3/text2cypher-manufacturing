@@ -12,6 +12,10 @@ import psycopg
 
 from core.observability.events import emit_event
 from orchestrator.errors import EntityAmbiguousError
+from orchestrator.grounded.adaptive_generation import (
+    generate_adaptive_candidate,
+    interpret_request,
+)
 from orchestrator.grounded.budget import (
     BudgetClient,
     BudgetExceededError,
@@ -20,7 +24,11 @@ from orchestrator.grounded.budget import (
 from orchestrator.grounded.context import load_knowledge
 from orchestrator.grounded.plan_engine import PlanError, execute_plan, final_result
 from orchestrator.grounded.plan_execution import make_step_executor
-from orchestrator.grounded.plan_generation import generate_plan, interpret_meaning
+from orchestrator.grounded.plan_generation import (
+    generate_plan,
+    interpret_meaning,
+    recover_interpretation,
+)
 from orchestrator.grounded.plan_models import (
     FinalResult,
     Meaning,
@@ -94,6 +102,7 @@ def make_plan_node(
     client: Any, pool: Any, *, sql_schema: Any, graph_schema: Any, catalog: Any
 ) -> Any:
     knowledge = load_knowledge()
+    adaptive = os.getenv("GROUNDED_PLAN_VERSION", "2") == "3"
     cap = int(os.getenv("SQL_ROW_LIMIT", "200"))
     execute = make_step_executor(
         pool, make_sql_guard(sql_schema), make_cypher_guard(graph_schema), cap
@@ -110,7 +119,7 @@ def make_plan_node(
         common: dict[str, Any] = {
             "query": state["query"],
             "validation_report": {
-                "version": 2,
+                "version": 3 if adaptive else 2,
                 "knowledge_sha256": knowledge.digest,
                 "candidates": reports,
             },
@@ -161,27 +170,52 @@ def make_plan_node(
             async with asyncio.timeout(
                 float(os.getenv("GROUNDED_QUERY_TIMEOUT_SECONDS", "120"))
             ):
-                meaning = await interpret_meaning(scoped, state["query"], knowledge)
-                common["query_intent"] = meaning.model_dump()
-                if meaning.action in {"write", "mixed"}:
+                recovered_plan = None
+                sketch = None
+                if adaptive:
+                    sketch = await interpret_request(scoped, state["query"], knowledge)
+                    common["request_sketch"] = sketch.model_dump()
+                    request_action = sketch.action
+                    clarification = sketch.clarification
+                    needs_resolution = bool(sketch.named_mentions)
+                else:
+                    try:
+                        meaning = await interpret_meaning(
+                            scoped, state["query"], knowledge
+                        )
+                    except ValueError as exc:
+                        common["validation_report"]["interpretation_recovery"] = {
+                            "error_type": type(exc).__name__,
+                            "attempted": True,
+                        }
+                        recovered = await recover_interpretation(
+                            scoped, state["query"], knowledge, str(exc)
+                        )
+                        meaning, recovered_plan = recovered.meaning, recovered.plan
+                    common["query_intent"] = meaning.model_dump()
+                    request_action = meaning.action
+                    clarification = meaning.clarification
+                    needs_resolution = any(m.kind == "name" for m in meaning.mentions)
+                if request_action in {"write", "mixed"}:
                     return finish(
                         "blocked",
                         "데이터 변경 요청은 실행할 수 없습니다. 조회할 내용만 요청해 주세요.",
                     )
-                if meaning.clarification:
+                if clarification:
                     return {
-                        **finish("clarification", meaning.clarification.question),
-                        "clarification": meaning.clarification.model_dump(),
+                        **finish("clarification", clarification.question),
+                        "clarification": clarification.model_dump(),
                     }
                 resolved_entities = None
-                if any(m.kind == "name" for m in meaning.mentions) or state.get(
-                    "confirmed_entity"
-                ):
+                if needs_resolution or state.get("confirmed_entity"):
                     resolver = make_resolve_entity_node(scoped, pool, graph_schema)
                     resolution = await resolver(cast(OrchestratorState, state))
                     resolved_entities = resolution.get("entity")
                     common["entity"] = resolved_entities
-                plan: QueryPlan | None = None
+                    # A plan prepared before resolution must be regenerated with the
+                    # confirmed anchors. Adaptive candidates are always built afterward.
+                    recovered_plan = None
+                plan: QueryPlan | None = recovered_plan
                 feedback: Any = None
                 use_strict = False
                 for attempt in range(2):
@@ -196,7 +230,23 @@ def make_plan_node(
                         async with asyncio.timeout(
                             float(os.getenv("GROUNDED_CANDIDATE_TIMEOUT_SECONDS", "45"))
                         ):
-                            if plan is None or (attempt and not use_strict):
+                            if adaptive:
+                                assert sketch is not None
+                                candidate, strategy = await generate_adaptive_candidate(
+                                    scoped,
+                                    state["query"],
+                                    sketch,
+                                    knowledge,
+                                    resolved_entities,
+                                    sql_schema,
+                                    graph_schema,
+                                    attempt,
+                                    feedback,
+                                )
+                                meaning, plan = candidate.meaning, candidate.plan
+                                common["query_intent"] = meaning.model_dump()
+                                report["strategy"] = strategy
+                            elif plan is None or (attempt and not use_strict):
                                 plan = await generate_plan(
                                     scoped,
                                     state["query"],
@@ -228,8 +278,10 @@ def make_plan_node(
                                         else "현재 처리 구조로 요청한 조회를 완성하지 못했습니다."
                                     ),
                                 )
-                            use_strict = attempt == 0 and strict_eligible(
-                                meaning, plan, catalog
+                            use_strict = (
+                                not adaptive
+                                and attempt == 0
+                                and strict_eligible(meaning, plan, catalog)
                             )
                             active = plan
                             if use_strict:
@@ -254,6 +306,7 @@ def make_plan_node(
                                     active,
                                     results,
                                     knowledge,
+                                    resolved_entities=resolved_entities,
                                 )
                             )
                             common["query_plan"] = active.model_dump()
@@ -272,7 +325,11 @@ def make_plan_node(
                                 )
                                 response.update(
                                     result=public.model_dump(),
-                                    query_strategy="strict" if use_strict else "pr61",
+                                    query_strategy=(
+                                        report["strategy"]
+                                        if adaptive
+                                        else "strict" if use_strict else "general_plan"
+                                    ),
                                     answer_metadata={
                                         "mode": "structured",
                                         "attemptCount": 0,
@@ -309,6 +366,7 @@ def make_plan_node(
                             feedback = {
                                 "issues": report.get("issues", []),
                                 "format_errors": report.get("format_errors", []),
+                                "previous_plan": active.model_dump(),
                             }
                             if report.get("status") == "review_invalid":
                                 return finish(
@@ -331,6 +389,7 @@ def make_plan_node(
                         )
                         feedback = {
                             "type": type(exc).__name__,
+                            "previous_plan": getattr(exc, "rejected_plan", None),
                             "diagnostic": (
                                 str(exc)
                                 if isinstance(exc, PlanError)

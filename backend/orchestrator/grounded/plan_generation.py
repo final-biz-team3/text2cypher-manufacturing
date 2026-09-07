@@ -6,8 +6,10 @@ from typing import Any
 
 from orchestrator.grounded.context import KnowledgeContext
 from orchestrator.grounded.model_calls import typed_call
+from orchestrator.grounded.models import Contract
 from orchestrator.grounded.plan_engine import PlanError, validate_plan
 from orchestrator.grounded.plan_models import Meaning, Predicate, QueryPlan
+from orchestrator.grounded.reference_linking import link_references
 
 INTERPRET = """Interpret a request to a LIVE manufacturing database. You are preparing a
 database lookup, NOT answering from documents. Schema lists queryable tables/labels/fields;
@@ -21,7 +23,10 @@ Generic table/category nouns are target mentions, never named instances. Name me
 must use an actual textual name field; numeric identifiers are id mentions. The source
 question text must contain the exact mention. Do not turn target aliases into values.
 Represent every explicit target/output/filter/negation/grain/join/direction/depth/order/limit
-with a requirement and verbatim evidence. Structured fields use physical_fields exactly.
+with a requirement and verbatim evidence. Structured fields use physical_fields exactly. Copy references from the supplied list;
+never use a computed output alias as a physical field. For count(*) use an existing
+entity identifier as output provenance, with aggregate.field=null. SQL joins are
+kind=join; Relationship describes only actual Neo4j relationships, never SQL joins.
 Boolean predicates use children for and/or/not, otherwise field/value/values. Aggregates
 distinguish count(*) (field=null) from count(field) and count distinct. Never infer extra
 grouping from a name used only to filter. Outputs have unique IDs and physical provenance;
@@ -45,7 +50,9 @@ Cypher uses $name parameters; bindings are list-of-maps usable with UNWIND or me
 Membership filters must not multiply aggregates by repeated IDs. Empty input can still
 produce count=0; never add a fallback to all records. Prefer aggregating/filtering in DB.
 Final sections refer to a source step or an operation. Bind output IDs to actual returned
-column aliases in projections. Include internal binding/join columns without making them
+column aliases in FINAL section projections. Copy output_id from meaning.outputs.
+Source-step projections describe local columns and may use local IDs; leave them empty
+when no public output is produced yet. Include internal binding/join columns without making them
 requested outputs. All requested output IDs must appear in the final sections. Return
 separate sections only for independently requested facts, not a substitute for a join.
 Operations are topologically ordered filter/project/distinct/aggregate/sort/limit/join.
@@ -165,6 +172,7 @@ async def interpret_meaning(
 ) -> Meaning:
     payload = {"question": question, **capability_payload(knowledge)}
     for attempt in range(2):
+        result = None
         try:
             result = await typed_call(
                 client,
@@ -173,6 +181,7 @@ async def interpret_meaning(
                 system=INTERPRET,
                 payload=payload,
             )
+            result = link_references(result, knowledge)
             validate_meaning(result, question, knowledge)
             return result
         except ValueError as exc:
@@ -180,6 +189,8 @@ async def interpret_meaning(
                 raise
             payload["repair"] = {
                 "type": type(exc).__name__,
+                "previous_interpretation": result.model_dump() if result else None,
+                "diagnostic": str(exc),
                 "instruction": (
                     str(exc)
                     if isinstance(exc, PlanError)
@@ -210,5 +221,43 @@ async def generate_plan(
             "resolved_entities": resolved_entities,
         },
     )
-    validate_plan(plan, meaning)
+    try:
+        validate_plan(plan, meaning)
+    except PlanError as exc:
+        exc.rejected_plan = plan.model_dump()
+        raise
     return plan
+
+
+class RecoveredCandidate(Contract):
+    meaning: Meaning
+    plan: QueryPlan
+
+
+async def recover_interpretation(
+    client: Any, question: str, knowledge: KnowledgeContext, diagnostic: str
+) -> RecoveredCandidate:
+    """Recover linking against an actual query, never silently accept bad intent."""
+    candidate = await typed_call(
+        client,
+        RecoveredCandidate,
+        purpose="plan.recover_linking",
+        system=INTERPRET
+        + "\n"
+        + PLAN
+        + "\nRecover the interpretation and plan together. "
+        "Use the actual query's physical fields to ground requirements and outputs. "
+        "Prefer one source query when sufficient. Preserve the original question; "
+        "do not copy an invalid field or invent a default to satisfy validation. "
+        "For writes or clarification, return an unsupported plan with empty steps/sections.",
+        payload={
+            "question": question,
+            **capability_payload(knowledge),
+            "diagnostic": diagnostic,
+        },
+    )
+    candidate.meaning = link_references(candidate.meaning, knowledge)
+    validate_meaning(candidate.meaning, question, knowledge)
+    if candidate.meaning.action == "read" and not candidate.meaning.clarification:
+        validate_plan(candidate.plan, candidate.meaning)
+    return candidate
