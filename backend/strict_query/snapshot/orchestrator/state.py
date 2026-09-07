@@ -1,6 +1,10 @@
 from typing import Any, Literal, NotRequired, TypedDict
 
-from orchestrator.planning import BomShortageTransform, RouteDraft, Subquery
+from strict_query.snapshot.orchestrator.planning import (
+    BomShortageTransform,
+    RouteDraft,
+    Subquery,
+)
 
 EmptyReason = Literal["NO_DATA", "INCONCLUSIVE"]
 CompositionMode = Literal["single", "joined", "separate"]
@@ -48,13 +52,6 @@ class ComposedResult(TypedDict):
     truncated: bool
 
 
-class AnswerGenerationMetadata(TypedDict):
-    mode: Literal["structured", "fallback", "fixed"]
-    attemptCount: int
-    fallbackReason: str | None
-    validationRejected: bool
-
-
 # query만 필수이고 나머지는 그래프 실행 중 노드가 채워나가므로 NotRequired로 선언한다
 # -> graph.invoke({"query": ...})처럼 부분 dict로 시작하거나, 노드 단위 테스트에서
 #    부분 dict를 넘겨도 mypy가 통과한다.
@@ -62,15 +59,11 @@ class OrchestratorState(TypedDict):
     # 사용자 자연어 질의 (필수)
     query: str
 
-    # 엄격한 질의 경로의 수용 여부. 실패 시 #61 경로는 원질문에서 다시 시작한다.
-    query_strategy: NotRequired[Literal["strict", "pr61"]]
-    strict_attempt: NotRequired[dict[str, Any]]
-
     entity: NotRequired[dict | list[dict] | None]
 
     confirmed_entity: NotRequired[dict | list[dict] | None]
 
-    # route_query의 dependency DAG에서 파생한 실행 순서
+    # route_query가 결정한 실행 계획 (["sql"] / ["graph"] / ["sql", "graph"])
     tool_plan: NotRequired[list[str]]
 
     routeDraft: NotRequired[RouteDraft]
@@ -98,12 +91,6 @@ class OrchestratorState(TypedDict):
 
     # 최종 자연어 응답
     final_answer: NotRequired[str | None]
-    answer_metadata: NotRequired[AnswerGenerationMetadata]
-
-    # 모델 계획과 로컬 결과 검증의 복구 관측값
-    routeRepairCount: NotRequired[int]
-    outputPlanRepairCount: NotRequired[int]
-    resultInvariantRetryCount: NotRequired[int]
 
     # Orchestrator 레벨 에러 메시지
     error: NotRequired[str | None]
