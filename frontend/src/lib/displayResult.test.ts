@@ -65,3 +65,41 @@ describe('toDisplayResult', () => {
     expect(result.answer).toContain('현재 LLM')
   })
 })
+
+describe('final-result contract', () => {
+  it('uses final rows and units instead of source rows', () => {
+    const result = toDisplayResult({
+      query: 'synthetic',
+      status: 'answered',
+      sql_result: { result: [{ raw: 999 }], error: null, attempts: [], empty_reason: null },
+      result: {
+        truncated: false,
+        sections: [
+          {
+            id: 'final',
+            title: 'Final',
+            columns: [{ id: 'quantity', label: 'Quantity', value_type: 'number', unit: 'kg' }],
+            rows: [{ quantity: 7 }, { quantity: null }],
+            truncated: false,
+          },
+        ],
+      },
+    })
+    expect(result.rows).toEqual([])
+    expect(JSON.stringify(result.sections)).not.toContain('999')
+    expect(JSON.stringify(result.sections)).toContain('7')
+    expect(JSON.stringify(result.sections)).toContain('NULL')
+    expect(JSON.stringify(result.sections)).toContain('kg')
+  })
+  it('does not present failed source rows as an empty answer', () => {
+    const result = toDisplayResult({
+      query: 'synthetic',
+      status: 'unverified',
+      result: null,
+      sql_result: { result: [{ raw: 999 }], error: null, attempts: [], empty_reason: null },
+    })
+    expect(result.status).toBe('unverified')
+    expect(result.rows).toEqual([])
+    expect(result.sections).toEqual([])
+  })
+})

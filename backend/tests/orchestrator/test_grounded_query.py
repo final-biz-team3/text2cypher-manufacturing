@@ -14,6 +14,7 @@ from orchestrator.grounded.pipeline import make_coordinator
 from orchestrator.grounded.planning import plan_request_outputs
 from orchestrator.grounded.runtime import grounded_execution
 from orchestrator.grounded.validation import deterministic_checks, validate_candidate
+from orchestrator.planning import Subquery
 
 
 @pytest.fixture
@@ -85,6 +86,110 @@ def test_evidence_and_physical_fields_are_required(intent, knowledge):
     invalid.requirements[0].evidence.text = "condition invented by model"
     with pytest.raises(ValueError, match="Evidence"):
         knowledge.validate_intent(invalid, "단가 5 이상")
+
+
+@pytest.mark.parametrize("extra", [[], [(3, 30)], [(1, 11), (None, 90)]])
+def test_independent_hybrid_join_matches_relational_semantics(extra):
+    from orchestrator.composition import compose_results
+
+    left = [(1, 10), (2, 20), (None, 40)]
+    right = [(1, 100), (3, 300), (None, 400)] + extra
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE a(id INTEGER, x INTEGER)")
+    conn.execute("CREATE TABLE b(id INTEGER, y INTEGER)")
+    conn.executemany("INSERT INTO a VALUES (?,?)", left)
+    conn.executemany("INSERT INTO b VALUES (?,?)", right)
+    expected = sorted(
+        conn.execute("SELECT a.id,x,y FROM a JOIN b ON a.id=b.id").fetchall()
+    )
+    conn.close()
+    plan: list[Subquery] = [
+        {
+            "id": tool,
+            "tool": tool,
+            "question": "source",
+            "dependsOn": [],
+            "joinKeys": ["productId"],
+            "requiredOutputs": ["productId", metric],
+        }
+        for tool, metric in (("sql", "x"), ("graph", "y"))
+    ]
+    sources = {
+        "sql": {"result": [{"productId": k, "x": v} for k, v in left]},
+        "graph": {"result": [{"productId": k, "y": v} for k, v in right]},
+    }
+    result = compose_results(plan, sources, row_limit=200, allow_independent_join=True)
+    assert result["error"] is None
+    assert sorted((r["productId"], r["x"], r["y"]) for r in result["rows"]) == expected
+    # A bound lookup is still required to respect the upstream identity domain.
+    plan[1]["dependsOn"] = ["sql"]
+    plan[1]["inputBindings"] = {"ids": "sql.productId"}
+    sources["sql"]["result"] = [{"productId": 1, "x": 10}]
+    assert compose_results(plan, sources, row_limit=200, allow_independent_join=True)[
+        "error"
+    ]
+
+
+def test_inconclusive_empty_and_stale_query_are_not_validated_as_no_data(intent):
+    empty = candidate([])
+    empty["composed_result"]["empty_reason"] = "INCONCLUSIVE"
+    assert any(
+        c["verdict"] == "contradicted" for c in deterministic_checks(intent, empty)
+    )
+    stale = candidate()
+    stale["execution_evidence"]["sql"]["query"] = "SELECT cost FROM public.items"
+    assert any(
+        c["check"] == "executed_query:sql" and c["verdict"] == "contradicted"
+        for c in deterministic_checks(intent, stale)
+    )
+
+
+def test_request_plan_cannot_silently_drop_output_source(intent):
+    with pytest.raises(ValueError, match="omits requested output sources"):
+        plan_request_outputs(
+            {
+                "query_intent": intent.model_dump(),
+                "routeDraft": {
+                    "subqueries": [
+                        {
+                            "id": "g",
+                            "tool": "graph",
+                            "question": "relationships",
+                            "dependsOn": [],
+                            "joinKeys": [],
+                        }
+                    ]
+                },
+            }
+        )
+
+
+async def test_hybrid_review_requires_composition_evidence(
+    monkeypatch, intent, knowledge
+):
+    item = candidate()
+    item["subqueries"] = [{"id": "s", "tool": "sql"}, {"id": "g", "tool": "graph"}]
+    review = CandidateReview.model_validate(
+        {
+            "interpretation_complete": True,
+            "checks": [
+                {
+                    "requirement_id": "r1",
+                    "verdict": "supported",
+                    "tool": "sql",
+                    "query_excerpt": "cost >= 5",
+                    "explanation": "filter preserved",
+                }
+            ],
+            "clarification": None,
+        }
+    )
+    call = AsyncMock(return_value=review)
+    monkeypatch.setattr("orchestrator.grounded.validation.typed_call", call)
+    report = await validate_candidate(None, "단가 5 이상", intent, item, knowledge)
+    assert not report["accepted"] and report["status"] == "unverified"
+    requirements = call.call_args.kwargs["payload"]["review_requirements"]
+    assert any(r["id"] == "__composition__" for r in requirements)
 
 
 async def test_interpretation_repairs_provenance_once(monkeypatch, intent, knowledge):
@@ -323,15 +428,13 @@ def test_answer_values_are_taken_from_same_row_and_all_requested_fields(intent):
         render_selection(selection, {"": [{"cost": 100}, {"cost": 7}]}, intent)
 
 
-async def test_invalid_answer_selection_falls_back_to_grounded_render(
-    monkeypatch, intent
-):
-    monkeypatch.setattr(
-        "orchestrator.grounded.answer.typed_call", AsyncMock(side_effect=ValueError)
+async def test_small_answers_preserve_every_row_without_a_model_call(intent):
+    result = await grounded_answer(None, intent, candidate([{"cost": 8}, {"cost": 6}]))
+    assert result["final_answer"].index("단가: 8") < result["final_answer"].index(
+        "단가: 6"
     )
-    result = await grounded_answer(None, intent, candidate())
-    assert "단가: 6" in result["final_answer"]
-    assert result["answer_metadata"]["mode"] == "fallback"
+    assert len(result["answer_metadata"]["references"]) == 2
+    assert result["answer_metadata"]["attemptCount"] == 0
 
 
 def test_physical_context_excludes_question_shapes():

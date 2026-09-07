@@ -18,6 +18,7 @@ import { sendChatQuery, ChatError, ClarificationNeededError } from '@/lib/chat'
 import { deleteHistory, fetchHistory } from '@/lib/history'
 import { formatCypherError } from '@/lib/formatCypherError'
 import { toDisplayResult } from '@/lib/displayResult'
+import { QueryStatusNotice } from '@/components/result/QueryStatusNotice'
 import type { AmbiguousCandidate, ConfirmedEntity, HistoryEntry } from '@/lib/schemas'
 import type { RetryAttempt, SelfCorrectionStep } from '@/types/query'
 
@@ -325,6 +326,7 @@ export function Dashboard() {
             <div className="flex flex-col gap-4">
               {queryInputBar}
               <NaturalLanguageAnswerBox answer={result.answer} />
+              <QueryStatusNotice status={result.status} />
               <ResultEvidencePanel key={result.query} {...result} />
             </div>
           )}

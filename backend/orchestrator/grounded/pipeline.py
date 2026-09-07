@@ -90,6 +90,7 @@ def make_coordinator(
             "validation_report": {
                 "knowledge_sha256": knowledge.digest,
                 "candidates": reports,
+                "phase": "interpretation",
             }
         }
         try:
@@ -99,6 +100,7 @@ def make_coordinator(
                     query_intent=intent.model_dump(),
                     output_definitions=[o.model_dump() for o in intent.outputs],
                 )
+                common["validation_report"]["phase"] = "candidates"
                 if intent.action in {"write", "mixed"}:
                     return {
                         **common,
@@ -136,6 +138,8 @@ def make_coordinator(
                             "semantic": reports[-1].get("semantic", []),
                             "error_type": reports[-1].get("error_type"),
                             "failure_code": reports[-1].get("failure_code"),
+                            "status": reports[-1].get("status", "unverified"),
+                            "review_complete": reports[-1].get("review_complete"),
                         }
                     evidence: dict[str, Any] = {}
                     trace_token = trace.set(evidence) if trace else None
@@ -211,6 +215,7 @@ def make_coordinator(
                         if trace is not None and trace_token is not None:
                             trace.reset(trace_token)
                     if report["accepted"]:
+                        common["validation_report"]["phase"] = "answer"
                         answer = await grounded_answer(client, intent, candidate)
                         allowed = {
                             k: v
@@ -281,11 +286,20 @@ def make_coordinator(
             }
         except Exception as exc:
             common["validation_report"]["error_type"] = type(exc).__name__
+            phase = common["validation_report"]["phase"]
             return {
                 **common,
                 **_failure(
-                    "INTERPRETATION_UNVERIFIED",
-                    "질문 해석을 검증하지 못해 답을 확정할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+                    (
+                        "INTERPRETATION_UNVERIFIED"
+                        if phase == "interpretation"
+                        else "ANSWER_RENDER_FAILED"
+                    ),
+                    (
+                        "질문 해석을 검증하지 못해 답을 확정할 수 없습니다. 잠시 후 다시 시도해 주세요."
+                        if phase == "interpretation"
+                        else "조회 결과를 답변으로 구성하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                    ),
                     kind="internal",
                 ),
             }

@@ -31,6 +31,36 @@ export const QueryOutcomeSchema = z
   })
   .nullable()
 
+export const QueryStatusSchema = z.enum([
+  'answered',
+  'empty',
+  'clarification',
+  'unsupported',
+  'unanswerable',
+  'unverified',
+  'blocked',
+  'error',
+])
+export const FinalResultSchema = z.object({
+  sections: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      columns: z.array(
+        z.object({
+          id: z.string(),
+          label: z.string(),
+          value_type: z.string(),
+          unit: z.string().nullable(),
+        }),
+      ),
+      rows: z.array(z.record(z.string(), z.unknown())),
+      truncated: z.boolean(),
+    }),
+  ),
+  truncated: z.boolean(),
+})
+
 export const ChatResponseSchema = z.object({
   query: z.string(),
   sql_query: z.string().nullable().optional(),
@@ -38,6 +68,8 @@ export const ChatResponseSchema = z.object({
   sql_result: QueryOutcomeSchema.optional(),
   graph_result: QueryOutcomeSchema.optional(),
   final_answer: z.string().nullable().optional(),
+  status: QueryStatusSchema.optional(),
+  result: FinalResultSchema.nullable().optional(),
   clarification: z
     .object({
       question: z.string().min(1),
@@ -89,6 +121,8 @@ export const HealthSchema = z.object({
 export type Health = z.infer<typeof HealthSchema>
 
 export const HistoryEntrySchema = z.object({
+  status: QueryStatusSchema.optional(),
+  result: FinalResultSchema.nullable().optional(),
   id: z.number(),
   username: z.string(),
   query: z.string(),

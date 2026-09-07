@@ -39,7 +39,9 @@ _FORBIDDEN_FUNCTIONS = frozenset(
         "dblink_exec",
     }
 )
-_SAFE_FROM_FUNCTIONS = frozenset({"unnest"})
+_SAFE_FROM_FUNCTIONS = frozenset(
+    {"unnest", "jsonb_to_recordset", "jsonb_array_elements"}
+)
 
 
 def _is_forbidden_function(name: str) -> bool:

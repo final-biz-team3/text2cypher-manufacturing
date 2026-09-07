@@ -17,7 +17,7 @@ numbers are NOT evidence that all requested conditions are correct. Check physic
 output meaning, filters/negation, date boundaries, grouping grain, join cardinality, nulls,
 graph direction/depth, ordering/limit, units and any cross-source composition. Check empty
 queries by their logic, not by the absence of rows. Never propose relaxing a condition.
-For EVERY requirement return supported, contradicted or unknown, naming the actual tool
+For EVERY item in review_requirements return supported, contradicted or unknown, naming the actual tool
 and quoting the relevant executable query exactly (not a generator explanation).
 Keep each explanation to one concise clause and quote only the decisive query fragment.
 If a requirement needs both tools, quote the decisive clause and explain the other dependency.
@@ -59,6 +59,14 @@ def deterministic_checks(
     ):
         return [{"check": "execution_and_composition", "verdict": "contradicted"}]
     checks.append({"check": "execution_and_composition", "verdict": "supported"})
+    if composed.get("empty_reason") == "INCONCLUSIVE":
+        checks.append({"check": "conclusive_result", "verdict": "contradicted"})
+    for tool, field in (("sql", "sql_query"), ("graph", "cypher_query")):
+        executed = candidate.get("execution_evidence", {}).get(tool, {}).get("query")
+        if executed and executed != candidate.get(field):
+            checks.append(
+                {"check": f"executed_query:{tool}", "verdict": "contradicted"}
+            )
     for tool in {output.tool for output in intent.outputs}:
         execution = candidate.get("execution_evidence", {}).get(tool, {})
         checks.append(
@@ -111,8 +119,10 @@ async def validate_candidate(
         "reviewed": False,
         "clarification": None,
         "failure_code": (candidate.get("query_failure") or {}).get("code"),
+        "status": "unverified",
     }
     if any(check["verdict"] == "contradicted" for check in static):
+        report["status"] = "contradicted"
         return report
     queries = {
         "sql": candidate.get("sql_query") or "",
@@ -120,6 +130,25 @@ async def validate_candidate(
     }
     if not any(queries.values()):
         return report
+    review_requirements = [r.model_dump() for r in intent.requirements]
+    required_ids = {r.id for r in intent.requirements}
+    # Composition is executable application logic, not a clause in either query.
+    # Always request a separate review of it for multi-source candidates.
+    if len(candidate.get("subqueries") or []) > 1:
+        composition_id = "__composition__"
+        while composition_id in required_ids:
+            composition_id += "_"
+        required_ids.add(composition_id)
+        review_requirements.append(
+            {
+                "id": composition_id,
+                "kind": "join",
+                "description": "Verify the actual composition mode, binding identity and pairing, "
+                "join cardinality, aggregate grain, source truncation and global ordering/limit. "
+                "Separate sections are not a joined or globally ranked result. Quote a decisive "
+                "source query clause and explain how the actual composition preserves the question.",
+            }
+        )
     review = await typed_call(
         client,
         CandidateReview,
@@ -133,12 +162,17 @@ async def validate_candidate(
             "subqueries": candidate.get("subqueries"),
             "composed_result": candidate.get("composed_result"),
             "static_checks": static,
+            "review_requirements": review_requirements,
+            "result_transform": candidate.get("resultTransform"),
+            "execution_evidence": candidate.get("execution_evidence"),
+            "composition_semantics": "joined is an inner equality join on ordered joinKeys "
+            "with bag multiplicity; sections keeps independent source rows. Neither mode "
+            "performs a global aggregation or sort after joining. A formal resultTransform "
+            "has its separately documented semantics.",
         },
     )
     ids = [check.requirement_id for check in review.checks]
-    complete = len(ids) == len(set(ids)) and set(ids) == {
-        r.id for r in intent.requirements
-    }
+    complete = len(ids) == len(set(ids)) and set(ids) == required_ids
     supported = all(
         check.verdict == "supported"
         and check.tool
@@ -160,4 +194,15 @@ async def validate_candidate(
             review.clarification.model_dump() if review.clarification else None
         ),
     )
+    report["status"] = (
+        "verified"
+        if report["accepted"]
+        else (
+            "contradicted"
+            if not review.interpretation_complete
+            or any(c.verdict == "contradicted" for c in review.checks)
+            else "unverified"
+        )
+    )
+    report["review_complete"] = complete
     return report

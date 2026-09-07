@@ -18,6 +18,7 @@ from core.query_failure_reviews import create_failure_review
 from orchestrator.errors import EntityNotFoundError
 from orchestrator.graph import build_orchestrator_graph
 from orchestrator.grounded.models import Clarification
+from orchestrator.grounded.plan_models import FinalResult, QueryStatus
 from orchestrator.nodes.generate_answer import generate_failure_answer
 from orchestrator.nodes.plan_outputs import OutputPlanningError
 from orchestrator.nodes.resolve_entity import EntityExtractionError
@@ -111,12 +112,17 @@ class ChatResponse(BaseModel):
     graph_result: QueryOutcome | None = None
     final_answer: str | None = None
     clarification: Clarification | None = None
+    status: QueryStatus | None = None
+    result: FinalResult | None = None
 
     @model_serializer(mode="wrap")
     def serialize_response(self, handler: Any) -> dict[str, Any]:
         document: dict[str, Any] = handler(self)
         if self.clarification is None:
             document.pop("clarification", None)
+        if self.status is None:
+            document.pop("status", None)
+            document.pop("result", None)
         return document
 
 
@@ -206,6 +212,8 @@ async def chat(
                 ),
                 "final_answer": result.get("final_answer"),
                 "clarification": result.get("clarification"),
+                "status": result.get("status"),
+                "result": result.get("result"),
             }
         )
     )
@@ -216,6 +224,16 @@ async def chat(
         # mypy 구조적 검사에서만 어긋나는 이유는 core/history.py의 Pool
         # 주석 참고(실측 확인된 mypy 한계).
         pool = get_write_pool()
+        history_metadata: dict[str, Any] = (
+            {
+                "status": response.status,
+                "final_result": (
+                    response.result.model_dump() if response.result else None
+                ),
+            }
+            if response.status is not None
+            else {}
+        )
         conversation_id = await save_conversation(
             pool,  # type: ignore[arg-type]
             user.username,
@@ -225,6 +243,7 @@ async def chat(
             response.cypher_query,
             response.sql_result.model_dump() if response.sql_result else None,
             response.graph_result.model_dump() if response.graph_result else None,
+            **history_metadata,
         )
         tool_plan = [str(tool).lower() for tool in (response.tool_plan or [])]
         route = (

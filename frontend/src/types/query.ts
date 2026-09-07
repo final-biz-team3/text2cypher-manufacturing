@@ -21,6 +21,22 @@ export interface RetryAttempt {
 
 // /chat 응답이나 대화기록 항목을 화면에 뿌릴 수 있게 정리한 형태
 export interface DisplayResult {
+  status?:
+    | 'answered'
+    | 'empty'
+    | 'clarification'
+    | 'unsupported'
+    | 'unanswerable'
+    | 'unverified'
+    | 'blocked'
+    | 'error'
+  sections?: {
+    id: string
+    title: string
+    columns: ResultColumn[]
+    rows: Record<string, string>[]
+    truncated: boolean
+  }[]
   query: string
   answer: string
   sql: string | null

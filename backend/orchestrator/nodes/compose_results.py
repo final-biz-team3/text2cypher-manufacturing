@@ -29,6 +29,7 @@ def make_compose_results_node(
             row_limit=configured_limit,
             result_transform=state.get("resultTransform"),
             semantic_catalog=semantic_catalog,
+            allow_independent_join=bool(state.get("query_intent")),
         )
         return {"composed_result": composed}
 

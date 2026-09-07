@@ -13,7 +13,35 @@ function toDisplayAnswer(answer: string | null | undefined): string {
 
 // /chat 응답과 저장된 대화기록을 동일한 화면 모델로 정규화한다.
 export function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayResult {
-  const rowsRaw = response.sql_result?.result ?? response.graph_result?.result ?? []
+  const isFinal = response.status != null
+  const renderRows = (items: Record<string, unknown>[]) =>
+    items.map((row) =>
+      Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [
+          key,
+          value === null
+            ? 'NULL'
+            : typeof value === 'object'
+              ? JSON.stringify(value)
+              : String(value),
+        ]),
+      ),
+    )
+  const sections = isFinal
+    ? (response.result?.sections ?? []).map((s) => ({
+        id: s.id,
+        title: s.title,
+        truncated: s.truncated,
+        columns: s.columns.map((c) => ({
+          key: c.id,
+          label: c.label + (c.unit ? ` (${c.unit})` : ''),
+        })),
+        rows: renderRows(s.rows),
+      }))
+    : undefined
+  const rowsRaw = isFinal
+    ? []
+    : (response.sql_result?.result ?? response.graph_result?.result ?? [])
   const columns: ResultColumn[] =
     rowsRaw.length > 0 ? Object.keys(rowsRaw[0]).map((key) => ({ key, label: key })) : []
   const rows = rowsRaw.map((row) =>
@@ -23,13 +51,15 @@ export function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayR
   )
 
   return {
+    status: response.status,
+    sections,
     query: response.query,
     answer: toDisplayAnswer(response.final_answer),
     sql: response.sql_query ?? null,
     cypher: response.cypher_query ?? null,
     columns,
     rows,
-    hasGraphResult: response.graph_result != null,
+    hasGraphResult: !isFinal && response.graph_result != null,
     graphRows: response.graph_result?.result ?? [],
     graphError: response.graph_result?.error ?? null,
     graphEmptyReason: response.graph_result?.empty_reason ?? null,

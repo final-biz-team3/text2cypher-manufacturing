@@ -199,6 +199,15 @@ def make_route_query_node(
                     catalog=catalog,
                     request_outputs=request_outputs,
                 )
+                if request_outputs is not None:
+                    missing = {
+                        tool for tool, outputs in request_outputs.items() if outputs
+                    } - set(plan["tool_plan"])
+                    if missing:
+                        raise ValueError(
+                            "Route omits requested output sources: "
+                            + ", ".join(sorted(missing))
+                        )
                 if (
                     expected_sources is not None
                     and plan.get("resultTransform") is None

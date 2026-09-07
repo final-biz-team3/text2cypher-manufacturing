@@ -56,7 +56,20 @@ async def save_conversation(
     cypher_query: str | None,
     sql_result: dict | None,
     graph_result: dict | None,
+    *,
+    status: str | None = None,
+    final_result: dict | None = None,
 ) -> int:
+    if status is not None:
+        # Versioned optional metadata inside the existing JSON column avoids a
+        # schema migration and preserves the exact final result on history reload.
+        sql_result = {
+            **(
+                sql_result
+                or {"result": None, "error": None, "attempts": [], "empty_reason": None}
+            ),
+            "_query_v2": {"status": status, "result": final_result},
+        }
     async with pool.connection() as conn:
         cursor = await conn.execute(
             "INSERT INTO app.conversation_history "
@@ -120,6 +133,7 @@ async def list_history(pool: Pool, user: CurrentUser) -> list[dict]:
             "sql_result": row[6],
             "graph_result": row[7],
             "created_at": row[8].isoformat(),
+            **((row[6] or {}).get("_query_v2", {}) if isinstance(row[6], dict) else {}),
         }
         for row in rows
     ]

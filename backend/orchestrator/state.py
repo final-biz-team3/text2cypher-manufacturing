@@ -64,6 +64,10 @@ class OrchestratorState(TypedDict):
     query: str
 
     query_intent: NotRequired[dict[str, Any]]
+    query_plan: NotRequired[dict[str, Any]]
+    step_results: NotRequired[dict[str, Any]]
+    status: NotRequired[str]
+    result: NotRequired[dict[str, Any] | None]
     output_definitions: NotRequired[list[dict[str, Any]]]
     validation_report: NotRequired[dict[str, Any]]
     clarification: NotRequired[dict[str, Any] | None]

@@ -6,7 +6,13 @@ import type { DisplayResult } from '@/types/query'
 
 type ResultEvidencePanelProps = Pick<
   DisplayResult,
-  'columns' | 'rows' | 'hasGraphResult' | 'graphRows' | 'graphError' | 'graphEmptyReason'
+  | 'columns'
+  | 'rows'
+  | 'hasGraphResult'
+  | 'graphRows'
+  | 'graphError'
+  | 'graphEmptyReason'
+  | 'sections'
 >
 
 export function ResultEvidencePanel({
@@ -16,11 +22,12 @@ export function ResultEvidencePanel({
   graphRows,
   graphError,
   graphEmptyReason,
+  sections,
 }: ResultEvidencePanelProps) {
   const [open, setOpen] = useState(false)
   const hasTable = columns.length > 0
 
-  if (!hasGraphResult && !hasTable) return null
+  if (!hasGraphResult && !hasTable && !sections?.length) return null
 
   return (
     <section className="overflow-hidden rounded-md border border-border bg-panel">
@@ -35,7 +42,9 @@ export function ResultEvidencePanel({
           <span>
             <span className="block text-[12.5px] font-semibold text-text">조회 근거 데이터</span>
             <span className="mt-0.5 block text-[10.5px] text-text-muted">
-              AI 정리 답변에 사용된 원본 표와 관계 그래프
+              {sections
+                ? '답변과 동일한 최종 조회 결과'
+                : 'AI 정리 답변에 사용된 원본 표와 관계 그래프'}
             </span>
           </span>
         </span>
@@ -50,6 +59,21 @@ export function ResultEvidencePanel({
             <PathGraphCanvas rows={graphRows} error={graphError} emptyReason={graphEmptyReason} />
           ) : null}
           {hasTable ? <ResultsTable columns={columns} rows={rows} /> : null}
+          {sections?.map((section) => (
+            <div key={section.id} className="flex flex-col gap-2">
+              <h3 className="text-sm font-semibold">{section.title}</h3>
+              {section.rows.length ? (
+                <ResultsTable columns={section.columns} rows={section.rows} />
+              ) : (
+                <p className="text-sm text-text-muted">지정한 조건에 해당하는 데이터가 없습니다.</p>
+              )}
+              {section.truncated && (
+                <p className="text-sm text-text-muted">
+                  조회 한도에 도달해 일부 결과만 표시합니다.
+                </p>
+              )}
+            </div>
+          ))}
         </div>
       ) : null}
     </section>

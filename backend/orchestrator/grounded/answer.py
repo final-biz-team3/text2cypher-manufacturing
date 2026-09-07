@@ -3,7 +3,6 @@
 import re
 from typing import Any
 
-from orchestrator.grounded.model_calls import typed_call
 from orchestrator.grounded.models import AnswerSelection, QueryIntent
 
 
@@ -106,44 +105,25 @@ async def grounded_answer(
         answer = "지정한 조건에 해당하는 조회 결과가 없습니다."
         metadata["mode"] = "fixed"
     else:
-        try:
-            metadata["attemptCount"] = 1
-            selection = await typed_call(
-                client,
-                AnswerSelection,
-                purpose="grounded.answer",
-                system=(
-                    "Select representative row indices and ALL requested fields present in each selected row. "
-                    "Use at most ten rows across sections, cover each nonempty section. "
-                    "Do not author facts, labels, units or values. Return references only."
-                ),
-                payload={
-                    "outputs": [o.model_dump() for o in intent.outputs],
-                    "sections": pools,
-                },
-            )
-            answer = render_selection(selection, pools, intent)
-        except Exception:
-            # Deterministic selection preserves exact same-row field relationships.
-            items = []
+        # Preserve query ordering and all small result sets. Selection needs no
+        # model call: references and values are already available and verified.
+        items: list[dict[str, Any]] = []
+        for row_index in range(10):
             for section, rows in pools.items():
-                if rows:
+                if row_index < len(rows) and len(items) < 10:
                     items.append(
                         {
                             "section": section,
-                            "row_index": 0,
+                            "row_index": row_index,
                             "fields": [
-                                o.alias for o in intent.outputs if o.alias in rows[0]
+                                o.alias
+                                for o in intent.outputs
+                                if o.alias in rows[row_index]
                             ],
                         }
                     )
-            selection = AnswerSelection.model_validate({"items": items})
-            answer = render_selection(selection, pools, intent)
-            metadata.update(
-                mode="fallback",
-                fallbackReason="invalid_selection",
-                validationRejected=True,
-            )
+        selection = AnswerSelection.model_validate({"items": items})
+        answer = render_selection(selection, pools, intent)
         metadata["references"] = [item.model_dump() for item in selection.items]
     conditions = [
         r.evidence.text

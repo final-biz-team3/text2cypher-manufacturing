@@ -186,6 +186,7 @@ def _compose_joined(
     sources: list[tuple[list[dict[str, Any]], EmptyReason | None, bool]],
     *,
     row_limit: int,
+    independent_join: bool = False,
 ) -> ComposedResult:
     mode: CompositionMode = "joined"
     left_rows, left_reason, left_truncated = sources[0]
@@ -200,6 +201,12 @@ def _compose_joined(
     left_keyed: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     left_domain: set[tuple[Any, ...]] = set()
     for index, row in enumerate(left_rows):
+        if (
+            independent_join
+            and all(k in row for k in join_keys)
+            and any(row[k] is None for k in join_keys)
+        ):
+            continue
         key, error = _row_key(
             row,
             join_keys=join_keys,
@@ -214,6 +221,12 @@ def _compose_joined(
 
     right_by_key: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
     for index, row in enumerate(right_rows):
+        if (
+            independent_join
+            and all(k in row for k in join_keys)
+            and any(row[k] is None for k in join_keys)
+        ):
+            continue
         key, error = _row_key(
             row,
             join_keys=join_keys,
@@ -223,7 +236,7 @@ def _compose_joined(
         if error is not None:
             return _failure(mode, error)
         assert key is not None
-        if key not in left_domain:
+        if key not in left_domain and not independent_join:
             return _failure(
                 mode,
                 f"{subqueries[1]['id']}({subqueries[1]['tool']})의 join key "
@@ -340,6 +353,7 @@ def compose_results(
     row_limit: int,
     result_transform: BomShortageTransform | None = None,
     semantic_catalog: QuerySemanticCatalog | None = None,
+    allow_independent_join: bool = False,
 ) -> ComposedResult:
     """실행 계획 순서와 join 계약에 따라 source 결과를 조합한다.
 
@@ -439,4 +453,10 @@ def compose_results(
             "truncated": any(truncated for _, _, truncated in sources),
         }
 
-    return _compose_joined(subqueries, sources, row_limit=row_limit)
+    return _compose_joined(
+        subqueries,
+        sources,
+        row_limit=row_limit,
+        independent_join=allow_independent_join
+        and all(not s["dependsOn"] and not s.get("inputBindings") for s in subqueries),
+    )

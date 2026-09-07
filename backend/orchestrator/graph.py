@@ -68,20 +68,31 @@ def build_orchestrator_graph(
     output_catalog = build_output_catalog(sql_schema, cypher_schema)
     if os.getenv("GROUNDED_QUERY_ENABLED", "false").lower() == "true":
         from orchestrator.grounded.pipeline import build_grounded_node
+        from orchestrator.grounded.plan_pipeline import make_plan_node
 
         grounded_graph = StateGraph(OrchestratorState)
         grounded_graph.add_node(
             "grounded_query",
             cast(
                 Any,
-                build_grounded_node(
-                    openai_client,
-                    pool,
-                    sql_schema=sql_schema,
-                    sql_schema_text=sql_schema_text,
-                    graph_schema=cypher_schema,
-                    graph_schema_text=cypher_schema_text,
-                    catalog=output_catalog,
+                (
+                    build_grounded_node(
+                        openai_client,
+                        pool,
+                        sql_schema=sql_schema,
+                        sql_schema_text=sql_schema_text,
+                        graph_schema=cypher_schema,
+                        graph_schema_text=cypher_schema_text,
+                        catalog=output_catalog,
+                    )
+                    if os.getenv("GROUNDED_PLAN_VERSION", "2") == "1"
+                    else make_plan_node(
+                        openai_client,
+                        pool,
+                        sql_schema=sql_schema,
+                        graph_schema=cypher_schema,
+                        catalog=output_catalog,
+                    )
                 ),
             ),
         )
