@@ -312,6 +312,18 @@ def test_physical_context_excludes_question_shapes():
     assert not any("resultShapes" in source for source in knowledge.sources)
 
 
+def test_prompt_keeps_whole_schema_without_duplicate_field_definitions():
+    import json
+
+    knowledge = load_knowledge()
+    payload = knowledge.prompt_payload()
+    assert set(payload["physical_fields"]) == knowledge.fields
+    for path in ("schema/sql_schema.yaml", "schema/graph_schema.yaml"):
+        assert payload["sources"][path] == json.loads(knowledge.sources[path])
+    assert not set(payload["sources"]) & knowledge.fields
+    assert len(json.dumps(payload)) < len(json.dumps(knowledge.sources))
+
+
 def test_semantics_across_synthetic_database_variants():
     # Distinguish >= from >, anti-join from inner join, and aggregate grain.
     for extra in ([], [(4, "A", 5)], [(4, "B", None), (5, "B", 8)]):
@@ -568,3 +580,31 @@ async def test_strict_guessed_name_does_not_force_clarification(
     result = await make_coordinator(None, knowledge, strict, modern)({"query": "q"})
     assert result["query_strategy"] == "pr61"
     modern.assert_awaited_once()
+
+
+async def test_total_timeout_retains_the_active_candidate_phase(
+    monkeypatch, intent, knowledge
+):
+    monkeypatch.setenv("GROUNDED_QUERY_TIMEOUT_SECONDS", "0.05")
+    monkeypatch.setenv("GROUNDED_CANDIDATE_TIMEOUT_SECONDS", "1")
+    monkeypatch.setattr(
+        "orchestrator.grounded.pipeline.interpret", AsyncMock(return_value=intent)
+    )
+    calls = 0
+
+    async def review(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"accepted": False}
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("orchestrator.grounded.pipeline.validate_candidate", review)
+    run = AsyncMock(return_value=candidate())
+    result = await make_coordinator(None, knowledge, run, run)({"query": "q"})
+    assert result["query_failure"]["code"] == "QUERY_TIMEOUT"
+    reports = result["validation_report"]["candidates"]
+    assert len(reports) == 2
+    assert reports[-1]["phase"] == "validation"
+    assert reports[-1]["error_type"] == "CancelledError"
+    assert reports[-1]["elapsed_ms"] > 0

@@ -79,8 +79,8 @@ def make_coordinator(
     *,
     trace: ContextVar[dict[str, Any]] | None = None,
 ) -> Any:
-    timeout = _positive_timeout("GROUNDED_QUERY_TIMEOUT_SECONDS", "50")
-    candidate_timeout = _positive_timeout("GROUNDED_CANDIDATE_TIMEOUT_SECONDS", "20")
+    timeout = _positive_timeout("GROUNDED_QUERY_TIMEOUT_SECONDS", "120")
+    candidate_timeout = _positive_timeout("GROUNDED_CANDIDATE_TIMEOUT_SECONDS", "45")
 
     async def process(state: dict[str, Any]) -> dict[str, Any]:
         started = perf_counter()
@@ -140,20 +140,21 @@ def make_coordinator(
                     evidence: dict[str, Any] = {}
                     trace_token = trace.set(evidence) if trace else None
                     execution_token = grounded_execution.set(True)
+                    candidate_started = perf_counter()
+                    report: dict[str, Any] = {
+                        "strategy": strategy,
+                        "accepted": False,
+                        "reviewed": False,
+                        "phase": "generation",
+                    }
+                    reports.append(report)
                     try:
                         async with asyncio.timeout(candidate_timeout):
                             candidate = await run(inputs)
                             candidate["execution_evidence"] = evidence
                             failure = candidate.get("query_failure") or {}
                             if failure.get("kind") == "infrastructure":
-                                reports.append(
-                                    {
-                                        "strategy": strategy,
-                                        "accepted": False,
-                                        "reviewed": False,
-                                        "failure_kind": "infrastructure",
-                                    }
-                                )
+                                report["failure_kind"] = "infrastructure"
                                 return {
                                     **common,
                                     **_failure(
@@ -162,16 +163,25 @@ def make_coordinator(
                                         kind="infrastructure",
                                     ),
                                 }
-                            report = await validate_candidate(
-                                client, query, intent, candidate, knowledge
+                            report["phase"] = "validation"
+                            report.update(
+                                await validate_candidate(
+                                    client, query, intent, candidate, knowledge
+                                )
                             )
+                            report["phase"] = "completed"
+                    except asyncio.CancelledError:
+                        report["error_type"] = "CancelledError"
+                        raise
                     except Exception as exc:
                         candidate = {}
-                        report = {
-                            "accepted": False,
-                            "error_type": type(exc).__name__,
-                            "reviewed": False,
-                        }
+                        report.update(
+                            {
+                                "accepted": False,
+                                "error_type": type(exc).__name__,
+                                "reviewed": False,
+                            }
+                        )
                         if isinstance(exc, EntityAmbiguousError) and (
                             strategy == "pr61"
                             or exc.lookup_name.casefold()
@@ -194,11 +204,12 @@ def make_coordinator(
                         ):
                             raise
                     finally:
+                        report["elapsed_ms"] = round(
+                            (perf_counter() - candidate_started) * 1000, 3
+                        )
                         grounded_execution.reset(execution_token)
                         if trace is not None and trace_token is not None:
                             trace.reset(trace_token)
-                    report["strategy"] = strategy
-                    reports.append(report)
                     if report["accepted"]:
                         answer = await grounded_answer(client, intent, candidate)
                         allowed = {

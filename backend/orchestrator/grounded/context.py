@@ -22,6 +22,20 @@ class KnowledgeContext:
     def render(self) -> str:
         return json.dumps(self.sources, ensure_ascii=False)
 
+    def prompt_payload(self) -> dict[str, Any]:
+        # The full documents already contain each field's definition. Keep every
+        # field and relationship, but avoid sending those definitions twice or
+        # embedding JSON documents as escaped JSON strings.
+        documents = {}
+        for key, value in self.sources.items():
+            if key in self.fields:
+                continue
+            try:
+                documents[key] = json.loads(value)
+            except json.JSONDecodeError:
+                documents[key] = value
+        return {"sources": documents, "physical_fields": sorted(self.fields)}
+
     def validate_evidence(self, evidence: Evidence, query: str) -> None:
         source = (
             query

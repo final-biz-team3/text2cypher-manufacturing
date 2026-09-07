@@ -38,7 +38,7 @@ async def interpret(
         QueryIntent,
         purpose="grounded.interpret",
         system=INSTRUCTIONS,
-        payload={"question": query, "sources": knowledge.sources},
+        payload={"question": query, **knowledge.prompt_payload()},
     )
     knowledge.validate_intent(intent, query)
     return intent
