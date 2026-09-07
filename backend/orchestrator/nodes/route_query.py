@@ -120,12 +120,50 @@ def make_route_query_node(
     system_content = _SYSTEM_PROMPT + (f"\n\n{context}" if context else "")
 
     async def route_query(state: OrchestratorState) -> dict[str, Any]:
+        request_outputs = None
+        active_format = response_format
+        active_system = system_content
+        if state.get("query_intent"):
+            from orchestrator.grounded.models import QueryIntent
+
+            intent = QueryIntent.model_validate(state["query_intent"])
+            request_outputs = {
+                tool: [o.alias for o in intent.outputs if o.tool == tool]
+                for tool in ("sql", "graph")
+            }
+            active_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "manufacturing_route_draft",
+                    "strict": True,
+                    "schema": route_draft_json_schema(
+                        shared_join_aliases,
+                        catalog=catalog,
+                        request_outputs=request_outputs,
+                    ),
+                },
+            }
+            active_system = system_content.replace(
+                "catalog alias여야 하며 identity alias로 제한되지 않습니다.",
+                "catalog 또는 이번 요청의 source별 출력 정의에 있는 alias여야 합니다.",
+            )
         user_content = json.dumps(
-            {"query": state["query"], "entity": state.get("entity")},
+            {
+                "query": state["query"],
+                "entity": state.get("entity"),
+                **(
+                    {
+                        "interpretation": state["query_intent"],
+                        "candidate_feedback": state.get("candidate_feedback"),
+                    }
+                    if state.get("query_intent")
+                    else {}
+                ),
+            },
             ensure_ascii=False,
         )
         messages = [
-            {"role": "system", "content": system_content},
+            {"role": "system", "content": active_system},
             {"role": "user", "content": user_content},
         ]
         last_content = ""
@@ -133,7 +171,7 @@ def make_route_query_node(
         raw_route_draft: dict[str, Any] | None = None
         expected_sources = (
             catalog.infer_required_sources(state["query"], state.get("entity"))
-            if catalog is not None
+            if catalog is not None and not state.get("query_intent")
             else None
         )
         for attempt in range(2):
@@ -144,7 +182,7 @@ def make_route_query_node(
                 openai_client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    response_format=response_format,
+                    response_format=active_format,
                     reasoning_effort=reasoning_effort,
                 ),
             )
@@ -159,6 +197,7 @@ def make_route_query_node(
                     state["query"],
                     shared_join_aliases=shared_join_aliases,
                     catalog=catalog,
+                    request_outputs=request_outputs,
                 )
                 if (
                     expected_sources is not None

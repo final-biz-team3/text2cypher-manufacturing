@@ -33,6 +33,8 @@ def build_strict_query(
     pool: Any,
     *,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
+    execute_sql_fn: Any = execute_sql,
+    execute_cypher_fn: Any = execute_cypher,
 ) -> Any:
     schema_dir = Path(__file__).resolve().parent / "schema"
     sql_schema = load_sql_schema(schema_dir / "sql_schema.yaml")
@@ -41,13 +43,13 @@ def build_strict_query(
     catalog = build_output_catalog(sql_schema, graph_schema)
     sql_agent = make_sql_agent_subgraph(
         openai_client,
-        execute_sql=execute_sql,
+        execute_sql=execute_sql_fn,
         sql_schema=sql_schema,
         reasoning_effort=reasoning_effort,
     )
     graph_agent = make_cypher_agent_subgraph(
         openai_client,
-        execute_cypher=execute_cypher,
+        execute_cypher=execute_cypher_fn,
         query_policy=graph_schema.query_policy,
         graph_schema=graph_schema,
         reasoning_effort=reasoning_effort,

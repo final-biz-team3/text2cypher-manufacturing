@@ -4,7 +4,7 @@ from typing import Any
 import neo4j.time
 from fastapi import APIRouter, Depends, Request
 from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 from core.auth import CurrentUser, get_current_user
 from core.history import save_conversation
@@ -17,6 +17,7 @@ from core.postgres import get_pool, get_write_pool
 from core.query_failure_reviews import create_failure_review
 from orchestrator.errors import EntityNotFoundError
 from orchestrator.graph import build_orchestrator_graph
+from orchestrator.grounded.models import Clarification
 from orchestrator.nodes.generate_answer import generate_failure_answer
 from orchestrator.nodes.plan_outputs import OutputPlanningError
 from orchestrator.nodes.resolve_entity import EntityExtractionError
@@ -109,6 +110,14 @@ class ChatResponse(BaseModel):
     sql_result: QueryOutcome | None = None
     graph_result: QueryOutcome | None = None
     final_answer: str | None = None
+    clarification: Clarification | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_response(self, handler: Any) -> dict[str, Any]:
+        document: dict[str, Any] = handler(self)
+        if self.clarification is None:
+            document.pop("clarification", None)
+        return document
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -196,6 +205,7 @@ async def chat(
                     else result.get("graph_result")
                 ),
                 "final_answer": result.get("final_answer"),
+                "clarification": result.get("clarification"),
             }
         )
     )

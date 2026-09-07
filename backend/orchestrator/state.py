@@ -53,6 +53,7 @@ class AnswerGenerationMetadata(TypedDict):
     attemptCount: int
     fallbackReason: str | None
     validationRejected: bool
+    references: NotRequired[list[dict[str, Any]]]
 
 
 # query만 필수이고 나머지는 그래프 실행 중 노드가 채워나가므로 NotRequired로 선언한다
@@ -61,6 +62,13 @@ class AnswerGenerationMetadata(TypedDict):
 class OrchestratorState(TypedDict):
     # 사용자 자연어 질의 (필수)
     query: str
+
+    query_intent: NotRequired[dict[str, Any]]
+    output_definitions: NotRequired[list[dict[str, Any]]]
+    validation_report: NotRequired[dict[str, Any]]
+    clarification: NotRequired[dict[str, Any] | None]
+    candidate_feedback: NotRequired[dict[str, Any]]
+    execution_evidence: NotRequired[dict[str, Any]]
 
     # 엄격한 질의 경로의 수용 여부. 실패 시 #61 경로는 원질문에서 다시 시작한다.
     query_strategy: NotRequired[Literal["strict", "pr61"]]

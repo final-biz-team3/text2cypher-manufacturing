@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -65,6 +66,28 @@ def build_orchestrator_graph(
     cypher_query_policy = cypher_schema.query_policy
     assert cypher_query_policy is not None
     output_catalog = build_output_catalog(sql_schema, cypher_schema)
+    if os.getenv("GROUNDED_QUERY_ENABLED", "false").lower() == "true":
+        from orchestrator.grounded.pipeline import build_grounded_node
+
+        grounded_graph = StateGraph(OrchestratorState)
+        grounded_graph.add_node(
+            "grounded_query",
+            cast(
+                Any,
+                build_grounded_node(
+                    openai_client,
+                    pool,
+                    sql_schema=sql_schema,
+                    sql_schema_text=sql_schema_text,
+                    graph_schema=cypher_schema,
+                    graph_schema_text=cypher_schema_text,
+                    catalog=output_catalog,
+                ),
+            ),
+        )
+        grounded_graph.add_edge(START, "grounded_query")
+        grounded_graph.add_edge("grounded_query", END)
+        return grounded_graph.compile()
     sql_agent = make_sql_agent_subgraph(
         openai_client,
         execute_sql=execute_sql,

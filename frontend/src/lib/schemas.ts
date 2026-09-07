@@ -38,6 +38,13 @@ export const ChatResponseSchema = z.object({
   sql_result: QueryOutcomeSchema.optional(),
   graph_result: QueryOutcomeSchema.optional(),
   final_answer: z.string().nullable().optional(),
+  clarification: z
+    .object({
+      question: z.string().min(1),
+      options: z.array(z.string()).max(3),
+    })
+    .nullable()
+    .optional(),
 })
 export type ChatResponse = z.infer<typeof ChatResponseSchema>
 

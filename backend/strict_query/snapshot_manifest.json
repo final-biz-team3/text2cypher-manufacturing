@@ -47,7 +47,7 @@
     "snapshot/orchestrator/subgraphs/retry_agent.py": {
       "source": "backend/orchestrator/subgraphs/retry_agent.py",
       "sourceSha256": "a75bbef1f4fcf5366bf8b81a8b026825a59eba1bc7167d0f2c85814bbfa422a8",
-      "packagedSha256": "79ea6703863e933e20753b3f950238ab537c5aa01f54a80c2e3a2d50f4ca5035"
+      "packagedSha256": "02250d9649d8e9d8213035985d3f5a9f74de0d13bab9b6aee7584da64d4562bd"
     },
     "snapshot/orchestrator/state.py": {
       "source": "backend/orchestrator/state.py",
@@ -170,7 +170,8 @@
     "Shared current read-only execution and guard allowlists; no historical auth, API, frontend or answer generation.",
     "EntityAmbiguousError lookup_name argument supplied for current exception compatibility.",
     "FailureStage includes current result stage for shared QueryFailure typing.",
-    "Retry attempt errors use existing safe_failure user_safe_reason; original internal retry feedback unchanged."
+    "Retry attempt errors use existing safe_failure user_safe_reason; original internal retry feedback unchanged.",
+    "Experimental grounded execution ContextVar preserves empty results without regeneration; flag-off snapshot behavior is unchanged."
   ],
   "hashEncoding": "UTF-8 with LF line endings"
 }

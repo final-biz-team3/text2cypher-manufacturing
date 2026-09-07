@@ -6,6 +6,8 @@ import { SchemaSidebar } from '@/components/layout/SchemaSidebar'
 import { QueryInputBar } from '@/components/query/QueryInputBar'
 import { NaturalLanguageAnswerBox } from '@/components/query/NaturalLanguageAnswerBox'
 import { ClarificationPrompt } from '@/components/query/ClarificationPrompt'
+import { QueryClarification } from '@/components/query/QueryClarification'
+import { clarifyQuery } from '@/lib/queryClarification'
 import { GeneratedQueryPanel } from '@/components/result/GeneratedQueryPanel'
 import { ResultEvidencePanel } from '@/components/result/ResultEvidencePanel'
 import { useUiStore } from '@/store/useUiStore'
@@ -92,6 +94,12 @@ export function Dashboard() {
   const [pendingClarification, setPendingClarification] = useState<PendingClarification | null>(
     null,
   )
+  const [queryClarification, setQueryClarification] = useState<{
+    original: string
+    question: string
+    options: string[]
+    confirmed: ConfirmedEntity[]
+  } | null>(null)
 
   // sessionStorage에 이전 성공·오류 화면이 남아 있어도 첫 페인트 전에 질문 화면으로
   // 초기화한다. useEffect보다 먼저 실행해 예시 질문이 잠깐 보였다 사라지는 현상을 막는다.
@@ -124,6 +132,7 @@ export function Dashboard() {
   // confirmedSoFar는 직전 라운드까지 사용자가 확정한 후보들(모호한 이름이
   // 여러 개면 한 번에 하나씩 확정되므로 누적해서 다시 보낸다).
   const runChatQuery = async (question: string, confirmedSoFar: ConfirmedEntity[]) => {
+    setQueryClarification(null)
     setActiveScreen('loading')
     try {
       const response = await sendChatQuery(
@@ -131,6 +140,17 @@ export function Dashboard() {
         confirmedSoFar.length === 0 ? undefined : confirmedSoFar,
       )
       setPendingClarification(null)
+      if (response.clarification) {
+        setQueryClarification({
+          original: question,
+          ...response.clarification,
+          confirmed: confirmedSoFar,
+        })
+        setResult(null)
+        setActiveScreen('clarify')
+        refreshHistory()
+        return
+      }
       setResult(toDisplayResult(response))
       setActiveScreen('success')
       refreshHistory()
@@ -171,12 +191,14 @@ export function Dashboard() {
   }
 
   const handleCancelClarification = () => {
+    setQueryClarification(null)
     setPendingClarification(null)
     setActiveScreen('idle')
   }
 
   // 대화기록 목록에서 항목을 클릭하면 재호출 없이 저장된 내용을 그대로 다시 보여준다
   const handleSelectHistoryItem = (item: HistoryEntry) => {
+    setQueryClarification(null)
     setQueryText(item.query)
     setResult(toDisplayResult(item))
     setActiveScreen('success')
@@ -271,7 +293,24 @@ export function Dashboard() {
               <div className="w-full max-w-2xl">{queryInputBar}</div>
             </div>
           )}
-          {activeScreen === 'clarify' && pendingClarification && (
+          {activeScreen === 'clarify' && queryClarification && (
+            <QueryClarification
+              key={queryClarification.original + queryClarification.question}
+              question={queryClarification.question}
+              options={queryClarification.options}
+              onCancel={handleCancelClarification}
+              onAnswer={(answer) => {
+                const question = clarifyQuery(
+                  queryClarification.original,
+                  queryClarification.question,
+                  answer,
+                )
+                setQueryText(question)
+                void runChatQuery(question, queryClarification.confirmed)
+              }}
+            />
+          )}
+          {activeScreen === 'clarify' && !queryClarification && pendingClarification && (
             <div className="flex flex-col gap-4">
               {queryInputBar}
               <ClarificationPrompt

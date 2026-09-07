@@ -464,6 +464,10 @@ def make_plan_outputs_node(
     """subquery마다 최대 한 번 보정 재시도하는 output planner를 생성한다."""
 
     async def plan_outputs(state: OrchestratorState) -> dict[str, Any]:
+        if state.get("query_intent") and not state.get("resultTransform"):
+            from orchestrator.grounded.planning import plan_request_outputs
+
+            return plan_request_outputs(cast(Any, state))
         route_draft = state.get("routeDraft")
         if not isinstance(route_draft, dict):
             raise ValueError("routeDraft is required for output planning")

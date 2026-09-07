@@ -467,6 +467,19 @@ def make_retry_agent_subgraph(
                 result = executed
                 truncated = False
 
+            from orchestrator.grounded.runtime import grounded_execution
+
+            if not result and grounded_execution.get():
+                return {
+                    "result": [],
+                    "error": None,
+                    "retry_feedback": None,
+                    "empty_reason": NO_DATA,
+                    "attempts": [*attempts, {"query": query_text, "error": None}],
+                    "retryable": False,
+                    "truncated": truncated,
+                    "failure": None,
+                }
             if not result:
                 can_retry_empty = (
                     not state.get("empty_retried", False) and attempt < MAX_ATTEMPTS

@@ -79,6 +79,7 @@ def route_draft_json_schema(
     shared_join_aliases: set[str] | frozenset[str],
     *,
     catalog: QuerySemanticCatalog | None = None,
+    request_outputs: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """LLM 경계 schema를 구성한다. tool_plan은 의도적으로 이후에 파생한다."""
     join_aliases = sorted(shared_join_aliases)
@@ -91,6 +92,8 @@ def route_draft_json_schema(
         if catalog is not None
         else join_aliases
     )
+    if request_outputs:
+        source_outputs = sorted(set(source_outputs).union(*request_outputs.values()))
     return {
         "type": "object",
         "properties": {
@@ -349,6 +352,7 @@ def validate_route_subqueries(
     *,
     shared_join_aliases: set[str] | frozenset[str] = DEFAULT_SHARED_JOIN_ALIASES,
     catalog: QuerySemanticCatalog | None = None,
+    request_outputs: dict[str, list[str]] | None = None,
 ) -> list[RouteSubquery]:
     """모델 라우팅 경계를 검증하고 executor binding으로 컴파일한다."""
     if not isinstance(subqueries, list) or not subqueries:
@@ -428,9 +432,13 @@ def validate_route_subqueries(
                     f"subquery {item['id']!r} binding {source!r} is not in dependsOn"
                 )
             producer = by_id[dependency_id]
-            if catalog is not None and source_output not in catalog.allowed_aliases(
-                producer["tool"]
-            ):
+            allowed = (
+                set(catalog.allowed_aliases(producer["tool"])) if catalog else set()
+            )
+            allowed.update((request_outputs or {}).get(producer["tool"], []))
+            if (
+                catalog is not None or request_outputs is not None
+            ) and source_output not in allowed:
                 raise ValueError(
                     f"binding source {source_output!r} is not owned by "
                     f"{producer['tool']} producer {dependency_id!r}"
@@ -459,6 +467,7 @@ def parse_route_draft(
     *,
     shared_join_aliases: set[str] | frozenset[str] = DEFAULT_SHARED_JOIN_ALIASES,
     catalog: QuerySemanticCatalog | None = None,
+    request_outputs: dict[str, list[str]] | None = None,
 ) -> RouteDraft:
     """엄격한 route 객체 하나를 파싱하고 DAG에서 실행 순서를 파생한다."""
     raw = json.loads(content)
@@ -470,6 +479,7 @@ def parse_route_draft(
         raw["subqueries"],
         shared_join_aliases=shared_join_aliases,
         catalog=catalog,
+        request_outputs=request_outputs,
     )
     transform = _validate_transform_shape(raw["resultTransform"])
     tool_plan = derive_tool_plan(subqueries)
