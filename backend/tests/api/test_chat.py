@@ -33,6 +33,22 @@ from tests.mocks.openai import (
 )
 from tests.mocks.postgres import MockAsyncPostgresPool, MockAsyncWritePool
 
+
+@pytest.fixture(autouse=True)
+def use_pr61_query_path(monkeypatch):
+    """이 파일의 기존 API 계약 검사는 #61 대체 경로를 사용한다.
+
+    엄격한 경로 연결과 상태 격리는 test_strict_query에서 별도로 검증한다.
+    """
+
+    async def defer_to_pr61(_state):
+        return {"query_strategy": "pr61"}
+
+    monkeypatch.setattr(
+        graph_module, "make_strict_query_node", lambda *a, **kw: defer_to_pr61
+    )
+
+
 _ANSWER = "요청하신 집계 결과를 확인했습니다.\n\n정가는 약 $2,384입니다."
 _ANSWER_RESPONSE_JSON = json.dumps(
     {

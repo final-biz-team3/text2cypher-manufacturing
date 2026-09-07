@@ -1,0 +1,176 @@
+{
+  "revision": "61169c23514f3b497e521ff97a1917f50bfd681e",
+  "pr": 47,
+  "shared_runtime": [
+    "core",
+    "orchestrator.guards",
+    "orchestrator.execution",
+    "orchestrator.errors",
+    "orchestrator.query_failures"
+  ],
+  "files": {
+    "snapshot/agents/cypher/schema/serializer.py": {
+      "source": "backend/agents/cypher/schema/serializer.py",
+      "sourceSha256": "0b4235f8b8475bba210fb764813446817e482497a417f36afd88db7fdc7ac952",
+      "packagedSha256": "adbff2238cac9e887b78a173de5f8c71bdf34a762ebf7bf5b2b96ca0bcd55822"
+    },
+    "snapshot/agents/cypher/schema/models.py": {
+      "source": "backend/agents/cypher/schema/models.py",
+      "sourceSha256": "ee61de1514c63dcb319e04cfd85127059c916a6e9741472aa087f6879e5544dc",
+      "packagedSha256": "ee61de1514c63dcb319e04cfd85127059c916a6e9741472aa087f6879e5544dc"
+    },
+    "snapshot/agents/cypher/schema/loader.py": {
+      "source": "backend/agents/cypher/schema/loader.py",
+      "sourceSha256": "b28abd044878b2b8a4fe928c19eedfbc6f7643d92b96e665a15689166f4f5a9b",
+      "packagedSha256": "ae6175ea92de636b1ea3e400af73d72090426836fac1218103d8dd9d390b4b49"
+    },
+    "snapshot/agents/sql/schema/serializer.py": {
+      "source": "backend/agents/sql/schema/serializer.py",
+      "sourceSha256": "546026bce8f08ca5fe0bf6e272fd4f307fb9a5c537759c96b0395cf487e530c8",
+      "packagedSha256": "79d0fde51fb3fb5fd8e9db705cec749521be49e923b80b5801ec41c5a871b028"
+    },
+    "snapshot/agents/sql/schema/models.py": {
+      "source": "backend/agents/sql/schema/models.py",
+      "sourceSha256": "e58f6773cbf67c5915f8ea961b351abc67d23a379f2a5213aabe6a270e8e1702",
+      "packagedSha256": "e58f6773cbf67c5915f8ea961b351abc67d23a379f2a5213aabe6a270e8e1702"
+    },
+    "snapshot/agents/sql/schema/loader.py": {
+      "source": "backend/agents/sql/schema/loader.py",
+      "sourceSha256": "2cebc4f6055152fb8ae938d87e3fca32c6fc5def42ba9dad43d67fac8df36a19",
+      "packagedSha256": "ab1404c172f4a449cc50dcb750afadad8ad0ca428f3e56aa1746930043431df3"
+    },
+    "snapshot/orchestrator/subgraphs/cypher_agent.py": {
+      "source": "backend/orchestrator/subgraphs/cypher_agent.py",
+      "sourceSha256": "f171aaf68a5a845c53bbb06503d664917f042582250b60a6a20e5bf3754e2833",
+      "packagedSha256": "fe99a377a7c27b0dc5ebadd423a4288f0dccf50b517833c39f4424119aa335ea"
+    },
+    "snapshot/orchestrator/subgraphs/retry_agent.py": {
+      "source": "backend/orchestrator/subgraphs/retry_agent.py",
+      "sourceSha256": "a75bbef1f4fcf5366bf8b81a8b026825a59eba1bc7167d0f2c85814bbfa422a8",
+      "packagedSha256": "79ea6703863e933e20753b3f950238ab537c5aa01f54a80c2e3a2d50f4ca5035"
+    },
+    "snapshot/orchestrator/state.py": {
+      "source": "backend/orchestrator/state.py",
+      "sourceSha256": "d93483f746bd395ccad09ebd7fe90b39157d90f062c93376ad6f1e1897f4ba7c",
+      "packagedSha256": "862f6bbdcfee0d666e54b3f4d89717cbb23902c5f7482411b5710a8085b230a3"
+    },
+    "snapshot/orchestrator/planning.py": {
+      "source": "backend/orchestrator/planning.py",
+      "sourceSha256": "b455063fb77b3766141206fa95e49594a024218a9c3b3265138a45cb2dee8828",
+      "packagedSha256": "b455063fb77b3766141206fa95e49594a024218a9c3b3265138a45cb2dee8828"
+    },
+    "snapshot/orchestrator/query_conditions.py": {
+      "source": "backend/orchestrator/query_conditions.py",
+      "sourceSha256": "9d837867ff6e77b6f3834e618afc3564bba32bd0a68e64775722e4d31cc9ca6d",
+      "packagedSha256": "a56eec3cdc36323b43e2529881bd17fed7a7e87889cd9b8358d299ef662538d9"
+    },
+    "snapshot/orchestrator/numeric_literals.py": {
+      "source": "backend/orchestrator/numeric_literals.py",
+      "sourceSha256": "d8daebbc501ada3ef10a5ce890ee039b899f6aad5a2e1ae401bff5884b084374",
+      "packagedSha256": "d8daebbc501ada3ef10a5ce890ee039b899f6aad5a2e1ae401bff5884b084374"
+    },
+    "snapshot/agents/generator.py": {
+      "source": "backend/agents/generator.py",
+      "sourceSha256": "d2ec0604412ebe39f582a7eec5e9515875567622881d4c371cef84ffb1d92251",
+      "packagedSha256": "d2ec0604412ebe39f582a7eec5e9515875567622881d4c371cef84ffb1d92251"
+    },
+    "snapshot/agents/cypher/generator.py": {
+      "source": "backend/agents/cypher/generator.py",
+      "sourceSha256": "062b0e8e16c63174110d15f16ba399dcaece2ad4503d91319f5c69e126768697",
+      "packagedSha256": "9abecb080ed803570b0ba4416321b5dd5aa342717d6b8c51b224e0acc8573341"
+    },
+    "snapshot/agents/cypher/prompt.py": {
+      "source": "backend/agents/cypher/prompt.py",
+      "sourceSha256": "92613e41678fc39f5216d55b112acd0c9ccb2b0b22c2b747d348a038bfbf9747",
+      "packagedSha256": "7d87e0cb8d273e53b4d1e720e33504d68a39ea0b200a9afaeef2d81fe98857c4"
+    },
+    "snapshot/agents/prompt.py": {
+      "source": "backend/agents/prompt.py",
+      "sourceSha256": "6d205ae8197f5fafcc4e7efa1776d3d3508c1cbe234229523bc3495e025c4645",
+      "packagedSha256": "6d205ae8197f5fafcc4e7efa1776d3d3508c1cbe234229523bc3495e025c4645"
+    },
+    "snapshot/orchestrator/subgraphs/sql_agent.py": {
+      "source": "backend/orchestrator/subgraphs/sql_agent.py",
+      "sourceSha256": "d0503b2f4b7cb7a23c0332fd5f40e743ffe7e073fbc1585db764753f473d72f9",
+      "packagedSha256": "69a0fe7ea1b5ea8eafbaa4c578737a688420dbd0c67603c908f8b038b8ae5a61"
+    },
+    "snapshot/agents/sql/generator.py": {
+      "source": "backend/agents/sql/generator.py",
+      "sourceSha256": "75b4542993d61140663d67901afa1565b8edfba9a11c07406663c3c5a84af64c",
+      "packagedSha256": "38b003e0335d0cf317833a83e3111be618a7425e7de8dfae76f5233846a3816f"
+    },
+    "snapshot/agents/sql/prompt.py": {
+      "source": "backend/agents/sql/prompt.py",
+      "sourceSha256": "54c98727381a2026768152b1d79600a3d1092cedcaaa8fea2390b333716c36cd",
+      "packagedSha256": "cd5272b62b509b37d6c8b67530106af1d3a5c99ef3494dac5db5ee9cf20af916"
+    },
+    "snapshot/orchestrator/output_catalog.py": {
+      "source": "backend/orchestrator/output_catalog.py",
+      "sourceSha256": "0e32927ccb7bfdfb4ce24eaebc3df5a6bc7bc37aac2728c6f9d7e9f8a96e0e0a",
+      "packagedSha256": "c7c47fa40d0f0cfe77831f6b1159cb925e13dc8fd7c09d6e27264863588e09c9"
+    },
+    "snapshot/orchestrator/nodes/compose_results.py": {
+      "source": "backend/orchestrator/nodes/compose_results.py",
+      "sourceSha256": "a8dcf8fe7d311a8eae6154728071556d526b9c1875a79c54efd2e670b8b14d2d",
+      "packagedSha256": "a82ceeb6da2d50a6975382b3e985e830ec81a900748a4796f3949b010f8c20da"
+    },
+    "snapshot/orchestrator/composition.py": {
+      "source": "backend/orchestrator/composition.py",
+      "sourceSha256": "0648987b7788c42e54be8aa64165ffcc2fb068880b966d3d2e1a04d4f516b573",
+      "packagedSha256": "d866f0c2a815d51fd868bff42e302bd3d7bd70f4e881086e7ad45672ce6865a1"
+    },
+    "snapshot/orchestrator/bom_shortage.py": {
+      "source": "backend/orchestrator/bom_shortage.py",
+      "sourceSha256": "b7c34d2c952259bc3e814215d7f1948ab2a296026ff365b1d34f689be2225c10",
+      "packagedSha256": "3998f6e5dcfbb610c1b184175afd10c5d00ec04765f694c7c7c754c9dd5f2156"
+    },
+    "snapshot/orchestrator/nodes/execute_plan.py": {
+      "source": "backend/orchestrator/nodes/execute_plan.py",
+      "sourceSha256": "81bbc83adc97c92a859786eb4009c3ef28ea771ba44b89e3db15c3403c86c716",
+      "packagedSha256": "d2059d1f170e25a16e69745cdab1ce87efe27b18766b0cfaabcdf8331c6f7d39"
+    },
+    "snapshot/orchestrator/bindings.py": {
+      "source": "backend/orchestrator/bindings.py",
+      "sourceSha256": "df7d133efc25b77fd46a8fed8ea137c221e3a24df66367b270187c8e0140995d",
+      "packagedSha256": "df7d133efc25b77fd46a8fed8ea137c221e3a24df66367b270187c8e0140995d"
+    },
+    "snapshot/orchestrator/nodes/plan_outputs.py": {
+      "source": "backend/orchestrator/nodes/plan_outputs.py",
+      "sourceSha256": "015f7da209e5b99d444b619f1f4edab3265962e729486eef627f6ae66b68c3ce",
+      "packagedSha256": "1e13d7c868bdbb82d247d83568c055b929b1e7bbc8a93707706c3b0221e399c8"
+    },
+    "snapshot/orchestrator/nodes/route_query.py": {
+      "source": "backend/orchestrator/nodes/route_query.py",
+      "sourceSha256": "2ca789a088ef112073a76c1c338b963a96df191e2b3c524fab49bbfd8850047c",
+      "packagedSha256": "cc64e55b39d75f30c8d83694ed9495bffd537bc0376d7b23c829ed53ca2b358f"
+    },
+    "snapshot/orchestrator/nodes/resolve_entity.py": {
+      "source": "backend/orchestrator/nodes/resolve_entity.py",
+      "sourceSha256": "fd69035e81eed7b2789fe98babf3fe390ebe2c9fe3c5b94473f479e306acd1b2",
+      "packagedSha256": "0f3fd2d3dc6825e8340a7d6b52d08d297cba3c79087485925b89f40169b049e2"
+    },
+    "snapshot/orchestrator/entity_types.py": {
+      "source": "backend/orchestrator/entity_types.py",
+      "sourceSha256": "e856c994575004b4e7d0cfb7d2b4a81b13565df6414f19e85992dd81bd3cb7d9",
+      "packagedSha256": "5fc3eaf9d21746a4a69bd7f8ceef17f8c51d1e8b757d820a0270bc4622ef9cab"
+    },
+    "schema/sql_schema.yaml": {
+      "source": "schema/sql_schema.yaml",
+      "sourceSha256": "ce5cff0b87f1e65486d895698cf8747ee2c0fdb02ba3d96ab43f9a89584d4021",
+      "packagedSha256": "ce5cff0b87f1e65486d895698cf8747ee2c0fdb02ba3d96ab43f9a89584d4021"
+    },
+    "schema/graph_schema.yaml": {
+      "source": "schema/graph_schema.yaml",
+      "sourceSha256": "65e73aca943da68a4eacb7fe0ec64df1fd426b8f0b54fc03e7ae4e7d6cdc5163",
+      "packagedSha256": "65e73aca943da68a4eacb7fe0ec64df1fd426b8f0b54fc03e7ae4e7d6cdc5163"
+    }
+  },
+  "adaptations": [
+    "Internal imports isolated under strict_query.snapshot; imports formatted with Ruff.",
+    "Shared current read-only execution and guard allowlists; no historical auth, API, frontend or answer generation.",
+    "EntityAmbiguousError lookup_name argument supplied for current exception compatibility.",
+    "FailureStage includes current result stage for shared QueryFailure typing.",
+    "Retry attempt errors use existing safe_failure user_safe_reason; original internal retry feedback unchanged."
+  ],
+  "hashEncoding": "UTF-8 with LF line endings"
+}

@@ -21,6 +21,7 @@ from orchestrator.nodes.guard_request import make_guard_request_node
 from orchestrator.nodes.plan_outputs import make_plan_outputs_node
 from orchestrator.nodes.resolve_entity import make_resolve_entity_node
 from orchestrator.nodes.route_query import make_route_query_node
+from orchestrator.nodes.strict_query import make_strict_query_node
 from orchestrator.output_catalog import build_output_catalog
 from orchestrator.state import OrchestratorState
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
@@ -50,8 +51,8 @@ def _load_schema_context() -> tuple[SqlSchema, str, GraphSchema, str]:
 
 
 # OpenAI 클라이언트/PostgreSQL 풀을 주입받아 컴파일된 그래프를 반환
-# START -> guard_request -> classify_topic -> resolve_entity -> route_query
-# -> plan_outputs -> execute_plan -> compose_results -> generate_answer -> END
+# START -> guard_request -> classify_topic -> strict_query
+# 엄격한 경로 성공 시 generate_answer, 실패 시 기존 #61 resolve_entity부터 실행한다.
 def build_orchestrator_graph(
     openai_client: Any,
     pool: Any,
@@ -83,6 +84,15 @@ def build_orchestrator_graph(
 
     graph = StateGraph(OrchestratorState)
     graph.add_node("guard_request", cast(Any, make_guard_request_node()))
+    graph.add_node(
+        "strict_query",
+        cast(
+            Any,
+            make_strict_query_node(
+                openai_client, pool, reasoning_effort=reasoning_effort
+            ),
+        ),
+    )
     graph.add_node(
         "classify_topic",
         cast(Any, make_classify_topic_node(openai_client)),
@@ -150,7 +160,12 @@ def build_orchestrator_graph(
     graph.add_conditional_edges(
         "classify_topic",
         _route_by_query_failure,
-        {"blocked": "generate_answer", "allowed": "resolve_entity"},
+        {"blocked": "generate_answer", "allowed": "strict_query"},
+    )
+    graph.add_conditional_edges(
+        "strict_query",
+        lambda state: state.get("query_strategy", "pr61"),
+        {"strict": "generate_answer", "pr61": "resolve_entity"},
     )
     graph.add_edge("resolve_entity", "route_query")
     graph.add_edge("route_query", "plan_outputs")
