@@ -87,6 +87,35 @@ def test_evidence_and_physical_fields_are_required(intent, knowledge):
         knowledge.validate_intent(invalid, "단가 5 이상")
 
 
+async def test_interpretation_repairs_provenance_once(monkeypatch, intent, knowledge):
+    from orchestrator.grounded.interpret import interpret
+
+    broken = intent.model_copy(deep=True)
+    broken.outputs[0].source_fields = ["sql:public.missing.cost"]
+    call = AsyncMock(side_effect=[broken, intent])
+    monkeypatch.setattr("orchestrator.grounded.interpret.typed_call", call)
+    result = await interpret(None, "단가 5 이상", knowledge)
+    assert result == intent
+    assert call.await_count == 2
+    repair_payload = call.call_args.kwargs["payload"]
+    assert repair_payload["question"] == "단가 5 이상"
+    assert repair_payload["repair"]["diagnostics"]
+
+
+async def test_interpretation_repair_cannot_accept_unsupported_fields(
+    monkeypatch, intent, knowledge
+):
+    from orchestrator.grounded.interpret import interpret
+
+    broken = intent.model_copy(deep=True)
+    broken.outputs[0].source_fields = ["sql:public.missing.cost"]
+    call = AsyncMock(return_value=broken)
+    monkeypatch.setattr("orchestrator.grounded.interpret.typed_call", call)
+    with pytest.raises(ValueError, match="physical"):
+        await interpret(None, "단가 5 이상", knowledge)
+    assert call.await_count == 2
+
+
 def test_request_scoped_output_not_catalog_whitelist(intent):
     intent.outputs[0].alias = "myNewAggregate"
     state = {

@@ -312,6 +312,7 @@ def make_coordinator(
                 bool(r.get("reviewed")) for r in report["candidates"]
             ),
             knowledge_sha256=knowledge.digest,
+            error_type=report.get("error_type"),
             duration_ms=report["elapsed_ms"],
         )
         return result

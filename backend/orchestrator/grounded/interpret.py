@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from pydantic import ValidationError
+
+from core.observability.events import emit_event
 from orchestrator.grounded.context import KnowledgeContext
 from orchestrator.grounded.model_calls import typed_call
 from orchestrator.grounded.models import QueryIntent
@@ -33,12 +36,52 @@ For clarification return outputs/requirements that are already known without gue
 async def interpret(
     client: Any, query: str, knowledge: KnowledgeContext
 ) -> QueryIntent:
-    intent = await typed_call(
-        client,
-        QueryIntent,
-        purpose="grounded.interpret",
-        system=INSTRUCTIONS,
-        payload={"question": query, **knowledge.prompt_payload()},
-    )
-    knowledge.validate_intent(intent, query)
-    return intent
+    payload: dict[str, Any] = {"question": query, **knowledge.prompt_payload()}
+    for attempt in range(2):
+        intent = None
+        try:
+            intent = await typed_call(
+                client,
+                QueryIntent,
+                purpose=(
+                    "grounded.interpret"
+                    if attempt == 0
+                    else "grounded.interpret_repair"
+                ),
+                system=INSTRUCTIONS,
+                payload=payload,
+            )
+            knowledge.validate_intent(intent, query)
+            return intent
+        except ValueError as exc:
+            # Pydantic errors can contain the original model input: retain only
+            # field locations/types, never that input in operational logs.
+            diagnostic = (
+                [
+                    {"location": list(e["loc"]), "type": e["type"]}
+                    for e in exc.errors(include_input=False, include_context=False)
+                ]
+                if isinstance(exc, ValidationError)
+                else [{"type": type(exc).__name__, "check": str(exc)}]
+            )
+            emit_event(
+                "grounded.interpretation.rejected",
+                "pipeline",
+                outcome="failure",
+                attempt=attempt + 1,
+                error_type=type(exc).__name__,
+                validation_checks=diagnostic,
+                repair_scheduled=attempt == 0,
+            )
+            if attempt == 1:
+                raise
+            payload = {
+                "question": query,
+                **knowledge.prompt_payload(),
+                "repair": {
+                    "diagnostics": diagnostic,
+                    "previous_interpretation": intent.model_dump() if intent else None,
+                    "instruction": "Rebuild the interpretation from the original question and sources. Fix the reported structure/provenance defect without removing conditions or inventing sources. This is the only repair attempt.",
+                },
+            }
+    raise AssertionError("Interpretation repair loop did not terminate")
