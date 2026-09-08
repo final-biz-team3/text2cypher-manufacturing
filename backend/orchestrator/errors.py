@@ -43,7 +43,16 @@ class EntityAmbiguousError(AppError):
 class AnswerGenerationError(AppError):
     """조회는 끝났지만 사용자용 자연어 답변을 신뢰할 수 없을 때 사용한다."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        reason: str = "answer_generation_error",
+        attempt_count: int = 0,
+        validation_rejected: bool = False,
+    ) -> None:
+        self.reason = reason
+        self.attempt_count = attempt_count
+        self.validation_rejected = validation_rejected
         super().__init__(
             502,
             "ANSWER_GENERATION_FAILED",

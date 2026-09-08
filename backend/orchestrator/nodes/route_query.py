@@ -84,7 +84,9 @@ def _routing_context(
         sections.extend(
             (
                 "SQL semantic capabilities:\n" + catalog.describe("sql"),
+                "SQL entity roles:\n" + catalog.describe_entity_roles("sql"),
                 "Graph semantic capabilities:\n" + catalog.describe("graph"),
+                "Graph entity roles:\n" + catalog.describe_entity_roles("graph"),
             )
         )
     return "\n\n".join(sections)
@@ -129,6 +131,11 @@ def make_route_query_node(
         last_content = ""
         plan = None
         raw_route_draft: dict[str, Any] | None = None
+        expected_sources = (
+            catalog.infer_required_sources(state["query"], state.get("entity"))
+            if catalog is not None
+            else None
+        )
         for attempt in range(2):
             model = os.environ["OPENAI_MODEL"]
             response = await observe_model_call(
@@ -153,6 +160,15 @@ def make_route_query_node(
                     shared_join_aliases=shared_join_aliases,
                     catalog=catalog,
                 )
+                if (
+                    expected_sources is not None
+                    and plan.get("resultTransform") is None
+                    and set(plan["tool_plan"]) != set(expected_sources)
+                ):
+                    raise ValueError(
+                        "route sources conflict with deterministic semantic evidence: "
+                        + ", ".join(sorted(expected_sources))
+                    )
                 raw_route_draft = (
                     raw_document if isinstance(raw_document, dict) else None
                 )
@@ -209,6 +225,7 @@ def make_route_query_node(
             "tool_plan": plan["tool_plan"],
             "routeDraft": dict(plan),
             "resultTransform": plan.get("resultTransform"),
+            "routeRepairCount": attempt,
         }
         if raw_route_draft is not None:
             result["rawRouteDraft"] = raw_route_draft

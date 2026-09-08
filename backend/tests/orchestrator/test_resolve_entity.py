@@ -62,6 +62,18 @@ def _graph_schema() -> GraphSchema:
                         "name": {"type": "STRING", "sourceColumn": "name"},
                     },
                 },
+                "ScrapReason": {
+                    "uniqueKey": "scrapReasonId",
+                    "source": {"schema": "production", "table": "scrapreason"},
+                    "aliases": ["폐기 사유", "폐기사유", "폐기 이유", "폐기이유"],
+                    "properties": {
+                        "scrapReasonId": {
+                            "type": "INTEGER",
+                            "sourceColumn": "scrapreasonid",
+                        },
+                        "name": {"type": "STRING", "sourceColumn": "name"},
+                    },
+                },
             },
             "relationships": {},
         }
@@ -167,6 +179,112 @@ async def test_literal_lookup_prefers_longest_overlapping_database_name() -> Non
         }
     }
     assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "extracted_name",
+    [
+        "Touring-1000 Yellow",
+        "touring-1000 yellow, 54",
+        "Touring-1000 Yellow 54",
+        "Touring-1000 Yellow,54",
+        "Touring-1000 Yellow, 54",
+    ],
+)
+async def test_exact_literal_suppresses_only_its_nested_extraction(
+    extracted_name: str,
+) -> None:
+    query = "Touring-1000 Yellow, 54의 재고를 보여줘"
+    client = MockOpenAIClient(
+        _entity_response({"entityType": "product", "entityName": extracted_name})
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={
+            ("production.product", "Touring-1000 Yellow, 54"): (
+                956,
+                "Touring-1000 Yellow, 54",
+            )
+        },
+        similar_rows_by_name={extracted_name: [(956, "Touring-1000 Yellow, 54", 0.9)]},
+    )
+
+    result = await _node(client, pool)({"query": query})
+
+    assert result == {
+        "entity": {
+            "productId": 956,
+            "productName": "Touring-1000 Yellow, 54",
+        }
+    }
+    assert all("similarity(" not in sql for sql, _ in pool.queries)
+
+
+async def test_nested_extraction_at_another_position_is_not_suppressed() -> None:
+    query = "Touring-1000 Yellow와 Touring-1000 Yellow, 54의 재고를 비교해줘"
+    client = MockOpenAIClient(
+        _entity_response({"entityType": "product", "entityName": "Touring-1000 Yellow"})
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={"Touring-1000 Yellow": (955, "Touring-1000 Yellow")},
+        rows_by_table_and_name={
+            ("production.product", "Touring-1000 Yellow, 54"): (
+                956,
+                "Touring-1000 Yellow, 54",
+            )
+        },
+    )
+
+    result = await _node(client, pool)({"query": query})
+
+    assert result["entity"] == [
+        {"productId": 955, "productName": "Touring-1000 Yellow"},
+        {"productId": 956, "productName": "Touring-1000 Yellow, 54"},
+    ]
+
+
+async def test_nested_extraction_with_a_different_type_is_not_suppressed() -> None:
+    query = "Touring-1000 Yellow, 54의 공급업체 정보를 보여줘"
+    client = MockOpenAIClient(
+        _entity_response(
+            {"entityType": "supplier", "entityName": "Touring-1000 Yellow"}
+        )
+    )
+    pool = MockAsyncPostgresPool(
+        rows_by_name={},
+        rows_by_table_and_name={
+            ("production.product", "Touring-1000 Yellow, 54"): (
+                956,
+                "Touring-1000 Yellow, 54",
+            )
+        },
+    )
+
+    with pytest.raises(EntityNotFoundError, match="Touring-1000 Yellow"):
+        await _node(client, pool)({"query": query})
+
+
+async def test_digits_only_extraction_is_ignored_without_database_lookup() -> None:
+    client = MockOpenAIClient(
+        _entity_response({"entityType": "product", "entityName": "제품 54"})
+    )
+    pool = MockAsyncPostgresPool(rows_by_name={})
+
+    assert await _node(client, pool)({"query": "제품 54"}) == {"entity": None}
+    assert pool.queries == []
+
+
+@pytest.mark.parametrize("alias", ["폐기 이유", "폐기이유", "폐 기 이 유"])
+async def test_explicit_scrap_reason_type_alias_is_not_looked_up(alias: str) -> None:
+    client = MockOpenAIClient(
+        _entity_response({"entityType": "scrapReason", "entityName": alias})
+    )
+    pool = MockAsyncPostgresPool(rows_by_name={})
+
+    assert await _node(client, pool)({"query": f"{alias}별 작업지시"}) == {
+        "entity": None
+    }
+    assert pool.queries == []
 
 
 async def test_literal_entities_keep_question_order_across_types() -> None:

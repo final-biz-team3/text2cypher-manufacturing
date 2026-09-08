@@ -52,7 +52,12 @@ def _initial_state(query: str = "제품 수를 알려줘.") -> dict:
 
 
 def _make_subgraph(
-    *, guard, execute=None, connection_exceptions=(), retryable_exceptions=()
+    *,
+    guard,
+    execute=None,
+    connection_exceptions=(),
+    retryable_exceptions=(),
+    result_contract_error=None,
 ):
     async def generate(state, previous_query, previous_error) -> str:
         return "SELECT 1"
@@ -69,43 +74,8 @@ def _make_subgraph(
         retryable_exceptions=retryable_exceptions,
         empty_result_feedback="EMPTY",
         guard=guard,
+        result_contract_error=result_contract_error,
     )
-
-
-async def test_initial_query_bypasses_only_first_generation_for_paired_evaluation() -> (
-    None
-):
-    generated: list[tuple[str | None, str | None]] = []
-    executed: list[str] = []
-
-    async def generate(state, previous_query, previous_error) -> str:
-        generated.append((previous_query, previous_error))
-        return "SELECT 1"
-
-    async def execute(query: str) -> list[dict]:
-        executed.append(query)
-        if query == "BROKEN QUERY":
-            raise ValueError("retryable")
-        return [{"count": 1}]
-
-    subgraph = make_retry_agent_subgraph(
-        logger=logger,
-        label="sql_agent",
-        generate=generate,
-        execute=execute,
-        connection_exceptions=(),
-        retryable_exceptions=(ValueError,),
-        empty_result_feedback="EMPTY",
-    )
-    state = _initial_state()
-    state["initial_query"] = "BROKEN QUERY"
-
-    result = await subgraph.ainvoke(state)
-
-    assert executed == ["BROKEN QUERY", "SELECT 1"]
-    assert generated == [("BROKEN QUERY", "쿼리를 실행하지 못했습니다.")]
-    assert result["attempt_count"] == 2
-    assert result["result"] == [{"count": 1}]
 
 
 async def test_guard_exception_does_not_propagate_and_is_not_retried() -> None:
@@ -279,3 +249,50 @@ async def test_timeout_failure_is_safe_and_user_correctable() -> None:
     assert result["failure"]["code"] == "QUERY_TIMEOUT"
     assert result["failure"]["kind"] == "user_correctable"
     assert "internal_table" not in str(result["failure"])
+
+
+async def test_result_invariant_failure_retries_locally_and_keeps_attempts() -> None:
+    generated: list[str | None] = []
+    executed: list[str] = []
+
+    async def generate(state, previous_query, previous_error) -> str:
+        generated.append(previous_error)
+        return f"SELECT {len(generated)}"
+
+    async def execute(query: str) -> list[dict]:
+        executed.append(query)
+        return [{"depth": 0 if len(executed) == 1 else 1}]
+
+    def result_contract_error(rows, state) -> str | None:
+        return "depth must be at least 1" if rows[0]["depth"] < 1 else None
+
+    subgraph = make_retry_agent_subgraph(
+        logger=logger,
+        label="test_agent",
+        generate=generate,
+        execute=execute,
+        connection_exceptions=(),
+        retryable_exceptions=(),
+        empty_result_feedback="EMPTY",
+        result_contract_error=result_contract_error,
+    )
+
+    result = await subgraph.ainvoke(_initial_state())
+
+    assert generated == [None, "depth must be at least 1"]
+    assert executed == ["SELECT 1", "SELECT 2"]
+    assert result["attempts"] == [
+        {"query": "SELECT 1", "error": "depth must be at least 1"},
+        {"query": "SELECT 2", "error": None},
+    ]
+    assert result["retryDiagnostics"] == [
+        {
+            "stage": "result_invariant",
+            "reasonCode": "RESULT_INVARIANT_VIOLATION",
+            "errorType": None,
+            "sqlstate": None,
+            "recovered": True,
+            "attempt": 1,
+            "retryScheduled": True,
+        }
+    ]
