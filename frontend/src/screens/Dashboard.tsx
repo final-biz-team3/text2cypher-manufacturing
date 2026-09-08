@@ -45,6 +45,14 @@ const EXAMPLE_QUESTIONS: string[] = [
 
 const READ_ONLY = true
 
+// crypto.randomUUID()는 보안 컨텍스트(HTTPS 또는 localhost)에서만 존재한다 -
+// 일반 HTTP로 서빙되는 배포 환경에서는 함수 자체가 없어 호출 시 에러가 나서
+// "질문하기"를 눌러도 아무 반응이 없었다. 대화 턴 id는 세션 내에서만
+// 고유하면 되므로 암호학적 강도가 필요 없다.
+function createTurnId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
 // 재시도 이력을 "에러 없음/EMPTY_RESULT/그 외" 세 갈래로 나눠 타임라인 단계로 바꾼다.
 // 실패 다음에 또 다른 시도가 이어졌다면(=실제로 재시도됨) "다시 시도합니다."를 덧붙인다.
 function attemptsToSteps(prefix: string, attempts: RetryAttempt[]): SelfCorrectionStep[] {
@@ -166,7 +174,7 @@ export function Dashboard() {
     if (!question) return
     setQueryText('')
     const turn: ConversationTurn = {
-      id: crypto.randomUUID(),
+      id: createTurnId(),
       query: question,
       status: 'loading',
       result: null,
@@ -195,7 +203,7 @@ export function Dashboard() {
   // 대화기록 목록에서 항목을 클릭하면 재호출 없이 저장된 내용을 대화 끝에 새 턴으로 이어붙인다
   const handleSelectHistoryItem = (item: HistoryEntry) => {
     addTurn({
-      id: crypto.randomUUID(),
+      id: createTurnId(),
       query: item.query,
       status: 'success',
       result: toDisplayResult(item),
