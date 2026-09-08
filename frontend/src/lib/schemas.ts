@@ -31,6 +31,62 @@ export const QueryOutcomeSchema = z
   })
   .nullable()
 
+export const VisualizationKpiItemSchema = z.object({
+  label: z.string(),
+  value: z.number(),
+})
+
+export const VisualizationSeriesSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  unit: z.string().nullable().optional(),
+})
+
+export const VisualizationRankedItemSchema = z.object({
+  rank: z.number(),
+  title: z.string(),
+  actual: z.number(),
+  required: z.number(),
+  shortageQty: z.number(),
+  fulfillmentPct: z.number(),
+})
+
+export const VisualizationPointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  label: z.string().nullable().optional(),
+})
+
+export const NodeLabelSchema = z.enum([
+  'Product',
+  'Supplier',
+  'WorkOrder',
+  'RoutingOperation',
+  'Location',
+  'ScrapReason',
+])
+
+export const VisualizationSpecSchema = z.object({
+  type: z.enum(['kpi', 'bar', 'comparison_bar', 'ranked_progress', 'histogram', 'scatter']),
+  title: z.string().nullable().optional(),
+  items: z.array(VisualizationKpiItemSchema).nullable().optional(),
+  categoryLabel: z.string().nullable().optional(),
+  series: z.array(VisualizationSeriesSchema).nullable().optional(),
+  data: z
+    .array(z.record(z.string(), z.union([z.string(), z.number()])))
+    .nullable()
+    .optional(),
+  rankedItems: z.array(VisualizationRankedItemSchema).nullable().optional(),
+  xLabel: z.string().nullable().optional(),
+  yLabel: z.string().nullable().optional(),
+  xUnit: z.string().nullable().optional(),
+  yUnit: z.string().nullable().optional(),
+  points: z.array(VisualizationPointSchema).nullable().optional(),
+  entityLabel: NodeLabelSchema.nullable().optional(),
+  unit: z.string().nullable().optional(),
+})
+export type VisualizationSpec = z.infer<typeof VisualizationSpecSchema>
+
 export const ChatResponseSchema = z.object({
   query: z.string(),
   sql_query: z.string().nullable().optional(),
@@ -38,6 +94,7 @@ export const ChatResponseSchema = z.object({
   sql_result: QueryOutcomeSchema.optional(),
   graph_result: QueryOutcomeSchema.optional(),
   final_answer: z.string().nullable().optional(),
+  visualization: VisualizationSpecSchema.nullable().optional(),
 })
 export type ChatResponse = z.infer<typeof ChatResponseSchema>
 
@@ -90,6 +147,7 @@ export const HistoryEntrySchema = z.object({
   cypher_query: z.string().nullable(),
   sql_result: QueryOutcomeSchema,
   graph_result: QueryOutcomeSchema,
+  visualization: VisualizationSpecSchema.nullable(),
   created_at: z.string(),
 })
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>

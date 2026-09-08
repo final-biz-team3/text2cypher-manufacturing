@@ -32,6 +32,15 @@ const GraphEdgeArrowProgram = createEdgeArrowProgram<
   GraphAttributes
 >({ lengthToThicknessRatio: 4.8, widenessToThicknessRatio: 3.8 })
 
+// createGraphologyGraph가 이미 노드를 깔끔한 원형(circular)으로 배치해둔다.
+// 노드가 적은 그래프(답변박스에 뜨는 그래프 대부분)에 ForceAtlas2를 그대로
+// 돌리면 강한 중력(strongGravityMode)이 그 배치를 중앙으로 뭉개버리고,
+// 1800ms 대기 + noverlap 70회 반복까지 매번 치러야 해서 정렬도 안 예쁘고
+// 렉도 걸린다 - 이 문턱 밑에서는 물리 시뮬레이션을 아예 건너뛰고 원형
+// 배치를 그대로 쓴다(노드가 많아 원형만으로는 겹치는 큰 탐색 그래프는
+// 기존 FA2 로직을 그대로 쓴다).
+const _SMALL_GRAPH_NODE_THRESHOLD = 12
+
 interface SigmaGraphProps {
   rows: readonly Record<string, unknown>[]
 }
@@ -283,6 +292,18 @@ function GraphRuntime({
 
   useEffect(() => {
     if (graph.order <= 1) {
+      sigma.getCamera().animatedReset({ duration: 250 })
+      return
+    }
+
+    if (graph.order <= _SMALL_GRAPH_NODE_THRESHOLD) {
+      // 원형 배치가 이미 깔끔하므로 겹침만 한 번 풀어주고 바로 보여준다 -
+      // 물리 시뮬레이션 대기 없이 즉시 렌더링된다.
+      noverlap.assign(graph, {
+        maxIterations: 50,
+        settings: { margin: 2.5, ratio: 1.12 },
+      })
+      sigma.refresh()
       sigma.getCamera().animatedReset({ duration: 250 })
       return
     }

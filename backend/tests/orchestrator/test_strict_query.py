@@ -1,6 +1,7 @@
 """이전 질의 경로의 수용·격리·실패 전환과 실제 graph 배선을 검증한다."""
 
 import asyncio
+import json
 from copy import deepcopy
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 import orchestrator.graph as graph_module
 import orchestrator.nodes.strict_query as strict_module
 from orchestrator.errors import EntityNotFoundError
-from tests.mocks.openai import MockOpenAIClient
+from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 
 def result():
@@ -196,3 +197,70 @@ async def test_graph_uses_pr61_answer_once_and_falls_back_from_clean_input(
     )
     assert output["final_answer"] == "PR61_ANSWER"
     assert input_state == before
+
+
+@pytest.mark.parametrize("strict_succeeds", [True, False])
+async def test_both_query_paths_preserve_answer_metadata_and_visualization(
+    monkeypatch, strict_succeeds
+):
+    async def allowed(_):
+        return {"query_failure": None}
+
+    monkeypatch.setattr(graph_module, "make_guard_request_node", lambda: allowed)
+    monkeypatch.setattr(graph_module, "make_classify_topic_node", lambda _: allowed)
+
+    async def strict(_):
+        if not strict_succeeds:
+            raise ValueError("retry through the fallback path")
+        return result()
+
+    monkeypatch.setattr(strict_module, "build_strict_query", lambda *a, **kw: strict)
+
+    async def noop(_):
+        return {}
+
+    async def compose(_):
+        return result()
+
+    for name in (
+        "make_resolve_entity_node",
+        "make_route_query_node",
+        "make_plan_outputs_node",
+        "make_execute_plan_node",
+    ):
+        monkeypatch.setattr(graph_module, name, lambda *a, **kw: noop)
+    monkeypatch.setattr(
+        graph_module, "make_compose_results_node", lambda *a, **kw: compose
+    )
+    client = MockOpenAIClient(
+        make_content_response(
+            json.dumps(
+                {
+                    "highlighted": [
+                        {"title": None, "metrics": [{"label": "재고", "value": 10}]}
+                    ],
+                    "sections": [],
+                },
+                ensure_ascii=False,
+            )
+        )
+    )
+
+    output = await graph_module.build_orchestrator_graph(client, None).ainvoke(
+        {"query": "재고를 알려줘"}
+    )
+
+    assert output["query_strategy"] == ("strict" if strict_succeeds else "pr61")
+    assert "재고는 10입니다" in output["final_answer"]
+    assert output["answer_metadata"] == {
+        "mode": "structured",
+        "attemptCount": 1,
+        "fallbackReason": None,
+        "validationRejected": False,
+    }
+    assert output["visualization"] == {
+        "type": "kpi",
+        "title": None,
+        "items": [{"label": "stock", "value": 10}],
+    }
+    assert len(client.calls) == 1

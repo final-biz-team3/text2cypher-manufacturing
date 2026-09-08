@@ -1,5 +1,4 @@
 import { MultiDirectedGraph } from 'graphology'
-import circular from 'graphology-layout/circular'
 import { colorForCategory } from './graphStyle'
 import { createGraphNodePresentation } from './graphNodePresentation'
 import type {
@@ -12,6 +11,48 @@ import type {
 } from '@/types/graph'
 
 type GraphologyGraph = MultiDirectedGraph<GraphNodeAttributes, GraphEdgeAttributes, GraphAttributes>
+
+// graphology-layout의 circular()는 그래프의 노드 삽입 순서로만 원 위에
+// 배치한다 - 어느 노드끼리 연결됐는지는 전혀 안 본다. 그래서 공급업체 하나에
+// 부품 여러 개가 연결된 것 같은 허브형 그래프에서 관계선이 원을 가로질러
+// 서로 겹치기 쉬웠다. 대신 BFS로 순회한 순서(연결된 노드끼리 방문 순서가
+// 가까움)로 원 위에 배치하면, 같은 허브에 연결된 노드들이 원 위에서도
+// 서로 가까이 모여서 선이 짧고 서로 덜 겹친다. 연결 요소가 여러 개면
+// (그래프가 서로 안 이어진 조각으로 나뉘면) 요소별로 이어서 순회해
+// 같은 조각끼리 원 위에서도 뭉쳐 있게 한다.
+function lowCrossingCircularPositions(
+  graph: GraphologyGraph,
+  nodeKeys: readonly string[],
+  scale: number,
+): Record<string, { x: number; y: number }> {
+  const targetSet = new Set(nodeKeys)
+  const visited = new Set<string>()
+  const order: string[] = []
+
+  for (const startKey of nodeKeys) {
+    if (visited.has(startKey)) continue
+    const queue = [startKey]
+    visited.add(startKey)
+    while (queue.length > 0) {
+      const current = queue.shift()!
+      order.push(current)
+      const neighbors = graph.neighbors(current).sort()
+      for (const neighbor of neighbors) {
+        if (!targetSet.has(neighbor) || visited.has(neighbor)) continue
+        visited.add(neighbor)
+        queue.push(neighbor)
+      }
+    }
+  }
+
+  const total = order.length
+  const positions: Record<string, { x: number; y: number }> = {}
+  order.forEach((nodeKey, index) => {
+    const angle = (2 * Math.PI * index) / total
+    positions[nodeKey] = { x: scale * Math.cos(angle), y: scale * Math.sin(angle) }
+  })
+  return positions
+}
 
 interface GraphBuildResult {
   graph: GraphologyGraph
@@ -415,14 +456,7 @@ export function createGraphologyGraph(input: unknown): GraphBuildResult {
   })
 
   const positionedNodes = new Set(nodes.filter((node) => node.hasPosition).map((node) => node.key))
-  const missingPositions = new Set(graph.nodes().filter((node) => !positionedNodes.has(node)))
-  if (graph.order > 0 && missingPositions.size > 0) {
-    const positions = circular(graph, { scale: Math.max(1, graph.order / 4) })
-    missingPositions.forEach((nodeKey) => {
-      const position = positions[nodeKey]
-      if (position) graph.mergeNodeAttributes(nodeKey, position)
-    })
-  }
+  const missingPositions = graph.nodes().filter((node) => !positionedNodes.has(node))
 
   const occurrenceBySignature = new Map<string, number>()
   for (const edge of edges) {
@@ -445,6 +479,20 @@ export function createGraphologyGraph(input: unknown): GraphBuildResult {
     const key = edge.key ?? createStableEdgeKey(source, edge.relationshipType, target, occurrence)
     if (graph.hasEdge(key)) continue
     graph.addDirectedEdgeWithKey(key, source, target, edge.attributes)
+  }
+
+  // 엣지를 다 넣은 뒤에 위치를 잡는다 - 인접 정보(누가 누구와 연결됐는지)가
+  // 있어야 BFS 순서로 원 위에 배치해 선 교차를 줄일 수 있다.
+  if (missingPositions.length > 0) {
+    const positions = lowCrossingCircularPositions(
+      graph,
+      missingPositions,
+      Math.max(1, graph.order / 4),
+    )
+    missingPositions.forEach((nodeKey) => {
+      const position = positions[nodeKey]
+      if (position) graph.mergeNodeAttributes(nodeKey, position)
+    })
   }
 
   return { graph, issues }

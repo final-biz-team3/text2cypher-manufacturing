@@ -56,12 +56,13 @@ async def save_conversation(
     cypher_query: str | None,
     sql_result: dict | None,
     graph_result: dict | None,
+    visualization: dict | None = None,
 ) -> int:
     async with pool.connection() as conn:
         cursor = await conn.execute(
             "INSERT INTO app.conversation_history "
-            "(username, query, final_answer, sql_query, cypher_query, sql_result, graph_result) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "(username, query, final_answer, sql_query, cypher_query, sql_result, graph_result, visualization) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 username,
                 query,
@@ -70,6 +71,7 @@ async def save_conversation(
                 cypher_query,
                 json.dumps(sql_result) if sql_result is not None else None,
                 json.dumps(graph_result) if graph_result is not None else None,
+                json.dumps(visualization) if visualization is not None else None,
             ),
         )
         row = await cursor.fetchone()
@@ -98,7 +100,8 @@ async def list_history(pool: Pool, user: CurrentUser) -> list[dict]:
     """admin이면 전체, 아니면 본인 기록만 최신순으로 반환한다."""
     base_query = (
         "SELECT id, username, query, final_answer, sql_query, cypher_query, "
-        "sql_result, graph_result, created_at FROM app.conversation_history"
+        "sql_result, graph_result, visualization, created_at "
+        "FROM app.conversation_history"
     )
     async with pool.connection() as conn:
         if user.role == "admin":
@@ -119,7 +122,8 @@ async def list_history(pool: Pool, user: CurrentUser) -> list[dict]:
             "cypher_query": row[5],
             "sql_result": row[6],
             "graph_result": row[7],
-            "created_at": row[8].isoformat(),
+            "visualization": row[8],
+            "created_at": row[9].isoformat(),
         }
         for row in rows
     ]

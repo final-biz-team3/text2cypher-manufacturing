@@ -35,5 +35,6 @@ export function toDisplayResult(response: ChatResponse | HistoryEntry): DisplayR
     graphEmptyReason: response.graph_result?.empty_reason ?? null,
     sqlAttempts: response.sql_result?.attempts ?? [],
     cypherAttempts: response.graph_result?.attempts ?? [],
+    visualization: response.visualization ?? null,
   }
 }
