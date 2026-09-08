@@ -4,6 +4,16 @@ import { describe, expect, it } from 'vitest'
 import { AnswerVisualization } from './AnswerVisualization'
 
 describe('AnswerVisualization', () => {
+  it('renders nothing for legacy scatter records from history without crashing', () => {
+    const html = renderToStaticMarkup(
+      <AnswerVisualization
+        visualization={{ type: 'scatter', title: null, series: [], data: [] }}
+      />,
+    )
+
+    expect(html).toBe('')
+  })
+
   it('renders KPI cards with labels and formatted values', () => {
     const html = renderToStaticMarkup(
       <AnswerVisualization
