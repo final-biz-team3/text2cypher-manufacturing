@@ -51,6 +51,12 @@ export const VisualizationRankedItemSchema = z.object({
   fulfillmentPct: z.number(),
 })
 
+export const VisualizationPointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  label: z.string().nullable().optional(),
+})
+
 export const NodeLabelSchema = z.enum([
   'Product',
   'Supplier',
@@ -61,9 +67,6 @@ export const NodeLabelSchema = z.enum([
 ])
 
 export const VisualizationSpecSchema = z.object({
-  // 'scatter'는 더 이상 새로 생성되지 않지만, 예전에 대화기록(history)에
-  // 저장된 레코드가 이 타입일 수 있어 파싱이 깨지지 않도록 남겨둔다 -
-  // AnswerVisualization.tsx가 이 타입이면 렌더링 없이 null을 반환한다.
   type: z.enum(['kpi', 'bar', 'comparison_bar', 'ranked_progress', 'histogram', 'scatter']),
   title: z.string().nullable().optional(),
   items: z.array(VisualizationKpiItemSchema).nullable().optional(),
@@ -74,6 +77,11 @@ export const VisualizationSpecSchema = z.object({
     .nullable()
     .optional(),
   rankedItems: z.array(VisualizationRankedItemSchema).nullable().optional(),
+  xLabel: z.string().nullable().optional(),
+  yLabel: z.string().nullable().optional(),
+  xUnit: z.string().nullable().optional(),
+  yUnit: z.string().nullable().optional(),
+  points: z.array(VisualizationPointSchema).nullable().optional(),
   entityLabel: NodeLabelSchema.nullable().optional(),
   unit: z.string().nullable().optional(),
 })
