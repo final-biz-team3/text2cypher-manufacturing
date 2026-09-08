@@ -450,7 +450,7 @@ def test_comparison_bar_drops_redundant_gap_column() -> None:
 
 def test_three_unrelated_numeric_columns_has_no_visualization() -> None:
     # 3개 숫자 컬럼 중 어느 것도 나머지 둘의 차액이 아니면(진짜 서로 다른
-    # 지표 3개) comparison_bar도 scatter(2개 전용)도 적용되지 않는다.
+    # 지표 3개) comparison_bar 조건(숫자 컬럼 2개)에 안 걸려 시각화가 없다.
     rows = [
         {
             "productId": 1,
@@ -471,9 +471,9 @@ def test_three_unrelated_numeric_columns_has_no_visualization() -> None:
     assert build_visualization_spec(_composed_result(rows)) is None
 
 
-def test_comparison_bar_row_bound_defers_large_result_to_scatter() -> None:
-    # comparison_bar는 bar와 같은 2~20행 범위에서만 적용된다 - 그보다
-    # 많으면(상관관계를 보는 게 목적) 기존 산점도로 넘긴다.
+def test_comparison_bar_row_bound_defers_large_result_to_no_visualization() -> None:
+    # comparison_bar는 bar와 같은 2~20행 범위에서만 적용된다 - 그보다 많으면
+    # (산점도는 더 이상 지원하지 않으므로) 시각화 없이 텍스트/표로만 보여준다.
     rows = [
         {
             "productId": i,
@@ -484,42 +484,18 @@ def test_comparison_bar_row_bound_defers_large_result_to_scatter() -> None:
         for i in range(21)
     ]
 
-    spec = build_visualization_spec(_composed_result(rows))
-
-    assert spec is not None
-    assert spec["type"] == "scatter"
+    assert build_visualization_spec(_composed_result(rows)) is None
 
 
-def test_two_unrelated_numeric_columns_without_text_column_becomes_scatter() -> None:
+def test_two_unrelated_numeric_columns_without_text_column_has_no_visualization() -> (
+    None
+):
     # 텍스트(카테고리) 컬럼이 없으면 comparison_bar 조건(len(text_columns)==1)에
-    # 안 걸려 기존 산점도로 넘어간다.
+    # 안 걸리고, 산점도는 더 이상 지원하지 않으므로 시각화가 없다.
     rows = [
         {"productId": 1, "listPrice": 1200.0, "standardCost": 800.0},
         {"productId": 2, "listPrice": 900.0, "standardCost": 650.0},
         {"productId": 3, "listPrice": 1500.0, "standardCost": 1100.0},
-    ]
-
-    spec = build_visualization_spec(_composed_result(rows))
-
-    assert spec == {
-        "type": "scatter",
-        "title": None,
-        "xLabel": "정가",
-        "yLabel": "표준원가",
-        "points": [
-            {"x": 1200.0, "y": 800.0},
-            {"x": 900.0, "y": 650.0},
-            {"x": 1500.0, "y": 1100.0},
-        ],
-        "xUnit": "원",
-        "yUnit": "원",
-    }
-
-
-def test_scatter_requires_minimum_points() -> None:
-    rows = [
-        {"productId": 1, "listPrice": 1200.0, "standardCost": 800.0},
-        {"productId": 2, "listPrice": 900.0, "standardCost": 650.0},
     ]
 
     assert build_visualization_spec(_composed_result(rows)) is None

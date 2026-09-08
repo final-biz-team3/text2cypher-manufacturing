@@ -80,27 +80,14 @@ class VisualizationRankedItem(TypedDict):
     fulfillmentPct: float
 
 
-class VisualizationPoint(TypedDict):
-    x: float | int
-    y: float | int
-    label: NotRequired[str]
-
-
 class VisualizationSpec(TypedDict):
-    type: Literal[
-        "kpi", "bar", "comparison_bar", "ranked_progress", "histogram", "scatter"
-    ]
+    type: Literal["kpi", "bar", "comparison_bar", "ranked_progress", "histogram"]
     title: str | None
     items: NotRequired[list[VisualizationKpiItem]]
     categoryLabel: NotRequired[str]
     series: NotRequired[list[VisualizationSeries]]
     data: NotRequired[list[dict[str, Any]]]
     rankedItems: NotRequired[list[VisualizationRankedItem]]
-    xLabel: NotRequired[str]
-    yLabel: NotRequired[str]
-    xUnit: NotRequired[str]
-    yUnit: NotRequired[str]
-    points: NotRequired[list[VisualizationPoint]]
     entityLabel: NotRequired[NodeLabel]
     unit: NotRequired[str]
 

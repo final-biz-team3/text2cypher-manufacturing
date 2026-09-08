@@ -1,5 +1,5 @@
 """composed_result 모양만으로 시각화 타입(KPI/막대/비교 막대/순위 진행률/
-히스토그램/산점도)을 결정하는 규칙 엔진.
+히스토그램)을 결정하는 규칙 엔진.
 
 LLM은 이 판정에 관여하지 않는다 - composed_result는 이미 검증된 구조화
 데이터이므로, 행 수·컬럼 타입만 보고 결정론적으로 차트 타입을 고른다.
@@ -13,7 +13,6 @@ from orchestrator.state import (
     ComposedResult,
     NodeLabel,
     VisualizationKpiItem,
-    VisualizationPoint,
     VisualizationRankedItem,
     VisualizationSeries,
     VisualizationSpec,
@@ -26,7 +25,6 @@ _MAX_RANKED_ITEMS = 5
 _MIN_HISTOGRAM_ROWS = 5
 _MIN_HISTOGRAM_BINS = 4
 _MAX_HISTOGRAM_BINS = 10
-_MIN_SCATTER_ROWS = 3
 
 # (실제값 필드, 필요/기준값 필드) - 둘 다 숫자 컬럼에 있으면 순위 진행률
 # 시각화 후보가 된다. bom_shortage.py가 만드는 requiredQty/actualStock/
@@ -393,49 +391,13 @@ def _build_histogram(
     return result
 
 
-def _build_scatter(
-    rows: list[dict[str, Any]], text_columns: list[str], numeric_columns: list[str]
-) -> VisualizationSpec | None:
-    """숫자 컬럼이 서로 무관한 2개인 경우(목표/실제 페어가 아님) 두 값의
-    관계를 산점도로 보여준다."""
-    x_key, y_key = numeric_columns[0], numeric_columns[1]
-    title_key = text_columns[0] if text_columns else None
-    points: list[VisualizationPoint] = []
-    for row in rows:
-        x_value = row.get(x_key)
-        y_value = row.get(y_key)
-        if x_value is None or y_value is None:
-            continue
-        point = cast(
-            VisualizationPoint, {"x": _to_number(x_value), "y": _to_number(y_value)}
-        )
-        if title_key and row.get(title_key) is not None:
-            point["label"] = str(row[title_key])
-        points.append(point)
-    if len(points) < _MIN_SCATTER_ROWS:
-        return None
-    result: VisualizationSpec = {
-        "type": "scatter",
-        "title": None,
-        "xLabel": _label_for(x_key),
-        "yLabel": _label_for(y_key),
-        "points": points,
-    }
-    x_unit = _unit_for(x_key)
-    if x_unit is not None:
-        result["xUnit"] = x_unit
-    y_unit = _unit_for(y_key)
-    if y_unit is not None:
-        result["yUnit"] = y_unit
-    return result
-
-
 def build_visualization_spec(
     composed_result: ComposedResult,
 ) -> VisualizationSpec | None:
-    """composed_result 모양을 보고 KPI/막대/비교 막대/순위 진행률/히스토그램/
-    산점도 시각화 스펙을 만들거나, 적합하지 않으면 None을 반환한다(이 경우
-    지금처럼 텍스트/표로만 보여준다)."""
+    """composed_result 모양을 보고 KPI/막대/비교 막대/순위 진행률/히스토그램
+    시각화 스펙을 만들거나, 적합하지 않으면 None을 반환한다(이 경우 지금처럼
+    텍스트/표로만 보여준다). 숫자 컬럼 2개가 서로 무관한 경우(과거 산점도)는
+    의미 있는 관계를 보장할 수 없어 시각화 없이 텍스트/표로만 보여준다."""
     if composed_result["mode"] == "separate":
         return None
     rows = composed_result["rows"]
@@ -467,6 +429,4 @@ def build_visualization_spec(
                 return comparison
     if len(numeric_columns) == 1:
         return _build_histogram(rows, numeric_columns[0])
-    if len(numeric_columns) == 2:
-        return _build_scatter(rows, text_columns, numeric_columns)
     return None
