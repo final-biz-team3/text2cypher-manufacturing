@@ -1,5 +1,16 @@
 import { Tag } from 'lucide-react'
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { useRef, useState } from 'react'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import type { VisualizationSpec } from '@/lib/schemas'
 
 interface AnswerVisualizationProps {
@@ -126,13 +137,78 @@ function BarVisualization({
   )
 }
 
-// 두 값이 뚜렷이 구분되도록 톤이 먼 두 색을 쓴다 - 한쪽을 회색으로 두면
-// 그 시리즈가 데이터 없이 비어 보인다는 피드백이 있었다.
-const COMPARISON_BAR_COLORS = ['#F2994A', '#3BB2BF'] as const
+// 첫 색은 옅은 트랙 배경(bg-border) 위에 놓이므로 트랙과 뚜렷이 구분되는
+// 진한 회색을 쓴다 - 트랙과 같은 톤이면 두꺼운 막대가 배경에 묻혀 안 보인다.
+const COMPARISON_BAR_COLORS = ['#8A94A3', '#3BB2BF'] as const
 
-// 겹쳐진 바-인-바 방식은 작은 값(앞쪽에 그려짐)이 오히려 더 커 보이는
-// 착시가 있었다(피드백) - 카테고리별로 막대 두 개를 나란히 그리는
-// 일반 그룹 막대그래프로 바꿔 크기를 있는 그대로 비교할 수 있게 한다.
+interface ComparisonBarSegment {
+  pct: number
+  color: string
+  label: string
+  value: number
+  unit?: string | null
+}
+
+// 두 막대는 높이가 같아야 "겹쳐진 막대"로 읽힌다 - 값이 더 큰 쪽(back)을
+// 먼저 그려 전체 트랙을 채우고, 더 작은 쪽(front)을 그 위에 덧그려서
+// back은 front보다 긴 구간에서만 보이게 한다. 어느 시리즈가 더 큰지는
+// 행마다 달라질 수 있어 값 기준으로 매번 정렬한다.
+function ComparisonBarRow({
+  category,
+  back,
+  front,
+}: {
+  category: string
+  back: ComparisonBarSegment
+  front: ComparisonBarSegment
+}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const [hover, setHover] = useState<{ x: number; y: number; text: string } | null>(null)
+
+  const handleMove = (event: React.MouseEvent, segment: ComparisonBarSegment) => {
+    const rect = trackRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setHover({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+      text: `${segment.label}: ${formatWithUnit(segment.value, segment.unit)}`,
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-[11px] text-text">{category}</p>
+      {/* 오른쪽 끝은 값이 domainMax에 못 미치면(같은 행이 아닌 다른 행이 더
+          클 수 있음) 트랙 배경이 살짝 보이는 게 정상이다 - 다만 막대와
+          트랙이 각자 오른쪽 모서리를 따로 둥글리면 그 경계에서 트랙의
+          둥근 모서리 조각이 어긋나 보인다. 왼쪽만 둥글리고 오른쪽은
+          네모로 둬서 이 어긋남 자체를 없앤다. */}
+      <div ref={trackRef} className="relative h-4 w-full rounded-l-sm bg-border">
+        <div
+          className="absolute inset-y-0 left-0 rounded-l-sm"
+          style={{ width: `${back.pct}%`, background: back.color }}
+          onMouseMove={(event) => handleMove(event, back)}
+          onMouseLeave={() => setHover(null)}
+        />
+        <div
+          className="absolute inset-y-0 left-0 rounded-l-sm"
+          style={{ width: `${front.pct}%`, background: front.color }}
+          onMouseMove={(event) => handleMove(event, front)}
+          onMouseLeave={() => setHover(null)}
+        />
+        {hover ? (
+          <div
+            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-sm border border-border bg-panel px-1.5 py-0.5 text-[10px] text-text shadow-sm"
+            style={{ left: hover.x, top: hover.y - 6 }}
+          >
+            {hover.text}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function ComparisonBarChart({
   categoryLabel,
   data,
@@ -147,23 +223,23 @@ function ComparisonBarChart({
   const caption = categoryLabel
     ? `${categoryLabel}별 ${seriesA.label} vs ${seriesB.label}`
     : `${seriesA.label} vs ${seriesB.label}`
+  const domainMax = Math.max(
+    1,
+    ...data.flatMap((row) => [Number(row[seriesA.key]) || 0, Number(row[seriesB.key]) || 0]),
+  )
   const summary = data
     .map(
       (row) =>
         `${String(row.category)} ${seriesA.label} ${formatWithUnit(Number(row[seriesA.key]) || 0, seriesA.unit)}, ${seriesB.label} ${formatWithUnit(Number(row[seriesB.key]) || 0, seriesB.unit)}`,
     )
     .join(', ')
-  const unitByKey: Record<string, string | null | undefined> = {
-    [seriesA.key]: seriesA.unit,
-    [seriesB.key]: seriesB.unit,
-  }
   return (
     <div
       role="img"
       aria-label={`${caption}: ${summary}`}
-      className="mb-3 rounded-md border border-border bg-panel p-3"
+      className="mb-3 flex flex-col gap-2 rounded-md border border-border bg-panel p-3"
     >
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-[10.5px] text-text-muted">{caption}</p>
         <div className="flex items-center gap-3 text-[10.5px] text-text-muted">
           <span className="flex items-center gap-1">
@@ -182,38 +258,35 @@ function ComparisonBarChart({
           </span>
         </div>
       </div>
-      <ResponsiveContainer width="100%" height={Math.max(140, data.length * 46)}>
-        <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" horizontal={false} />
-          <XAxis type="number" tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }} />
-          <YAxis
-            type="category"
-            dataKey="category"
-            width={110}
-            tick={{ fill: 'var(--color-text)', fontSize: 11 }}
-          />
-          <Tooltip
-            formatter={(value: number, name: string) => formatWithUnit(value, unitByKey[name])}
-            contentStyle={{
-              background: 'var(--color-panel)',
-              border: '1px solid var(--color-border)',
-              fontSize: 12,
-            }}
-          />
-          <Bar
-            dataKey={seriesA.key}
-            name={seriesA.label}
-            fill={COMPARISON_BAR_COLORS[0]}
-            radius={[0, 4, 4, 0]}
-          />
-          <Bar
-            dataKey={seriesB.key}
-            name={seriesB.label}
-            fill={COMPARISON_BAR_COLORS[1]}
-            radius={[0, 4, 4, 0]}
-          />
-        </BarChart>
-      </ResponsiveContainer>
+      <div className="flex flex-col gap-2.5">
+        {data.map((row) => {
+          const aValue = Number(row[seriesA.key]) || 0
+          const bValue = Number(row[seriesB.key]) || 0
+          const aSegment: ComparisonBarSegment = {
+            pct: Math.max(0, Math.min(100, (aValue / domainMax) * 100)),
+            color: COMPARISON_BAR_COLORS[0],
+            label: seriesA.label,
+            value: aValue,
+            unit: seriesA.unit,
+          }
+          const bSegment: ComparisonBarSegment = {
+            pct: Math.max(0, Math.min(100, (bValue / domainMax) * 100)),
+            color: COMPARISON_BAR_COLORS[1],
+            label: seriesB.label,
+            value: bValue,
+            unit: seriesB.unit,
+          }
+          const [back, front] = aValue >= bValue ? [aSegment, bSegment] : [bSegment, aSegment]
+          return (
+            <ComparisonBarRow
+              key={String(row.category)}
+              category={String(row.category)}
+              back={back}
+              front={front}
+            />
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -331,14 +404,76 @@ function HistogramChart({
   )
 }
 
+function ScatterPlot({
+  xLabel,
+  yLabel,
+  xUnit,
+  yUnit,
+  points,
+}: {
+  xLabel: VisualizationSpec['xLabel']
+  yLabel: VisualizationSpec['yLabel']
+  xUnit: VisualizationSpec['xUnit']
+  yUnit: VisualizationSpec['yUnit']
+  points: NonNullable<VisualizationSpec['points']>
+}) {
+  if (points.length === 0) return null
+  const caption = xLabel && yLabel ? `${xLabel} vs ${yLabel}` : '산점도'
+  return (
+    <div
+      role="img"
+      aria-label={`${caption} 산점도`}
+      className="mb-3 rounded-md border border-border bg-panel p-3"
+    >
+      <p className="mb-2 text-[10.5px] text-text-muted">{caption}</p>
+      <ResponsiveContainer width="100%" height={220}>
+        <ScatterChart margin={{ top: 4, right: 16, bottom: 20, left: 12 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <XAxis
+            type="number"
+            dataKey="x"
+            name={xLabel ?? 'x'}
+            tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+            label={{
+              value: axisTitle(xLabel, xUnit),
+              position: 'insideBottom',
+              offset: -2,
+              ...axisLabelStyle,
+            }}
+          />
+          <YAxis
+            type="number"
+            dataKey="y"
+            name={yLabel ?? 'y'}
+            tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
+            label={{
+              value: axisTitle(yLabel, yUnit),
+              angle: -90,
+              position: 'insideLeft',
+              ...axisLabelStyle,
+            }}
+          />
+          <Tooltip
+            cursor={{ strokeDasharray: '3 3' }}
+            formatter={(value: number, name: string) =>
+              formatWithUnit(value, name === xLabel ? xUnit : yUnit)
+            }
+            contentStyle={{
+              background: 'var(--color-panel)',
+              border: '1px solid var(--color-border)',
+              fontSize: 12,
+            }}
+          />
+          <Scatter data={points} fill="#3BB2BF" />
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 // 규칙 기반으로 결정된 시각화 스펙(KPI 카드·막대그래프·비교 막대그래프·순위
-// 진행률·히스토그램)을 렌더링한다.
+// 진행률·히스토그램·산점도)을 렌더링한다.
 export function AnswerVisualization({ visualization }: AnswerVisualizationProps) {
-  // 예전 대화기록에 저장된 산점도 레코드용 하위호환 - 더 이상 새로 생성되지
-  // 않고 렌더러도 없으므로 차트 없이 텍스트/표만 보이게 한다.
-  if (visualization.type === 'scatter') {
-    return null
-  }
   if (visualization.type === 'kpi') {
     return <KpiCards title={visualization.title} items={visualization.items ?? []} />
   }
@@ -348,6 +483,17 @@ export function AnswerVisualization({ visualization }: AnswerVisualizationProps)
         items={visualization.rankedItems ?? []}
         entityLabel={visualization.entityLabel}
         unit={visualization.unit}
+      />
+    )
+  }
+  if (visualization.type === 'scatter') {
+    return (
+      <ScatterPlot
+        xLabel={visualization.xLabel}
+        yLabel={visualization.yLabel}
+        xUnit={visualization.xUnit}
+        yUnit={visualization.yUnit}
+        points={visualization.points ?? []}
       />
     )
   }

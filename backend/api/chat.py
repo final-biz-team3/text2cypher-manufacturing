@@ -117,19 +117,32 @@ class VisualizationRankedItem(BaseModel):
     fulfillmentPct: float  # noqa: N815
 
 
+class VisualizationPoint(BaseModel):
+    x: float | int
+    y: float | int
+    label: str | None = None
+
+
 NodeLabel = Literal[
     "Product", "Supplier", "WorkOrder", "RoutingOperation", "Location", "ScrapReason"
 ]
 
 
 class VisualizationSpec(BaseModel):
-    type: Literal["kpi", "bar", "comparison_bar", "ranked_progress", "histogram"]
+    type: Literal[
+        "kpi", "bar", "comparison_bar", "ranked_progress", "histogram", "scatter"
+    ]
     title: str | None = None
     items: list[VisualizationKpiItem] | None = None
     categoryLabel: str | None = None  # noqa: N815 (프론트 계약과 동일한 camelCase 유지)
     series: list[VisualizationSeries] | None = None
     data: list[dict[str, Any]] | None = None
     rankedItems: list[VisualizationRankedItem] | None = None  # noqa: N815
+    xLabel: str | None = None  # noqa: N815
+    yLabel: str | None = None  # noqa: N815
+    xUnit: str | None = None  # noqa: N815
+    yUnit: str | None = None  # noqa: N815
+    points: list[VisualizationPoint] | None = None
     entityLabel: NodeLabel | None = None  # noqa: N815
     unit: str | None = None
 
