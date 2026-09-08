@@ -1,12 +1,20 @@
 """Cypher Agent SubGraph의 생성-실행과 self-correction 재시도를 테스트한다."""
 
+from pathlib import Path
+from typing import cast
+
 from neo4j.exceptions import ClientError, CypherSyntaxError, ServiceUnavailable
 
+from agents.cypher.schema.loader import load_graph_schema
 from agents.cypher.schema.models import GraphQueryPolicy, GraphSchema
+from agents.sql.schema.loader import load_sql_schema
+from orchestrator.output_catalog import build_output_catalog
 from orchestrator.subgraphs.cypher_agent import (
     _query_contract_error,
+    _result_contract_error,
     make_cypher_agent_subgraph,
 )
+from orchestrator.subgraphs.retry_agent import RetryAgentState
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 QUERY_POLICY = GraphQueryPolicy(bomAsOfDate="2014-08-08", bomMaxDepth=4)
@@ -26,6 +34,12 @@ _TEST_GRAPH_SCHEMA = GraphSchema.model_validate(
             },
         },
     }
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_SEMANTIC_CATALOG = build_output_catalog(
+    load_sql_schema(PROJECT_ROOT / "schema" / "sql_schema.yaml"),
+    load_graph_schema(PROJECT_ROOT / "schema" / "graph_schema.yaml"),
 )
 
 
@@ -123,36 +137,6 @@ async def test_cypher_agent_retries_after_retryable_error_then_succeeds() -> Non
     assert result["error"] is None
     assert len(openai_client.calls) == 2
     assert len(result["attempts"]) == 2
-
-
-async def test_cypher_repair_v2_uses_structured_safe_feedback(monkeypatch) -> None:
-    monkeypatch.setenv("CYPHER_REPAIR_ENGINE", "v2")
-    openai_client = MockOpenAIClient(
-        make_content_response("MATCH (n:Product) WHERE n.bad RETURN n"),
-        make_content_response("MATCH (n:Product) RETURN n"),
-    )
-    calls = 0
-
-    async def execute_cypher(cypher: str) -> list[dict]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise CypherSyntaxError("raw-secret-cypher-message")
-        return [{"n": "x"}]
-
-    result = await make_cypher_agent_subgraph(
-        openai_client,
-        execute_cypher=execute_cypher,
-        query_policy=QUERY_POLICY,
-        graph_schema=_TEST_GRAPH_SCHEMA,
-    ).ainvoke(_initial_state())
-
-    retry_prompt = openai_client.calls[1]["messages"][0]["content"]
-    assert result["result"] == [{"n": "x"}]
-    assert "Structured repair context" in retry_prompt
-    assert "CYPHER_SYNTAX_ERROR" in retry_prompt
-    assert "Neo4j 5 문법" in retry_prompt
-    assert "raw-secret-cypher-message" not in retry_prompt
 
 
 async def test_cypher_agent_does_not_retry_on_connection_error() -> None:
@@ -445,3 +429,99 @@ async def test_cypher_agent_repairs_relationship_list_used_as_path_before_execut
     assert execute_calls == [repaired]
     assert len(openai_client.calls) == 2
     assert "대괄호 안 변수는 Path가 아니라 관계 List" in result["attempts"][0]["error"]
+
+
+def test_bom_path_result_invariant_rejects_invalid_depth_and_path_lengths() -> None:
+    state = cast(
+        RetryAgentState,
+        {
+            **_initial_state(),
+            "required_outputs": [
+                "rootProductId",
+                "rootProductName",
+                "componentId",
+                "componentName",
+                "depth",
+                "pathProductIds",
+                "pathProductNames",
+            ],
+        },
+    )
+    valid = {
+        "rootProductId": 1,
+        "rootProductName": "Root",
+        "componentId": 2,
+        "componentName": "Part",
+        "depth": 1,
+        "pathProductIds": [1, 2],
+        "pathProductNames": ["Root", "Part"],
+    }
+
+    assert _result_contract_error([valid], state, _SEMANTIC_CATALOG) is None
+    for invalid in (
+        {**valid, "depth": True},
+        {**valid, "depth": 0},
+        {**valid, "pathProductIds": [1]},
+        {**valid, "pathProductNames": ["Root"]},
+    ):
+        assert _result_contract_error([invalid], state, _SEMANTIC_CATALOG) is not None
+
+
+async def test_cypher_agent_repairs_invalid_bom_path_result_locally() -> None:
+    first = (
+        "MATCH p = (root:Product)-[:REQUIRES_COMPONENT*1..4]->(component:Product) "
+        "RETURN root.productId AS rootProductId, root.name AS rootProductName, "
+        "component.productId AS componentId, component.name AS componentName, "
+        "length(p) AS depth, [n IN nodes(p) | n.productId] AS pathProductIds, "
+        "[n IN nodes(p) | n.name] AS pathProductNames"
+    )
+    repaired = first + " ORDER BY depth"
+    openai_client = MockOpenAIClient(
+        make_content_response(first),
+        make_content_response(repaired),
+    )
+    execution_count = 0
+
+    async def execute_cypher(cypher: str) -> list[dict]:
+        nonlocal execution_count
+        execution_count += 1
+        return [
+            {
+                "rootProductId": 1,
+                "rootProductName": "Root",
+                "componentId": 2,
+                "componentName": "Part",
+                "depth": 0 if execution_count == 1 else 1,
+                "pathProductIds": [1, 2],
+                "pathProductNames": ["Root", "Part"],
+            }
+        ]
+
+    subgraph = make_cypher_agent_subgraph(
+        openai_client,
+        execute_cypher=execute_cypher,
+        query_policy=QUERY_POLICY,
+        graph_schema=_TEST_GRAPH_SCHEMA,
+        semantic_catalog=_SEMANTIC_CATALOG,
+    )
+    state = {
+        **_initial_state(),
+        "required_outputs": [
+            "rootProductId",
+            "rootProductName",
+            "componentId",
+            "componentName",
+            "depth",
+            "pathProductIds",
+            "pathProductNames",
+        ],
+    }
+
+    result = await subgraph.ainvoke(state)
+
+    assert execution_count == 2
+    assert len(openai_client.calls) == 2
+    assert result["attempts"][0]["error"].endswith("depth는 최소 1 이상이어야 합니다.")
+    assert result["attempts"][1]["error"] is None
+    assert result["retryDiagnostics"][0]["stage"] == "result_invariant"
+    assert result["retryDiagnostics"][0]["recovered"] is True

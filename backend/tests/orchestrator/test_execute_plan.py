@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -14,6 +15,7 @@ from orchestrator.planning import Subquery
 from orchestrator.query_failures import make_query_failure
 from orchestrator.state import QueryFailure
 from orchestrator.subgraphs.cypher_agent import make_cypher_agent_subgraph
+from orchestrator.subgraphs.retry_agent import make_retry_agent_subgraph
 from tests.mocks.openai import MockOpenAIClient, make_content_response
 
 _TEST_GRAPH_SCHEMA = GraphSchema.model_validate(
@@ -41,6 +43,7 @@ def _result(
     error: str | None = None,
     empty_reason: str | None = None,
     failure: QueryFailure | None = None,
+    retry_diagnostics: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "messages": [{"role": "assistant", "content": query}],
@@ -49,6 +52,7 @@ def _result(
         "attempts": [{"query": query, "error": error}],
         "empty_reason": empty_reason,
         "failure": failure,
+        "retryDiagnostics": retry_diagnostics or [],
     }
 
 
@@ -108,6 +112,84 @@ async def test_execute_plan_keeps_single_tool_result_fields(
     assert result[result_field]["result"] == [{"value": 1}]
     unused_tool = "graph" if tool == "sql" else "sql"
     assert result["cypher_query" if unused_tool == "graph" else "sql_query"] is None
+
+
+async def test_execute_plan_counts_result_invariant_retries() -> None:
+    diagnostic = {
+        "stage": "result_invariant",
+        "reasonCode": "RESULT_INVARIANT_VIOLATION",
+        "errorType": None,
+        "sqlstate": None,
+        "recovered": True,
+        "attempt": 1,
+        "retryScheduled": True,
+    }
+    graph_agent = _FakeAgent(
+        _result(
+            "MATCH path",
+            [{"componentId": 2}],
+            retry_diagnostics=[diagnostic],
+        )
+    )
+    sql_agent = _FakeAgent(_result("SELECT 1", [{"value": 1}]))
+
+    result = await _node(sql_agent, graph_agent)(
+        {
+            "query": "BOM 경로",
+            "subqueries": [_step("path", "graph", "BOM 경로")],
+        }
+    )
+
+    assert result["resultInvariantRetryCount"] == 1
+    assert result["graph_result"]["retryDiagnostics"] == [diagnostic]
+
+
+@pytest.mark.parametrize(
+    "outcomes,expected_count", [("SSI", 0), ("III", 2), ("IO", 1), ("SIO", 1)]
+)
+async def test_invariant_count_matches_actual_regeneration_feedback(
+    outcomes: str, expected_count: int
+) -> None:
+    """S=실행 오류, I=불변식 위반, O=성공. 마지막 위반은 재시도가 아니다."""
+    feedback: list[str | None] = []
+    executed: list[str] = []
+    invariant_message = "depth must be at least 1"
+
+    async def generate(state, previous_query, previous_error):
+        feedback.append(previous_error)
+        return f"RETURN {len(feedback)}"
+
+    async def execute(query):
+        outcome = outcomes[len(executed)]
+        executed.append(query)
+        if outcome == "S":
+            raise SyntaxError("previous syntax error")
+        return [{"depth": 0 if outcome == "I" else 1}]
+
+    agent = make_retry_agent_subgraph(
+        logger=logging.getLogger(__name__),
+        label="cypher_agent",
+        generate=generate,
+        execute=execute,
+        connection_exceptions=(),
+        retryable_exceptions=(SyntaxError,),
+        empty_result_feedback="EMPTY",
+        result_contract_error=lambda rows, state: (
+            invariant_message if rows[0]["depth"] == 0 else None
+        ),
+    )
+    node = make_execute_plan_node(
+        sql_agent=agent, cypher_agent=agent, sql_schema_text="", cypher_schema_text=""
+    )
+    result = await node(
+        {"query": "BOM 경로", "subqueries": [_step("path", "graph", "BOM 경로")]}
+    )
+
+    assert len(executed) == len(outcomes)
+    assert result["resultInvariantRetryCount"] == expected_count
+    assert result["resultInvariantRetryCount"] == feedback.count(invariant_message)
+    for diagnostic in result["graph_result"]["retryDiagnostics"]:
+        assert diagnostic["retryScheduled"] == (diagnostic["attempt"] < len(outcomes))
 
 
 async def test_execute_plan_runs_independent_subqueries_concurrently() -> None:

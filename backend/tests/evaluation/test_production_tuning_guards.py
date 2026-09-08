@@ -76,7 +76,7 @@ def test_semantic_catalog_source_is_independent_of_evaluation_contracts() -> Non
     assert "gold/" not in source.casefold()
 
 
-def test_graph_ontology_does_not_encode_role_or_output_recipes() -> None:
+def test_graph_ontology_only_encodes_source_validated_role_predicates() -> None:
     ontology = yaml.safe_load(
         (PROJECT_ROOT / "ontology" / "manufacturing_terms.yaml").read_text(
             encoding="utf-8"
@@ -85,7 +85,29 @@ def test_graph_ontology_does_not_encode_role_or_output_recipes() -> None:
 
     assert "graphTraversals" not in ontology
     assert "graphQualifiers" not in ontology
-    assert all("predicates" not in role for role in ontology["entityRoles"])
+    roles_with_predicates = {
+        role["roleId"]: role["predicates"]
+        for role in ontology["entityRoles"]
+        if "predicates" in role
+    }
+    assert roles_with_predicates == {
+        "finishedProduct": {
+            "sql": [
+                {
+                    "field": "sellableFinishedGood",
+                    "operator": "equals",
+                    "value": True,
+                }
+            ],
+            "graph": [
+                {
+                    "field": "sellableFinishedGood",
+                    "operator": "equals",
+                    "value": True,
+                }
+            ],
+        }
+    }
 
 
 def test_production_prompt_sources_do_not_copy_long_gold_fragments() -> None:

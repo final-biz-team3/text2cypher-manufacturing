@@ -12,6 +12,7 @@ from agents.cypher.schema.loader import load_graph_schema
 from agents.sql.schema.loader import load_sql_schema
 from orchestrator.nodes.plan_outputs import (
     SemanticOutputPlan,
+    compile_entity_role_generator_rules,
     compile_graph_generator_rules,
     compile_semantic_output_plan,
     finalize_required_outputs,
@@ -82,7 +83,7 @@ def test_output_schema_uses_provider_supported_shape() -> None:
 async def test_prompt_uses_composable_roles_without_query_family_recipes() -> None:
     client = MockOpenAIClient(
         make_output_plan_response(
-            required_outputs=[],
+            required_outputs=["depth", "pathProductIds", "pathProductNames"],
             display_entities=["component", "finishedProduct"],
         )
     )
@@ -266,9 +267,82 @@ async def test_sql_display_only_plan_is_retried_as_incomplete() -> None:
     result = await make_plan_outputs_node(client, _catalog())(_state([subquery]))
 
     assert len(client.calls) == 2
+    assert result["outputPlanRepairCount"] == 1
     assert result["subqueries"][0]["requiredOutputs"] == [
         "productId",
         "productName",
+    ]
+
+
+async def test_shape_completes_an_already_selected_path_group() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=["pathProductIds"],
+            display_entities=["component", "finishedProduct"],
+        )
+    )
+    question = "부품 Paint - Black을 사용하는 완제품을 알려줘"
+    subquery: RouteSubquery = {
+        "id": "graph_component_usage",
+        "tool": "graph",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state(
+            [subquery],
+            query=question,
+            entity={"productId": 680, "productName": "Paint - Black"},
+        )
+    )
+
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "pathProductIds",
+        "depth",
+        "pathProductNames",
+        "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
+    ]
+    assert len(client.calls) == 1
+
+
+async def test_shape_replans_when_a_role_or_entire_path_is_missing() -> None:
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=[], display_entities=["finishedProduct"]
+        ),
+        make_output_plan_response(
+            required_outputs=["depth", "pathProductIds", "pathProductNames"],
+            display_entities=["component", "finishedProduct"],
+        ),
+    )
+    question = "부품 Paint - Black을 사용하는 완제품을 알려줘"
+    subquery: RouteSubquery = {
+        "id": "graph_component_usage",
+        "tool": "graph",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=question)
+    )
+
+    assert len(client.calls) == 2
+    assert result["outputPlanRepairCount"] == 1
+    assert result["subqueries"][0]["requiredOutputs"] == [
+        "depth",
+        "pathProductIds",
+        "pathProductNames",
+        "componentId",
+        "componentName",
+        "finishedProductId",
+        "finishedProductName",
     ]
 
 
@@ -280,6 +354,54 @@ def test_graph_role_without_path_adds_no_generator_rule() -> None:
     selected = compile_semantic_output_plan(plan, _catalog(), tool="graph")
 
     assert compile_graph_generator_rules(plan, _catalog(), selected) == []
+
+
+def test_finished_product_predicate_becomes_a_source_specific_generator_rule() -> None:
+    plan = SemanticOutputPlan(
+        required_outputs=("totalOrderQty",),
+        display_entities=("finishedProduct",),
+    )
+
+    rules = compile_entity_role_generator_rules(plan, _catalog(), tool="sql")
+
+    assert rules == [
+        "entity role finishedProduct은(는) sellableFinishedGood equals True "
+        "predicate를 반드시 적용한다."
+    ]
+
+
+async def test_finished_product_sql_plan_preserves_projection_and_predicate_rule() -> (
+    None
+):
+    client = MockOpenAIClient(
+        make_output_plan_response(
+            required_outputs=["totalOrderQty"],
+            display_entities=["finishedProduct"],
+        )
+    )
+    question = "판매량이 가장 많은 완제품 상위 5개"
+    subquery: RouteSubquery = {
+        "id": "sql_finished_sales",
+        "tool": "sql",
+        "question": question,
+        "dependsOn": [],
+        "joinKeys": [],
+    }
+
+    result = await make_plan_outputs_node(client, _catalog())(
+        _state([subquery], query=question)
+    )
+    planned = result["subqueries"][0]
+
+    assert planned["requiredOutputs"] == [
+        "totalOrderQty",
+        "productId",
+        "productName",
+    ]
+    assert planned["generatorRules"] == [
+        "entity role finishedProduct은(는) sellableFinishedGood equals True "
+        "predicate를 반드시 적용한다."
+    ]
 
 
 def test_non_path_graph_plan_adds_no_generator_rule() -> None:

@@ -61,6 +61,7 @@ async def test_route_query_derives_single_source_plan() -> None:
     )
 
     assert result["tool_plan"] == ["sql"]
+    assert result["routeRepairCount"] == 0
     assert result["routeDraft"]["tool_plan"] == ["sql"]
     assert result["rawRouteDraft"] == json.loads(raw)
     assert "tool_plan" not in result["rawRouteDraft"]
@@ -142,6 +143,7 @@ async def test_route_prompt_uses_physical_and_semantic_capabilities() -> None:
     assert "GRAPH_PHYSICAL_SENTINEL" in system
     assert "actualStock" in system
     assert "quantityPerAssembly" in system
+    assert "sellableFinishedGood equals True" in system
     assert "공급업체 쌍·공동 공급 부품" not in system
     assert "특정 작업장을 거친 제품" not in system
     user = json.loads(call["messages"][1]["content"])
@@ -161,9 +163,61 @@ async def test_route_query_retries_once_with_structural_feedback() -> None:
 
     assert result["tool_plan"] == ["sql"]
     assert len(client.calls) == 2
+    assert result["routeRepairCount"] == 1
     retry_messages = client.calls[1]["messages"]
     assert retry_messages[-2] == {"role": "assistant", "content": invalid}
     assert "structural validation" in retry_messages[-1]["content"]
+
+
+async def test_route_query_repairs_unique_semantic_source_conflict_once() -> None:
+    wrong = _response([_subquery("graph_sales", "graph")])
+    corrected = _response([_subquery("sql_sales", "sql")])
+    client = MockOpenAIClient(
+        make_content_response(wrong), make_content_response(corrected)
+    )
+
+    result = await make_route_query_node(client, catalog=_catalog())(
+        {"query": "판매량이 가장 많은 완제품 상위 5개", "entity": None}
+    )
+
+    assert result["tool_plan"] == ["sql"]
+    assert result["routeRepairCount"] == 1
+    assert len(client.calls) == 2
+    assert "deterministic semantic evidence" in (
+        client.calls[1]["messages"][-1]["content"]
+    )
+
+
+async def test_route_query_combines_compatible_graph_and_sql_evidence() -> None:
+    hybrid = _response(
+        [
+            _subquery("graph_impact", "graph", join_keys=["componentId"]),
+            _subquery("sql_stock", "sql", join_keys=["componentId"]),
+        ]
+    )
+    client = MockOpenAIClient(make_content_response(hybrid))
+
+    result = await make_route_query_node(client, catalog=_catalog())(
+        {
+            "query": "공급 중단 시 영향 받는 부품과 완제품, 현재 재고를 알려줘",
+            "entity": None,
+        }
+    )
+
+    assert set(result["tool_plan"]) == {"sql", "graph"}
+    assert result["routeRepairCount"] == 0
+
+
+async def test_route_query_keeps_broad_product_question_fail_open() -> None:
+    raw = _response([_subquery("graph_products", "graph")])
+    client = MockOpenAIClient(make_content_response(raw))
+
+    result = await make_route_query_node(client, catalog=_catalog())(
+        {"query": "제품을 알려줘", "entity": None}
+    )
+
+    assert result["tool_plan"] == ["graph"]
+    assert len(client.calls) == 1
 
 
 async def test_route_query_fails_safely_after_one_correction() -> None:

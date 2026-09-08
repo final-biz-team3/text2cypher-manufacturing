@@ -48,6 +48,13 @@ class ComposedResult(TypedDict):
     truncated: bool
 
 
+class AnswerGenerationMetadata(TypedDict):
+    mode: Literal["structured", "fallback", "fixed"]
+    attemptCount: int
+    fallbackReason: str | None
+    validationRejected: bool
+
+
 NodeLabel = Literal[
     "Product", "Supplier", "WorkOrder", "RoutingOperation", "Location", "ScrapReason"
 ]
@@ -92,6 +99,10 @@ class OrchestratorState(TypedDict):
     # 사용자 자연어 질의 (필수)
     query: str
 
+    # 엄격한 질의 경로의 수용 여부. 실패 시 #61 경로는 원질문에서 다시 시작한다.
+    query_strategy: NotRequired[Literal["strict", "pr61"]]
+    strict_attempt: NotRequired[dict[str, Any]]
+
     entity: NotRequired[dict | list[dict] | None]
 
     confirmed_entity: NotRequired[dict | list[dict] | None]
@@ -124,6 +135,12 @@ class OrchestratorState(TypedDict):
 
     # 최종 자연어 응답
     final_answer: NotRequired[str | None]
+    answer_metadata: NotRequired[AnswerGenerationMetadata]
+
+    # 모델 계획과 로컬 결과 검증의 복구 관측값
+    routeRepairCount: NotRequired[int]
+    outputPlanRepairCount: NotRequired[int]
+    resultInvariantRetryCount: NotRequired[int]
 
     # composed_result에서 규칙 기반으로 도출한 시각화 스펙(없으면 None)
     visualization: NotRequired[VisualizationSpec | None]

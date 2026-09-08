@@ -59,7 +59,9 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         "empty_reason": result.get("empty_reason"),
         "truncated": result.get("truncated", False),
         "failure": result.get("failure"),
+        "retryDiagnostics": result.get("retryDiagnostics", []),
         "failed_query": result.get("failed_query"),
+        "generated_query": result.get("generated_query"),
     }
 
 
@@ -81,6 +83,7 @@ def _dependency_failure(dependency_ids: list[str]) -> dict[str, Any]:
             suggested_action="조회 대상과 조건을 더 구체적으로 지정해 다시 질문해 주세요.",
             dependent_failure=True,
         ),
+        "retryDiagnostics": [],
     }
 
 
@@ -93,6 +96,7 @@ def _dependency_empty(empty_reasons: list[str | None]) -> dict[str, Any]:
         "empty_reason": empty_reason,
         "truncated": False,
         "failure": None,
+        "retryDiagnostics": [],
     }
 
 
@@ -113,6 +117,7 @@ def _input_binding_failure() -> dict[str, Any]:
             suggested_action="잠시 후 다시 시도해 주세요.",
             dependent_failure=True,
         ),
+        "retryDiagnostics": [],
     }
 
 
@@ -153,6 +158,7 @@ def _initial_state(
         "empty_reason": None,
         "truncated": False,
         "failure": None,
+        "retryDiagnostics": [],
     }
     if subquery["question"] != original_question:
         result["source_scope"] = subquery["question"]
@@ -177,6 +183,7 @@ def make_execute_plan_node(
             "cypher_query": None,
             "graph_result": None,
             "query_failure": None,
+            "resultInvariantRetryCount": 0,
         }
         outcomes: dict[str, dict[str, Any]] = {}
 
@@ -307,6 +314,12 @@ def make_execute_plan_node(
                 if query_text is not None:
                     output[query_field] = query_text
                 output[result_field] = summary
+                output["resultInvariantRetryCount"] += sum(
+                    diagnostic.get("stage") == "result_invariant"
+                    and diagnostic.get("retryScheduled") is True
+                    for diagnostic in summary.get("retryDiagnostics", [])
+                    if isinstance(diagnostic, dict)
+                )
             ready_ids = {subquery["id"] for subquery in ready}
             pending = [
                 subquery for subquery in pending if subquery["id"] not in ready_ids
