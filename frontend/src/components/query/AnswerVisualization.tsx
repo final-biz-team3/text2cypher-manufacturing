@@ -397,6 +397,11 @@ function HistogramChart({
 // 규칙 기반으로 결정된 시각화 스펙(KPI 카드·막대그래프·비교 막대그래프·순위
 // 진행률·히스토그램)을 렌더링한다.
 export function AnswerVisualization({ visualization }: AnswerVisualizationProps) {
+  // 예전 대화기록에 저장된 산점도 레코드용 하위호환 - 더 이상 새로 생성되지
+  // 않고 렌더러도 없으므로 차트 없이 텍스트/표만 보이게 한다.
+  if (visualization.type === 'scatter') {
+    return null
+  }
   if (visualization.type === 'kpi') {
     return <KpiCards title={visualization.title} items={visualization.items ?? []} />
   }

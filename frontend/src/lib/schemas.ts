@@ -61,7 +61,10 @@ export const NodeLabelSchema = z.enum([
 ])
 
 export const VisualizationSpecSchema = z.object({
-  type: z.enum(['kpi', 'bar', 'comparison_bar', 'ranked_progress', 'histogram']),
+  // 'scatter'는 더 이상 새로 생성되지 않지만, 예전에 대화기록(history)에
+  // 저장된 레코드가 이 타입일 수 있어 파싱이 깨지지 않도록 남겨둔다 -
+  // AnswerVisualization.tsx가 이 타입이면 렌더링 없이 null을 반환한다.
+  type: z.enum(['kpi', 'bar', 'comparison_bar', 'ranked_progress', 'histogram', 'scatter']),
   title: z.string().nullable().optional(),
   items: z.array(VisualizationKpiItemSchema).nullable().optional(),
   categoryLabel: z.string().nullable().optional(),
