@@ -149,38 +149,6 @@ describe('AnswerVisualization', () => {
     expect(html).toContain('role="img"')
   })
 
-  it('renders a scatter plot wrapper with axis labels', () => {
-    const html = renderToStaticMarkup(
-      <AnswerVisualization
-        visualization={{
-          type: 'scatter',
-          title: null,
-          xLabel: '정가',
-          yLabel: '표준원가',
-          points: [
-            { x: 1200, y: 800, label: 'Product A' },
-            { x: 900, y: 650, label: 'Product B' },
-            { x: 1500, y: 1100, label: 'Product C' },
-          ],
-        }}
-      />,
-    )
-
-    expect(html).toContain('정가 vs 표준원가')
-    expect(html).toContain('recharts-responsive-container')
-    expect(html).toContain('role="img"')
-  })
-
-  it('renders nothing when scatter points are empty', () => {
-    const html = renderToStaticMarkup(
-      <AnswerVisualization
-        visualization={{ type: 'scatter', title: null, xLabel: 'x', yLabel: 'y', points: [] }}
-      />,
-    )
-
-    expect(html).toBe('')
-  })
-
   it('renders a bar-in-bar comparison chart with widths proportional to each value', () => {
     const html = renderToStaticMarkup(
       <AnswerVisualization

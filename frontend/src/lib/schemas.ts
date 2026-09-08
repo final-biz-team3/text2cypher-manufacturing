@@ -51,12 +51,6 @@ export const VisualizationRankedItemSchema = z.object({
   fulfillmentPct: z.number(),
 })
 
-export const VisualizationPointSchema = z.object({
-  x: z.number(),
-  y: z.number(),
-  label: z.string().nullable().optional(),
-})
-
 export const NodeLabelSchema = z.enum([
   'Product',
   'Supplier',
@@ -67,7 +61,7 @@ export const NodeLabelSchema = z.enum([
 ])
 
 export const VisualizationSpecSchema = z.object({
-  type: z.enum(['kpi', 'bar', 'comparison_bar', 'ranked_progress', 'histogram', 'scatter']),
+  type: z.enum(['kpi', 'bar', 'comparison_bar', 'ranked_progress', 'histogram']),
   title: z.string().nullable().optional(),
   items: z.array(VisualizationKpiItemSchema).nullable().optional(),
   categoryLabel: z.string().nullable().optional(),
@@ -77,11 +71,6 @@ export const VisualizationSpecSchema = z.object({
     .nullable()
     .optional(),
   rankedItems: z.array(VisualizationRankedItemSchema).nullable().optional(),
-  xLabel: z.string().nullable().optional(),
-  yLabel: z.string().nullable().optional(),
-  xUnit: z.string().nullable().optional(),
-  yUnit: z.string().nullable().optional(),
-  points: z.array(VisualizationPointSchema).nullable().optional(),
   entityLabel: NodeLabelSchema.nullable().optional(),
   unit: z.string().nullable().optional(),
 })

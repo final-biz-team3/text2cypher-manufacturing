@@ -1,16 +1,6 @@
 import { Tag } from 'lucide-react'
 import { useRef, useState } from 'react'
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Scatter,
-  ScatterChart,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { VisualizationSpec } from '@/lib/schemas'
 
 interface AnswerVisualizationProps {
@@ -404,75 +394,8 @@ function HistogramChart({
   )
 }
 
-function ScatterPlot({
-  xLabel,
-  yLabel,
-  xUnit,
-  yUnit,
-  points,
-}: {
-  xLabel: VisualizationSpec['xLabel']
-  yLabel: VisualizationSpec['yLabel']
-  xUnit: VisualizationSpec['xUnit']
-  yUnit: VisualizationSpec['yUnit']
-  points: NonNullable<VisualizationSpec['points']>
-}) {
-  if (points.length === 0) return null
-  const caption = xLabel && yLabel ? `${xLabel} vs ${yLabel}` : '산점도'
-  return (
-    <div
-      role="img"
-      aria-label={`${caption} 산점도`}
-      className="mb-3 rounded-md border border-border bg-panel p-3"
-    >
-      <p className="mb-2 text-[10.5px] text-text-muted">{caption}</p>
-      <ResponsiveContainer width="100%" height={220}>
-        <ScatterChart margin={{ top: 4, right: 16, bottom: 20, left: 12 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-          <XAxis
-            type="number"
-            dataKey="x"
-            name={xLabel ?? 'x'}
-            tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
-            label={{
-              value: axisTitle(xLabel, xUnit),
-              position: 'insideBottom',
-              offset: -2,
-              ...axisLabelStyle,
-            }}
-          />
-          <YAxis
-            type="number"
-            dataKey="y"
-            name={yLabel ?? 'y'}
-            tick={{ fill: 'var(--color-text-muted)', fontSize: 11 }}
-            label={{
-              value: axisTitle(yLabel, yUnit),
-              angle: -90,
-              position: 'insideLeft',
-              ...axisLabelStyle,
-            }}
-          />
-          <Tooltip
-            cursor={{ strokeDasharray: '3 3' }}
-            formatter={(value: number, name: string) =>
-              formatWithUnit(value, name === xLabel ? xUnit : yUnit)
-            }
-            contentStyle={{
-              background: 'var(--color-panel)',
-              border: '1px solid var(--color-border)',
-              fontSize: 12,
-            }}
-          />
-          <Scatter data={points} fill="#3BB2BF" />
-        </ScatterChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
-
 // 규칙 기반으로 결정된 시각화 스펙(KPI 카드·막대그래프·비교 막대그래프·순위
-// 진행률·히스토그램·산점도)을 렌더링한다.
+// 진행률·히스토그램)을 렌더링한다.
 export function AnswerVisualization({ visualization }: AnswerVisualizationProps) {
   if (visualization.type === 'kpi') {
     return <KpiCards title={visualization.title} items={visualization.items ?? []} />
@@ -483,17 +406,6 @@ export function AnswerVisualization({ visualization }: AnswerVisualizationProps)
         items={visualization.rankedItems ?? []}
         entityLabel={visualization.entityLabel}
         unit={visualization.unit}
-      />
-    )
-  }
-  if (visualization.type === 'scatter') {
-    return (
-      <ScatterPlot
-        xLabel={visualization.xLabel}
-        yLabel={visualization.yLabel}
-        xUnit={visualization.xUnit}
-        yUnit={visualization.yUnit}
-        points={visualization.points ?? []}
       />
     )
   }
