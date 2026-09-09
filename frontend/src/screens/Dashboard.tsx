@@ -33,11 +33,10 @@ interface PendingClarification {
 }
 
 const EXAMPLE_QUESTIONS: string[] = [
-  '외부에서 구매하는 부품 알려줘',
-  '제품 Paint - Black의 안전재고, 실제 재고와 부족 수량을 알려줘.',
-  '반려 수량이 많은 공급업체 상위 5곳을 알려줘.',
-  '작업오더 17747이 방문한 작업장과 라우팅 공정을 실제 진행 순서대로 나열해줘',
-  'HL Road Frame - Black, 58의 말단 BOM 자재 중 보유 재고가 안전 수준보다 낮은 것과 부족분을 계산해줘',
+  'Mountain-100 Silver, 38과 Mountain-100 Black, 38의 정가-표준원가 차액을 비교해 큰 순서로 보여줘.',
+  '작업지시 17747이 거친 작업장과 공정 순서를 알려줘.',
+  '공급업체 Allenson Cycles가 공급을 중단하면 영향을 받는 부품과 완제품, 각 부품의 현재 재고를 알려줘.',
+  '2099년에 Frame Forming 작업장을 거친 제품 수량은?',
 ]
 
 const READ_ONLY = true
