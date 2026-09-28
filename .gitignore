@@ -49,6 +49,8 @@ artifacts/
 .claude/
 .codex/
 CLAUDE.md
+.agents/
+AGENTS.md
 .worktrees/
 .superpowers/
 
